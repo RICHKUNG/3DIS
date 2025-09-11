@@ -1,0 +1,1343 @@
+{
+  "items": [
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        141,
+        390,
+        110,
+        189
+      ],
+      "area": 5370,
+      "stability_score": 0.9740760922431946,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        734,
+        61,
+        41,
+        73
+      ],
+      "area": 1833,
+      "stability_score": 0.9827027320861816,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        72,
+        0,
+        184,
+        13
+      ],
+      "area": 1849,
+      "stability_score": 0.9806970357894897,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        147,
+        171,
+        39,
+        59
+      ],
+      "area": 1047,
+      "stability_score": 0.977337121963501,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        189,
+        68,
+        104,
+        34
+      ],
+      "area": 2399,
+      "stability_score": 0.9724393486976624,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        261,
+        407,
+        71,
+        114
+      ],
+      "area": 2203,
+      "stability_score": 0.9643652439117432,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        518,
+        109,
+        28,
+        56
+      ],
+      "area": 1538,
+      "stability_score": 0.96878981590271,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        365,
+        361,
+        33,
+        156
+      ],
+      "area": 1871,
+      "stability_score": 0.9548988938331604,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        375,
+        350,
+        167,
+        122
+      ],
+      "area": 5900,
+      "stability_score": 0.971552848815918,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        830,
+        0,
+        22,
+        23
+      ],
+      "area": 386,
+      "stability_score": 0.9670050740242004,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        797,
+        474,
+        55,
+        36
+      ],
+      "area": 554,
+      "stability_score": 0.9820788502693176,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        232,
+        158,
+        58,
+        124
+      ],
+      "area": 4268,
+      "stability_score": 0.9743115305900574,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        192,
+        72,
+        29,
+        30
+      ],
+      "area": 689,
+      "stability_score": 0.9643874764442444,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        0,
+        171,
+        74,
+        76
+      ],
+      "area": 1221,
+      "stability_score": 0.9679229855537415,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        412,
+        220,
+        238,
+        187
+      ],
+      "area": 24382,
+      "stability_score": 0.9735222458839417,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        719,
+        135,
+        36,
+        57
+      ],
+      "area": 1049,
+      "stability_score": 0.969924807548523,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        599,
+        168,
+        22,
+        18
+      ],
+      "area": 335,
+      "stability_score": 0.9735293984413147,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        705,
+        310,
+        49,
+        137
+      ],
+      "area": 1847,
+      "stability_score": 0.9378265142440796,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        434,
+        89,
+        40,
+        53
+      ],
+      "area": 469,
+      "stability_score": 0.9371069073677063,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        76,
+        170,
+        17,
+        21
+      ],
+      "area": 274,
+      "stability_score": 0.9818181991577148,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        383,
+        583,
+        73,
+        56
+      ],
+      "area": 2876,
+      "stability_score": 0.9402834177017212,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        434,
+        104,
+        15,
+        38
+      ],
+      "area": 413,
+      "stability_score": 0.9549763202667236,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        673,
+        0,
+        29,
+        35
+      ],
+      "area": 790,
+      "stability_score": 0.9642416834831238,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        217,
+        69,
+        44,
+        23
+      ],
+      "area": 951,
+      "stability_score": 0.9771547317504883,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        220,
+        180,
+        38,
+        66
+      ],
+      "area": 1566,
+      "stability_score": 0.9684939980506897,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        464,
+        86,
+        11,
+        53
+      ],
+      "area": 521,
+      "stability_score": 0.9715909361839294,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        565,
+        625,
+        13,
+        14
+      ],
+      "area": 193,
+      "stability_score": 0.9743589758872986,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        192,
+        169,
+        49,
+        83
+      ],
+      "area": 1603,
+      "stability_score": 0.9563106894493103,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        222,
+        278,
+        62,
+        38
+      ],
+      "area": 724,
+      "stability_score": 0.9370816349983215,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        160,
+        573,
+        63,
+        26
+      ],
+      "area": 516,
+      "stability_score": 0.9581748843193054,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        143,
+        382,
+        189,
+        257
+      ],
+      "area": 9927,
+      "stability_score": 0.9498675465583801,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        363,
+        145,
+        46,
+        66
+      ],
+      "area": 2392,
+      "stability_score": 0.9534883499145508,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        508,
+        206,
+        161,
+        57
+      ],
+      "area": 3511,
+      "stability_score": 0.9707454442977905,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        142,
+        583,
+        65,
+        56
+      ],
+      "area": 2096,
+      "stability_score": 0.9718044996261597,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        702,
+        17,
+        150,
+        19
+      ],
+      "area": 1477,
+      "stability_score": 0.9268134832382202,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        755,
+        10,
+        35,
+        34
+      ],
+      "area": 956,
+      "stability_score": 0.9559876918792725,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        65,
+        71,
+        34,
+        28
+      ],
+      "area": 740,
+      "stability_score": 0.947299063205719,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        719,
+        60,
+        57,
+        131
+      ],
+      "area": 2922,
+      "stability_score": 0.9589452743530273,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        514,
+        75,
+        33,
+        89
+      ],
+      "area": 2398,
+      "stability_score": 0.9496314525604248,
+      "level": 6
+    },
+    {
+      "frame_idx": 0,
+      "frame_name": "11077.png",
+      "bbox": [
+        608,
+        452,
+        127,
+        187
+      ],
+      "area": 17372,
+      "stability_score": 0.9254723787307739,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        805,
+        0,
+        47,
+        215
+      ],
+      "area": 6291,
+      "stability_score": 0.9834463000297546,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        488,
+        156,
+        72,
+        40
+      ],
+      "area": 2094,
+      "stability_score": 0.983847975730896,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        83,
+        45,
+        76,
+        26
+      ],
+      "area": 1549,
+      "stability_score": 0.9758116006851196,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        49,
+        378,
+        97,
+        191
+      ],
+      "area": 5395,
+      "stability_score": 0.9599781632423401,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        96,
+        136,
+        81,
+        137
+      ],
+      "area": 5747,
+      "stability_score": 0.9711340069770813,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        59,
+        45,
+        100,
+        31
+      ],
+      "area": 2200,
+      "stability_score": 0.9665477275848389,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        0,
+        249,
+        75,
+        100
+      ],
+      "area": 4540,
+      "stability_score": 0.9698415994644165,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        408,
+        91,
+        25,
+        55
+      ],
+      "area": 1238,
+      "stability_score": 0.9728000164031982,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        492,
+        117,
+        22,
+        18
+      ],
+      "area": 402,
+      "stability_score": 0.9876847267150879,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        271,
+        385,
+        40,
+        109
+      ],
+      "area": 1969,
+      "stability_score": 0.9578163623809814,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        695,
+        0,
+        124,
+        639
+      ],
+      "area": 20485,
+      "stability_score": 0.9677682518959045,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        13,
+        157,
+        54,
+        71
+      ],
+      "area": 1511,
+      "stability_score": 0.965584397315979,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        135,
+        374,
+        109,
+        132
+      ],
+      "area": 3000,
+      "stability_score": 0.9417664408683777,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        684,
+        395,
+        68,
+        50
+      ],
+      "area": 684,
+      "stability_score": 0.969740629196167,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        264,
+        0,
+        36,
+        33
+      ],
+      "area": 902,
+      "stability_score": 0.9780461192131042,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        819,
+        597,
+        33,
+        42
+      ],
+      "area": 1271,
+      "stability_score": 0.9828392863273621,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        0,
+        566,
+        75,
+        73
+      ],
+      "area": 4365,
+      "stability_score": 0.9847623109817505,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        317,
+        72,
+        17,
+        50
+      ],
+      "area": 483,
+      "stability_score": 0.9556451439857483,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        349,
+        53,
+        11,
+        74
+      ],
+      "area": 571,
+      "stability_score": 0.9505119323730469,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        273,
+        327,
+        168,
+        100
+      ],
+      "area": 5653,
+      "stability_score": 0.9660987257957458,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        58,
+        54,
+        24,
+        21
+      ],
+      "area": 509,
+      "stability_score": 0.9825581312179565,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        598,
+        257,
+        32,
+        136
+      ],
+      "area": 1763,
+      "stability_score": 0.9351648092269897,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        250,
+        127,
+        53,
+        66
+      ],
+      "area": 2553,
+      "stability_score": 0.9672067761421204,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        413,
+        0,
+        53,
+        16
+      ],
+      "area": 667,
+      "stability_score": 0.9688427448272705,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        0,
+        161,
+        54,
+        100
+      ],
+      "area": 3343,
+      "stability_score": 0.9699469804763794,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        489,
+        150,
+        26,
+        14
+      ],
+      "area": 283,
+      "stability_score": 0.9515570998191833,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        157,
+        393,
+        87,
+        113
+      ],
+      "area": 2614,
+      "stability_score": 0.9332103133201599,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        563,
+        0,
+        9,
+        150
+      ],
+      "area": 1327,
+      "stability_score": 0.9284682273864746,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        0,
+        378,
+        74,
+        158
+      ],
+      "area": 6991,
+      "stability_score": 0.9488106966018677,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        773,
+        592,
+        47,
+        47
+      ],
+      "area": 2030,
+      "stability_score": 0.9439923167228699,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        402,
+        56,
+        27,
+        33
+      ],
+      "area": 675,
+      "stability_score": 0.9620991349220276,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        303,
+        185,
+        214,
+        178
+      ],
+      "area": 21095,
+      "stability_score": 0.9478005766868591,
+      "level": 6
+    },
+    {
+      "frame_idx": 1,
+      "frame_name": "11095.png",
+      "bbox": [
+        0,
+        0,
+        228,
+        27
+      ],
+      "area": 3456,
+      "stability_score": 0.9592990279197693,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        188,
+        367,
+        52,
+        110
+      ],
+      "area": 2192,
+      "stability_score": 0.9673669934272766,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        519,
+        217,
+        22,
+        140
+      ],
+      "area": 1696,
+      "stability_score": 0.9396551847457886,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        187,
+        302,
+        170,
+        95
+      ],
+      "area": 6027,
+      "stability_score": 0.9652811884880066,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        35,
+        360,
+        138,
+        134
+      ],
+      "area": 3394,
+      "stability_score": 0.9485780000686646,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        0,
+        366,
+        58,
+        186
+      ],
+      "area": 4674,
+      "stability_score": 0.9773545265197754,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        70,
+        378,
+        102,
+        116
+      ],
+      "area": 2839,
+      "stability_score": 0.9627071619033813,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        519,
+        265,
+        20,
+        92
+      ],
+      "area": 1314,
+      "stability_score": 0.9569733142852783,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        734,
+        538,
+        118,
+        101
+      ],
+      "area": 10748,
+      "stability_score": 0.9871498346328735,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        0,
+        346,
+        32,
+        120
+      ],
+      "area": 2684,
+      "stability_score": 0.9819121360778809,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        0,
+        8,
+        46,
+        36
+      ],
+      "area": 1292,
+      "stability_score": 0.9328358173370361,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        756,
+        0,
+        75,
+        95
+      ],
+      "area": 3865,
+      "stability_score": 0.980271577835083,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        557,
+        0,
+        24,
+        142
+      ],
+      "area": 1351,
+      "stability_score": 0.9521392583847046,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        0,
+        556,
+        53,
+        19
+      ],
+      "area": 487,
+      "stability_score": 0.9674796462059021,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        22,
+        270,
+        67,
+        27
+      ],
+      "area": 818,
+      "stability_score": 0.9556885957717896,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        795,
+        0,
+        57,
+        272
+      ],
+      "area": 8702,
+      "stability_score": 0.9795128703117371,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        307,
+        145,
+        117,
+        36
+      ],
+      "area": 2254,
+      "stability_score": 0.9650654792785645,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        393,
+        407,
+        56,
+        150
+      ],
+      "area": 4397,
+      "stability_score": 0.9589560627937317,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        143,
+        74,
+        62,
+        36
+      ],
+      "area": 1558,
+      "stability_score": 0.9485893249511719,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        653,
+        222,
+        93,
+        417
+      ],
+      "area": 15648,
+      "stability_score": 0.9640482068061829,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        386,
+        28,
+        11,
+        21
+      ],
+      "area": 208,
+      "stability_score": 0.9573459625244141,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        469,
+        0,
+        18,
+        85
+      ],
+      "area": 1105,
+      "stability_score": 0.9496021270751953,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        593,
+        352,
+        72,
+        54
+      ],
+      "area": 397,
+      "stability_score": 0.9558823704719543,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        155,
+        108,
+        59,
+        63
+      ],
+      "area": 2797,
+      "stability_score": 0.971801221370697,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        363,
+        35,
+        25,
+        101
+      ],
+      "area": 1838,
+      "stability_score": 0.937794029712677,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        233,
+        15,
+        41,
+        81
+      ],
+      "area": 982,
+      "stability_score": 0.94921875,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        626,
+        0,
+        53,
+        222
+      ],
+      "area": 5568,
+      "stability_score": 0.9654808044433594,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        790,
+        0,
+        49,
+        114
+      ],
+      "area": 980,
+      "stability_score": 0.964894711971283,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        340,
+        401,
+        112,
+        156
+      ],
+      "area": 4643,
+      "stability_score": 0.9203285574913025,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        0,
+        250,
+        200,
+        212
+      ],
+      "area": 21524,
+      "stability_score": 0.9288108348846436,
+      "level": 6
+    },
+    {
+      "frame_idx": 2,
+      "frame_name": "11112.png",
+      "bbox": [
+        0,
+        158,
+        47,
+        64
+      ],
+      "area": 1803,
+      "stability_score": 0.9732678532600403,
+      "level": 6
+    }
+  ]
+}

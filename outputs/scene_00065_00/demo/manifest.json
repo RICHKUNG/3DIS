@@ -1,0 +1,19 @@
+{
+  "mode": "candidates_only",
+  "levels": [
+    2,
+    4,
+    6
+  ],
+  "frames": "1200:1600:20",
+  "min_area": 300,
+  "stability_threshold": 0.9,
+  "data_path": "/media/public_dataset2/multiscan/scene_00065_00/outputs/color",
+  "selected_frames": [
+    "11077.png",
+    "11095.png",
+    "11112.png"
+  ],
+  "sam_ckpt": "/media/Pluto/richkung/Semantic-SAM/checkpoints/swinl_only_sam_many2many.pth",
+  "timestamp": 1757581530
+}

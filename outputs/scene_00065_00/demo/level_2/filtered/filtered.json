@@ -1,0 +1,302 @@
+{
+  "frames": [
+    {
+      "frame_idx": 0,
+      "count": 6,
+      "items": [
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            514,
+            0,
+            190,
+            204
+          ],
+          "area": 15478,
+          "stability_score": 0.9754898548126221,
+          "level": 2,
+          "id": 0
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            364,
+            66,
+            471,
+            447
+          ],
+          "area": 88261,
+          "stability_score": 0.9743537902832031,
+          "level": 2,
+          "id": 1
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            0,
+            5,
+            852,
+            634
+          ],
+          "area": 196922,
+          "stability_score": 0.9344576001167297,
+          "level": 2,
+          "id": 2
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            0,
+            0,
+            578,
+            194
+          ],
+          "area": 75168,
+          "stability_score": 0.978766143321991,
+          "level": 2,
+          "id": 3
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            0,
+            351,
+            330,
+            227
+          ],
+          "area": 48044,
+          "stability_score": 0.9459158182144165,
+          "level": 2,
+          "id": 4
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            0,
+            161,
+            574,
+            478
+          ],
+          "area": 104796,
+          "stability_score": 0.9369004964828491,
+          "level": 2,
+          "id": 5
+        }
+      ]
+    },
+    {
+      "frame_idx": 1,
+      "count": 7,
+      "items": [
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            263,
+            18,
+            415,
+            573
+          ],
+          "area": 94178,
+          "stability_score": 0.9853001832962036,
+          "level": 2,
+          "id": 0
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            0,
+            352,
+            243,
+            287
+          ],
+          "area": 42165,
+          "stability_score": 0.9889733791351318,
+          "level": 2,
+          "id": 1
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            0,
+            0,
+            415,
+            157
+          ],
+          "area": 45069,
+          "stability_score": 0.964516818523407,
+          "level": 2,
+          "id": 2
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            388,
+            0,
+            183,
+            172
+          ],
+          "area": 10914,
+          "stability_score": 0.9685103297233582,
+          "level": 2,
+          "id": 3
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            67,
+            83,
+            277,
+            211
+          ],
+          "area": 39492,
+          "stability_score": 0.9777226448059082,
+          "level": 2,
+          "id": 4
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            0,
+            3,
+            773,
+            636
+          ],
+          "area": 220368,
+          "stability_score": 0.9675508141517639,
+          "level": 2,
+          "id": 5
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            705,
+            0,
+            147,
+            639
+          ],
+          "area": 69167,
+          "stability_score": 0.9529289603233337,
+          "level": 2,
+          "id": 6
+        }
+      ]
+    },
+    {
+      "frame_idx": 2,
+      "count": 7,
+      "items": [
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            178,
+            0,
+            393,
+            411
+          ],
+          "area": 80063,
+          "stability_score": 0.9699744582176208,
+          "level": 2,
+          "id": 0
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            708,
+            0,
+            144,
+            555
+          ],
+          "area": 40720,
+          "stability_score": 0.9849278330802917,
+          "level": 2,
+          "id": 1
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            0,
+            346,
+            172,
+            293
+          ],
+          "area": 18628,
+          "stability_score": 0.9868856072425842,
+          "level": 2,
+          "id": 2
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            626,
+            0,
+            122,
+            639
+          ],
+          "area": 22626,
+          "stability_score": 0.9510186314582825,
+          "level": 2,
+          "id": 3
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            0,
+            0,
+            699,
+            639
+          ],
+          "area": 204525,
+          "stability_score": 0.9587950706481934,
+          "level": 2,
+          "id": 4
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            0,
+            0,
+            279,
+            289
+          ],
+          "area": 65229,
+          "stability_score": 0.9650790095329285,
+          "level": 2,
+          "id": 5
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            486,
+            0,
+            366,
+            639
+          ],
+          "area": 100025,
+          "stability_score": 0.9368295669555664,
+          "level": 2,
+          "id": 6
+        }
+      ]
+    }
+  ]
+}
