@@ -1,141 +1,36 @@
-3DIS Pipeline Plan and Log (Semantic-SAM × SAM2)
+3DIS Pipeline Log (Semantic-SAM × SAM2)
 
-Summary
-- Replace SAM in Algorithm 1 with Semantic-SAM and run the modified Algorithm 1 per Semantic-SAM level.
-- Use multi-level Semantic-SAM with fixed levels [2, 4, 6].
-- Frame range: 1200:1600:20 (start:end:step, end exclusive).
-- Demo first on the first 3 sampled frames; later run the full selection.
-- Dataset: MultiScan, path is correct and read-only under /media/public_dataset2/multiscan. Do not modify anything under /media/public_dataset2.
-- All code execution and outputs live under My3DIS.
-- Save, for each level, both the raw candidate bbox lists and the filtered lists for reproducibility.
-
-Goals
-- Produce multi-level mask candidates using Semantic-SAM per frame and per level.
-- For each level, run a modified Algorithm 1 that uses SAM2 to track untracked regions via mask-propagation (masklets) across the frame sequence.
-- Provide visualizations and structured artifacts that allow exact reproduction.
-
-Environment
-- New conda environment created from My3DIS/Algorithm1_env.yml (CUDA 12.x toolchain per YAML; Torch 2.8.0+cu128 as specified).
-- Local checkpoints:
-  - Semantic-SAM: /media/Pluto/richkung/Semantic-SAM/checkpoints/swinl_only_sam_many2many.pth
-  - SAM2 config: /media/Pluto/richkung/SAM2/sam2/configs/sam2.1/sam2.1_hiera_l.yaml
-  - SAM2 weights: /media/Pluto/richkung/SAM2/checkpoints/sam2.1_hiera_large.pt (or other variant)
-- Import paths: either install editable or add to sys.path:
-  - /media/Pluto/richkung/Semantic-SAM
-  - /media/Pluto/richkung/SAM2
-
-Data & Selection
-- Source: /media/public_dataset2/multiscan/<scene>/outputs/color
-- Frame sampling: 1200:1600:20 (end exclusive). Demo uses the first 3 sampled frames from this range.
-
-Pipeline Overview
-1) Frame selection: gather frames by the configured range.
-2) Per-level Semantic-SAM generation (levels [2,4,6]):
-   - Generate mask candidates on each selected frame using Semantic-SAM at the current level.
-   - Each candidate includes at least segmentation (boolean array), area, stability_score (if available), and bbox (XYWH) computed from segmentation when missing.
-   - Persist per-frame artifacts:
-     - candidates.json: all raw proposals
-     - candidates.npy (optional): packed arrays if large
-     - filtered.json: proposals after filtering (min area, stability_score threshold, etc.)
-3) Modified Algorithm 1 with SAM2 (run separately for each level):
-   - Initialize SAM2 video predictor on the source image sequence.
-   - For each frame t, compare current candidates with previously tracked masklets (IoU > κ, κ=0.6) to decide tracked vs. untracked.
-   - For untracked bboxes, add as prompts and propagate masks across the sequence using SAM2 to produce masklets.
-   - Merge per-iteration results into a final per-frame map of object_id → mask for that level.
-4) Visualization & Storage:
-   - Save a folder per object_id containing masked PNGs per frame.
-   - Save summary stats (counts per level, per frame), and a manifest with model/config/ckpt and frame selection info.
-
-Output Layout (under My3DIS)
-- My3DIS/
-  - Agent.md (this file)
-  - algorithm1.ipynb (original; may import shared helpers)
-  - run_pipeline.py (all-in-one; requires both Semantic-SAM and SAM2 in one env)
-  - generate_candidates.py (Semantic-SAM only; use env: Semantic-SAM)
-  - track_from_candidates.py (SAM2 only; use env: SAM2)
-  - outputs/
-    - <scene>/
-      - manifest.json
-      - logs/
-      - demo/ (first 3 sampled frames)
-        - level_2/{candidates,filtered,tracking,viz}
-        - level_4/{candidates,filtered,tracking,viz}
-        - level_6/{candidates,filtered,tracking,viz}
-      - full/ (full selection, same structure as above)
-
-Reproducibility Artifacts
-- Per-level, per-frame files:
-  - candidates.json: list of {frame_idx, bbox:[x,y,w,h], area, stability_score, level, meta}
-  - filtered.json: same format after filtering
-- Tracking outputs:
-  - video_segments.npz or .pkl: {frame_idx: {obj_id: mask_bool_array}}
-  - objects/<obj_id>/*.png: masked images
-- Manifest (manifest.json): scene, range, levels, thresholds, model ckpt paths, code version (git commit when available).
-
-Planned CLI (run_pipeline.py)
-- Example (demo, 3 frames):
-  - python My3DIS/run_pipeline.py \
-    --data-path /media/public_dataset2/multiscan/<scene>/outputs/color \
-    --levels 2,4,6 \
-    --frames 1200:1600:20 \
-    --sam-ckpt /media/Pluto/richkung/Semantic-SAM/checkpoints/swinl_only_sam_many2many.pth \
-    --sam2-cfg /media/Pluto/richkung/SAM2/sam2/configs/sam2.1/sam2.1_hiera_l.yaml \
-    --sam2-ckpt /media/Pluto/richkung/SAM2/checkpoints/sam2.1_hiera_large.pt \
-    --output My3DIS/outputs/<scene>/demo \
-    --max-frames 3
-- Then remove --max-frames to process the full selection into My3DIS/outputs/<scene>/full.
-
-Two-stage Option (recommended with existing envs)
-- Stage 1: Generate candidates (Semantic-SAM env)
-  - conda run -n Semantic-SAM python My3DIS/generate_candidates.py \
-    --data-path /media/public_dataset2/multiscan/<scene>/outputs/color \
-    --levels 2,4,6 \
-    --frames 1200:1600:20 \
-    --sam-ckpt /media/Pluto/richkung/Semantic-SAM/checkpoints/swinl_only_sam_many2many.pth \
-    --output /media/Pluto/richkung/My3DIS/outputs/<scene>/demo \
-    --max-frames 3
-- Stage 2: Track with SAM2 (SAM2 env)
-  - conda run -n SAM2 python My3DIS/track_from_candidates.py \
-    --data-path /media/public_dataset2/multiscan/<scene>/outputs/color \
-    --candidates-root /media/Pluto/richkung/My3DIS/outputs/<scene>/demo \
-    --sam2-cfg /media/Pluto/richkung/SAM2/sam2/configs/sam2.1/sam2.1_hiera_l.yaml \
-    --sam2-ckpt /media/Pluto/richkung/SAM2/checkpoints/sam2.1_hiera_large.pt \
-    --output /media/Pluto/richkung/My3DIS/outputs/<scene>/demo
-
-GitHub
-- Repo: https://github.com/RICHKUNG/3DIS
-- Push steps (from My3DIS/):
-  - git init && git checkout -b main
-  - git remote add origin https://github.com/RICHKUNG/3DIS.git
-  - git add Agent.md run_pipeline.py Algorithm1_env.yml algorithm1.ipynb
-  - git commit -m "Init: multi-level Semantic-SAM → SAM2 pipeline"
-  - git push -u origin main
-
-Notes & Assumptions
-- Use Semantic-SAM to replace SAM in Algorithm 1; run the modified Algorithm 1 independently for each level in [2,4,6].
-- MultiScan path is correct; do not write under /media/public_dataset2.
-- Bounding boxes are in XYWH for candidate storage; convert to x1y1x2y2 and scale to SAM2 resolution before predictor prompts.
-- IoU threshold κ defaults to 0.6; configurable later.
+Reference
+- All pipeline goals, environment details, dataset policy, and execution guidance now live in `README.md`.
+- This file tracks decisions, progress, and outstanding work items.
 
 Status
-- Plan agreed: levels [2,4,6], frames 1200:1600:20, demo on first 3 sampled frames.
-- Decision: save both raw candidate bbox lists and filtered lists per level.
-- Progress:
-  - Added My3DIS/run_pipeline.py (multi-level Semantic-SAM → SAM2 tracking, per-level candidate persistence).
-  - Added generate_candidates.py (Semantic-SAM only) and track_from_candidates.py (SAM2 only) to support two-stage execution with existing envs.
-  - Executed demo (two-stage):
-    - Stage 1 (Semantic-SAM env): generated candidates for levels [2,4,6] on first 3 frames in 1200:1600:20.
-    - Stage 2 (SAM2 env): tracked per-level using subset-video of 3 frames.
-    - Outputs saved to My3DIS/outputs/scene_00065_00/demo.
-- Next actions:
-  1) Create conda env from Algorithm1_env.yml and register kernel.
-  2) Optional: Update notebook to import shared helpers (non-destructive) or copy required functions.
-  3) Run full selection.
-  4) Push to GitHub repo https://github.com/RICHKUNG/3DIS (credentials required).
+- Plan agreed: levels [2,4,6], frame slice 1200:1600:20, quick demos use the first three sampled frames.
+- `run_pipeline.py` still supports single-environment runs with baked-in checkpoints, but the default workflow now swaps between dedicated Semantic-SAM and SAM2 conda envs.
+- `run_experiment.sh` coordinates the two-stage execution (generate → track); dataset/output paths are fixed in the script so the CLI only adjusts levels, frame ranges, and thresholds.
+- Per-level outputs must persist raw and filtered candidate lists alongside SAM2 tracking artifacts.
+
+Progress Log
+- Added `My3DIS/run_pipeline.py` to glue Semantic-SAM candidate generation with SAM2 tracking.
+- Added `generate_candidates.py` (Semantic-SAM stage) and `track_from_candidates.py` (SAM2 stage) for two-environment execution.
+- Added `run_experiment.sh` to orchestrate stage execution across environments with sensible defaults.
+- Completed demo run on first three frames of scene_00065_00 via the two-stage path; results saved under `My3DIS/outputs/scene_00065_00/demo`.
+- README updated with consolidated operational guidance from the earlier planning document, plus the fixed-path orchestrator workflow.
+
+Next Actions
+1) Create the shared environment from `Algorithm1_env.yml` (optional but recommended).
+2) Update or clone the notebook (`algorithm1.ipynb`) to reuse the helper functions if interactive analysis is needed.
+3) Execute the full frame selection via `./run_experiment.sh` once resource scheduling is available.
+4) Push code to https://github.com/RICHKUNG/3DIS when credentials are ready.
 
 Open Items
-- Confirm the target scene(s) under MultiScan for the first run.
-- Optional thresholds for filtering: min_area, stability_score (defaults can be tuned after the demo).
+- Confirm the initial MultiScan scene(s) for full processing beyond the demo slice.
+- Tuning knobs: `min_area`, `stability_threshold`, and SAM2 IoU threshold (currently 0.6).
 
-
-[Github repo](https://github.com/RICHKUNG/3DIS)
+GitHub
+- Initialize/push sequence from `My3DIS/`:
+  - `git init && git checkout -b main`
+  - `git remote add origin https://github.com/RICHKUNG/3DIS.git`
+  - `git add Agent.md run_pipeline.py Algorithm1_env.yml algorithm1.ipynb`
+  - `git commit -m "Init: multi-level Semantic-SAM → SAM2 pipeline"`
+  - `git push -u origin main`
