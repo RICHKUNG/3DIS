@@ -669,6 +669,7 @@ def main():
         level_root = os.path.join(args.candidates_root, f'level_{level}')
         track_dir = ensure_dir(os.path.join(out_root, f'level_{level}', 'tracking'))
         per_frame = load_filtered_candidates(level_root)
+        track_start = time.perf_counter()
         segs = sam2_tracking(
             subset_dir,
             predictor,
@@ -676,9 +677,15 @@ def main():
             frame_numbers=selected_indices,
             iou_threshold=0.6,
         )
+        track_time = time.perf_counter() - track_start
+
+        persist_start = time.perf_counter()
         save_video_segments_npz(segs, os.path.join(track_dir, 'video_segments.npz'))
         obj_segments = reorganize_segments_by_object(segs)
         save_object_segments_npz(obj_segments, os.path.join(track_dir, 'object_segments.npz'))
+        persist_time = time.perf_counter() - persist_start
+
+        render_start = time.perf_counter()
         # save per-object masked frames with level+ID labels
         store_output_masks(
             track_dir,
@@ -706,9 +713,27 @@ def main():
             frame_numbers=selected_indices,
             frames_to_save=None,
         )
+        render_time = time.perf_counter() - render_start
 
         form_time = time.perf_counter() - level_start
-        level_stats.append((level, len(obj_segments), len(segs), form_time))
+        LOGGER.info(
+            "  Timings → track=%s, persist=%s, render=%s, total=%s",
+            format_seconds(track_time),
+            format_seconds(persist_time),
+            format_seconds(render_time),
+            format_seconds(form_time),
+        )
+        level_stats.append(
+            (
+                level,
+                len(obj_segments),
+                len(segs),
+                track_time,
+                persist_time,
+                render_time,
+                form_time,
+            )
+        )
         LOGGER.info(
             "Level %d finished in %s (objects=%d, frames=%d)",
             level,
@@ -719,8 +744,9 @@ def main():
 
     if level_stats:
         summary = "; ".join(
-            f"L{lvl}: {objs} objects / {frames} frames"
-            for lvl, objs, frames, _ in level_stats
+            f"L{lvl}: {objs} objects / {frames} frames "
+            f"(track={format_seconds(track)}, render={format_seconds(render)}, total={format_seconds(total)})"
+            for lvl, objs, frames, track, _, render, total in level_stats
         )
         LOGGER.info("Tracking summary → %s", summary)
     LOGGER.info("Tracking results saved at %s", out_root)
