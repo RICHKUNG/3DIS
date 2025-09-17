@@ -9,6 +9,8 @@ import sys
 import json
 import argparse
 import time
+import datetime
+import logging
 from typing import List, Dict, Any, Tuple
 
 import numpy as np
@@ -17,16 +19,16 @@ DEFAULT_SEMANTIC_SAM_ROOT = "/media/Pluto/richkung/Semantic-SAM"
 if DEFAULT_SEMANTIC_SAM_ROOT not in sys.path:
     sys.path.append(DEFAULT_SEMANTIC_SAM_ROOT)
 
-from semantic_sam import (
-    prepare_image,
-    build_semantic_sam,
-    SemanticSamAutomaticMaskGenerator,
+from ssam_progressive_adapter import generate_with_progressive, ensure_dir
+
+
+LOGGER = logging.getLogger("my3dis.generate_candidates")
+
+DEFAULT_SEMANTIC_SAM_CKPT = os.path.join(
+    DEFAULT_SEMANTIC_SAM_ROOT,
+    "checkpoints",
+    "swinl_only_sam_many2many.pth",
 )
-
-
-def ensure_dir(p: str) -> str:
-    os.makedirs(p, exist_ok=True)
-    return p
 
 
 def parse_range(range_str: str):
@@ -50,83 +52,84 @@ def xyxy_to_xywh(b):
     return [int(x1), int(y1), int(max(0, x2 - x1)), int(max(0, y2 - y1))]
 
 
-def generate_candidates_per_level(
+def format_seconds(seconds: float) -> str:
+    seconds = int(round(seconds))
+    minutes, secs = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def build_subset_video(
     frames_dir: str,
-    selected_frames: List[str],
-    semantic_sam,
-    level: int,
-    min_area: int,
-    stability_thresh: float,
+    selected: List[str],
+    selected_indices: List[int],
+    out_root: str,
+    folder_name: str = "selected_frames",
 ):
-    gen = SemanticSamAutomaticMaskGenerator(semantic_sam, level=[level])
-    per_frame_filtered = []
-    raw_dump = []
-
-    for f_idx, fname in enumerate(selected_frames):
-        img_path = os.path.join(frames_dir, fname)
-        _, tensor_img = prepare_image(img_path)
-        masks = gen.generate(tensor_img)
-
-        filtered = []
-        for m in masks:
-            seg = m.get('segmentation')
-            if seg is None:
-                continue
-            area = int(m.get('area', int(seg.sum())))
-            stability = float(m.get('stability_score', 1.0))
-            bbox = m.get('bbox')
-            if bbox is None:
-                bbox = xyxy_to_xywh(bbox_from_mask_xyxy(seg))
-            cand = {
-                'frame_idx': f_idx,
-                'frame_name': fname,
-                'bbox': [int(b) for b in bbox],
-                'area': area,
-                'stability_score': stability,
-                'level': level,
-                'segmentation': seg,
-            }
-            raw_dump.append({k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in cand.items() if k != 'segmentation'})
-            if area >= min_area and stability >= stability_thresh:
-                filtered.append(cand)
-
-        per_frame_filtered.append(filtered)
-
-    return per_frame_filtered, raw_dump
-
+    subset_dir = os.path.join(out_root, folder_name)
+    os.makedirs(subset_dir, exist_ok=True)
+    index_to_subset = {}
+    for local_idx, (abs_idx, fname) in enumerate(zip(selected_indices, selected)):
+        src = os.path.join(frames_dir, fname)
+        dst_name = f"{local_idx:06d}.jpg"
+        dst = os.path.join(subset_dir, dst_name)
+        index_to_subset[abs_idx] = dst_name
+        if not os.path.exists(dst):
+            try:
+                os.symlink(src, dst)
+            except Exception:
+                from shutil import copy2
+                copy2(src, dst)
+    return subset_dir, index_to_subset
 
 def main():
     ap = argparse.ArgumentParser(description="Generate Semantic-SAM candidates per level")
     ap.add_argument('--data-path', required=True)
     ap.add_argument('--levels', default='2,4,6')
     ap.add_argument('--frames', default='1200:1600:20')
-    ap.add_argument('--sam-ckpt', required=True)
+    ap.add_argument('--sam-ckpt', default=DEFAULT_SEMANTIC_SAM_CKPT,
+                    help='Semantic-SAM checkpoint path (default: swinl_only_sam_many2many.pth)')
     ap.add_argument('--output', required=True)
-    ap.add_argument('--max-frames', type=int, default=None)
     ap.add_argument('--min-area', type=int, default=300)
     ap.add_argument('--stability-threshold', type=float, default=0.9)
+    ap.add_argument('--add-gaps', action='store_true', help='Add uncovered area as a candidate per frame per level')
+    ap.add_argument('--no-timestamp', action='store_true', help='Do not append a timestamp folder to output root')
     args = ap.parse_args()
+
+    log_level_name = os.environ.get("MY3DIS_LOG_LEVEL", "INFO").upper()
+    log_level = getattr(logging, log_level_name, logging.INFO)
+    logging.basicConfig(level=log_level, format="%(message)s")
+    LOGGER.setLevel(log_level)
+    # Silence verbose checkpoint load logs from Semantic-SAM internals.
+    logging.getLogger("utils.model").setLevel(logging.WARNING)
+    logging.getLogger("semantic_sam.utils.model").setLevel(logging.WARNING)
+
+    start_time = time.perf_counter()
 
     frames_dir = args.data_path
     levels = parse_levels(args.levels)
     s, e, st = parse_range(args.frames)
 
     all_frames = sorted([f for f in os.listdir(frames_dir) if f.lower().endswith((".jpg",".jpeg",".png"))])
-    selected = [all_frames[i] for i in range(s, min(e, len(all_frames)), st)]
-    if args.max_frames is not None:
-        selected = selected[: args.max_frames]
+    selected_indices = list(range(s, min(e, len(all_frames)), st))
+    selected = [all_frames[i] for i in selected_indices]
 
-    # model
-    print("⏳ Loading Semantic-SAM...")
-    # Ensure working directory matches expected config relative paths
-    try:
-        os.chdir(DEFAULT_SEMANTIC_SAM_ROOT)
-    except Exception:
-        pass
-    semantic_sam = build_semantic_sam(model_type="L", ckpt=args.sam_ckpt)
-    print("✅ Semantic-SAM ready")
+    LOGGER.info(
+        "Semantic-SAM candidate generation started (levels=%s, frames=%s)",
+        args.levels,
+        args.frames,
+    )
 
-    out_root = ensure_dir(args.output)
+    # Timestamped experiment folder
+    if args.no_timestamp:
+        out_root = ensure_dir(args.output)
+        ts = None
+    else:
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_root = ensure_dir(os.path.join(args.output, ts))
+    subset_dir, subset_map = build_subset_video(frames_dir, selected, selected_indices, out_root)
     manifest = {
         'mode': 'candidates_only',
         'levels': levels,
@@ -135,38 +138,71 @@ def main():
         'stability_threshold': args.stability_threshold,
         'data_path': frames_dir,
         'selected_frames': selected,
+        'selected_indices': selected_indices,
+        'subset_dir': subset_dir,
+        'subset_map': subset_map,
         'sam_ckpt': args.sam_ckpt,
-        'timestamp': int(time.time()),
+        'ts_epoch': int(time.time()),
+        'timestamp': ts,
+        'output_root': out_root,
     }
     with open(os.path.join(out_root, 'manifest.json'), 'w') as f:
         json.dump(manifest, f, indent=2)
+    LOGGER.info("Selected %d frames cached at %s", len(selected), subset_dir)
 
+    # Run progressive refinement once per frame and collect per-level results
+    per_level = generate_with_progressive(
+        frames_dir=frames_dir,
+        selected_frames=selected,
+        sam_ckpt_path=args.sam_ckpt,
+        levels=levels,
+        min_area=args.min_area,
+        save_root=os.path.join(out_root, '_progressive_tmp'),
+    )
+
+    # Persist in our standard layout (candidates + filtered are identical here
+    # since progressive_refinement already applies area filtering).
+    level_stats = []
     for level in levels:
-        print(f"\n=== Level {level} ===")
         level_root = ensure_dir(os.path.join(out_root, f'level_{level}'))
         cand_dir = ensure_dir(os.path.join(level_root, 'candidates'))
         filt_dir = ensure_dir(os.path.join(level_root, 'filtered'))
         ensure_dir(os.path.join(level_root, 'viz'))
 
-        filtered_per_frame, raw_dump = generate_candidates_per_level(
-            frames_dir=frames_dir,
-            selected_frames=selected,
-            semantic_sam=semantic_sam,
-            level=level,
-            min_area=args.min_area,
-            stability_thresh=args.stability_threshold,
-        )
-
-        # save raw
-        with open(os.path.join(cand_dir, 'candidates.json'), 'w') as f:
-            json.dump({'items': raw_dump}, f, indent=2)
-
-        # save filtered
+        # Flatten for raw dump without heavy masks
+        raw_items = []
         filtered_json = []
-        for f_idx, lst in enumerate(filtered_per_frame):
+        per_frame_list = per_level[level]
+        frame_count = len(per_frame_list)
+        total_masks = 0
+        for f_idx, lst in enumerate(per_frame_list):
+            # Optionally add uncovered area as a candidate
+            if args.add_gaps:
+                if lst:
+                    H, W = lst[0]['segmentation'].shape
+                    union = np.zeros((H, W), dtype=bool)
+                    for m in lst:
+                        union |= m['segmentation']
+                    gap = ~union
+                    gap_area = int(gap.sum())
+                    if gap_area >= args.min_area:
+                        ys, xs = np.where(gap)
+                        x1, y1, x2, y2 = (int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max()))
+                        bbox = [x1, y1, x2 - x1, y2 - y1]
+                        lst.append({
+                            'frame_idx': f_idx,
+                            'frame_name': f"gap_{f_idx:05d}",
+                            'bbox': bbox,
+                            'area': gap_area,
+                            'stability_score': 1.0,
+                            'level': level,
+                            'segmentation': gap,
+                        })
             meta_list = []
             seg_stack = []
             for j, m in enumerate(lst):
+                raw_items.append({k: (v.tolist() if hasattr(v, 'tolist') else v)
+                                  for k, v in m.items() if k != 'segmentation'})
                 meta = {k: v for k, v in m.items() if k != 'segmentation'}
                 meta['id'] = j
                 meta_list.append(meta)
@@ -174,10 +210,26 @@ def main():
             filtered_json.append({'frame_idx': f_idx, 'count': len(meta_list), 'items': meta_list})
             if seg_stack:
                 np.save(os.path.join(filt_dir, f'seg_frame_{f_idx:05d}.npy'), np.stack(seg_stack, axis=0))
+            total_masks += len(meta_list)
+
+        with open(os.path.join(cand_dir, 'candidates.json'), 'w') as f:
+            json.dump({'items': raw_items}, f, indent=2)
         with open(os.path.join(filt_dir, 'filtered.json'), 'w') as f:
             json.dump({'frames': filtered_json}, f, indent=2)
 
-    print(f"\n🎉 Candidates saved at: {out_root}")
+        level_stats.append((level, frame_count, total_masks))
+
+    if level_stats:
+        summary = "; ".join(
+            f"L{lvl}: {masks} masks across {frames} frames"
+            for lvl, frames, masks in level_stats
+        )
+        LOGGER.info("Persisted levels → %s", summary)
+    LOGGER.info("Candidates saved at %s", out_root)
+    LOGGER.info(
+        "Candidate generation finished in %s",
+        format_seconds(time.perf_counter() - start_time),
+    )
 
 
 if __name__ == '__main__':

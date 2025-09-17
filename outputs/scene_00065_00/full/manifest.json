@@ -1,0 +1,36 @@
+{
+  "mode": "candidates_only",
+  "levels": [
+    2,
+    4,
+    6
+  ],
+  "frames": "1200:1600:20",
+  "min_area": 300,
+  "stability_threshold": 0.9,
+  "data_path": "/media/public_dataset2/multiscan/scene_00065_00/outputs/color",
+  "selected_frames": [
+    "11077.png",
+    "11095.png",
+    "11112.png",
+    "11130.png",
+    "11149.png",
+    "11167.png",
+    "11185.png",
+    "11202.png",
+    "11220.png",
+    "11239.png",
+    "11257.png",
+    "11275.png",
+    "11293.png",
+    "11310.png",
+    "11329.png",
+    "11347.png",
+    "11365.png",
+    "11383.png",
+    "11400.png",
+    "11419.png"
+  ],
+  "sam_ckpt": "/media/Pluto/richkung/Semantic-SAM/checkpoints/swinl_only_sam_many2many.pth",
+  "timestamp": 1757583727
+}

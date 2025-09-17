@@ -1,0 +1,434 @@
+{
+  "2": [
+    {
+      "id": 1,
+      "parent": null,
+      "children": [
+        34,
+        35,
+        36
+      ]
+    },
+    {
+      "id": 2,
+      "parent": null,
+      "children": [
+        37,
+        38,
+        39
+      ]
+    },
+    {
+      "id": 3,
+      "parent": null,
+      "children": [
+        40,
+        41
+      ]
+    },
+    {
+      "id": 4,
+      "parent": null,
+      "children": [
+        42
+      ]
+    },
+    {
+      "id": 5,
+      "parent": null,
+      "children": [
+        43,
+        44,
+        45
+      ]
+    },
+    {
+      "id": 6,
+      "parent": null,
+      "children": [
+        46,
+        47,
+        48
+      ]
+    },
+    {
+      "id": 7,
+      "parent": null,
+      "children": [
+        49
+      ]
+    },
+    {
+      "id": 8,
+      "parent": null,
+      "children": [
+        50,
+        51,
+        52,
+        53,
+        54,
+        55
+      ]
+    },
+    {
+      "id": 9,
+      "parent": null,
+      "children": [
+        56,
+        57
+      ]
+    }
+  ],
+  "4": [
+    {
+      "id": 34,
+      "parent": 1,
+      "children": []
+    },
+    {
+      "id": 35,
+      "parent": 1,
+      "children": [
+        93,
+        94
+      ]
+    },
+    {
+      "id": 36,
+      "parent": 1,
+      "children": [
+        95,
+        96
+      ]
+    },
+    {
+      "id": 37,
+      "parent": 2,
+      "children": [
+        97,
+        98,
+        99
+      ]
+    },
+    {
+      "id": 38,
+      "parent": 2,
+      "children": [
+        100
+      ]
+    },
+    {
+      "id": 39,
+      "parent": 2,
+      "children": []
+    },
+    {
+      "id": 40,
+      "parent": 3,
+      "children": [
+        101,
+        102,
+        103
+      ]
+    },
+    {
+      "id": 41,
+      "parent": 3,
+      "children": [
+        104,
+        105
+      ]
+    },
+    {
+      "id": 42,
+      "parent": 4,
+      "children": [
+        106
+      ]
+    },
+    {
+      "id": 43,
+      "parent": 5,
+      "children": [
+        107,
+        108,
+        109
+      ]
+    },
+    {
+      "id": 44,
+      "parent": 5,
+      "children": [
+        110,
+        111
+      ]
+    },
+    {
+      "id": 45,
+      "parent": 5,
+      "children": [
+        112,
+        113,
+        114
+      ]
+    },
+    {
+      "id": 46,
+      "parent": 6,
+      "children": [
+        115
+      ]
+    },
+    {
+      "id": 47,
+      "parent": 6,
+      "children": [
+        116
+      ]
+    },
+    {
+      "id": 48,
+      "parent": 6,
+      "children": [
+        117
+      ]
+    },
+    {
+      "id": 49,
+      "parent": 7,
+      "children": [
+        118,
+        119
+      ]
+    },
+    {
+      "id": 50,
+      "parent": 8,
+      "children": [
+        120,
+        121
+      ]
+    },
+    {
+      "id": 51,
+      "parent": 8,
+      "children": [
+        122
+      ]
+    },
+    {
+      "id": 52,
+      "parent": 8,
+      "children": []
+    },
+    {
+      "id": 53,
+      "parent": 8,
+      "children": []
+    },
+    {
+      "id": 54,
+      "parent": 8,
+      "children": [
+        123,
+        124,
+        125
+      ]
+    },
+    {
+      "id": 55,
+      "parent": 8,
+      "children": [
+        126,
+        127
+      ]
+    },
+    {
+      "id": 56,
+      "parent": 9,
+      "children": []
+    },
+    {
+      "id": 57,
+      "parent": 9,
+      "children": []
+    }
+  ],
+  "6": [
+    {
+      "id": 93,
+      "parent": 35,
+      "children": []
+    },
+    {
+      "id": 94,
+      "parent": 35,
+      "children": []
+    },
+    {
+      "id": 95,
+      "parent": 36,
+      "children": []
+    },
+    {
+      "id": 96,
+      "parent": 36,
+      "children": []
+    },
+    {
+      "id": 97,
+      "parent": 37,
+      "children": []
+    },
+    {
+      "id": 98,
+      "parent": 37,
+      "children": []
+    },
+    {
+      "id": 99,
+      "parent": 37,
+      "children": []
+    },
+    {
+      "id": 100,
+      "parent": 38,
+      "children": []
+    },
+    {
+      "id": 101,
+      "parent": 40,
+      "children": []
+    },
+    {
+      "id": 102,
+      "parent": 40,
+      "children": []
+    },
+    {
+      "id": 103,
+      "parent": 40,
+      "children": []
+    },
+    {
+      "id": 104,
+      "parent": 41,
+      "children": []
+    },
+    {
+      "id": 105,
+      "parent": 41,
+      "children": []
+    },
+    {
+      "id": 106,
+      "parent": 42,
+      "children": []
+    },
+    {
+      "id": 107,
+      "parent": 43,
+      "children": []
+    },
+    {
+      "id": 108,
+      "parent": 43,
+      "children": []
+    },
+    {
+      "id": 109,
+      "parent": 43,
+      "children": []
+    },
+    {
+      "id": 110,
+      "parent": 44,
+      "children": []
+    },
+    {
+      "id": 111,
+      "parent": 44,
+      "children": []
+    },
+    {
+      "id": 112,
+      "parent": 45,
+      "children": []
+    },
+    {
+      "id": 113,
+      "parent": 45,
+      "children": []
+    },
+    {
+      "id": 114,
+      "parent": 45,
+      "children": []
+    },
+    {
+      "id": 115,
+      "parent": 46,
+      "children": []
+    },
+    {
+      "id": 116,
+      "parent": 47,
+      "children": []
+    },
+    {
+      "id": 117,
+      "parent": 48,
+      "children": []
+    },
+    {
+      "id": 118,
+      "parent": 49,
+      "children": []
+    },
+    {
+      "id": 119,
+      "parent": 49,
+      "children": []
+    },
+    {
+      "id": 120,
+      "parent": 50,
+      "children": []
+    },
+    {
+      "id": 121,
+      "parent": 50,
+      "children": []
+    },
+    {
+      "id": 122,
+      "parent": 51,
+      "children": []
+    },
+    {
+      "id": 123,
+      "parent": 54,
+      "children": []
+    },
+    {
+      "id": 124,
+      "parent": 54,
+      "children": []
+    },
+    {
+      "id": 125,
+      "parent": 54,
+      "children": []
+    },
+    {
+      "id": 126,
+      "parent": 55,
+      "children": []
+    },
+    {
+      "id": 127,
+      "parent": 55,
+      "children": []
+    }
+  ]
+}

@@ -122,13 +122,16 @@ Status
 - Decision: save both raw candidate bbox lists and filtered lists per level.
 - Progress:
   - Added My3DIS/run_pipeline.py (multi-level Semantic-SAM → SAM2 tracking, per-level candidate persistence).
-  - No code executed yet.
+  - Added generate_candidates.py (Semantic-SAM only) and track_from_candidates.py (SAM2 only) to support two-stage execution with existing envs.
+  - Executed demo (two-stage):
+    - Stage 1 (Semantic-SAM env): generated candidates for levels [2,4,6] on first 3 frames in 1200:1600:20.
+    - Stage 2 (SAM2 env): tracked per-level using subset-video of 3 frames.
+    - Outputs saved to My3DIS/outputs/scene_00065_00/demo.
 - Next actions:
   1) Create conda env from Algorithm1_env.yml and register kernel.
   2) Optional: Update notebook to import shared helpers (non-destructive) or copy required functions.
-  3) Run demo (first 3 sampled frames), verify outputs and metrics.
-  4) Run full selection.
-  5) Push Agent.md and run_pipeline.py to GitHub repo https://github.com/RICHKUNG/3DIS.
+  3) Run full selection.
+  4) Push to GitHub repo https://github.com/RICHKUNG/3DIS (credentials required).
 
 Open Items
 - Confirm the target scene(s) under MultiScan for the first run.

@@ -1,0 +1,736 @@
+{
+  "frames": [
+    {
+      "frame_idx": 0,
+      "count": 16,
+      "items": [
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            518,
+            0,
+            182,
+            78
+          ],
+          "area": 8445,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 0
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            527,
+            67,
+            307,
+            431
+          ],
+          "area": 41577,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 1
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            380,
+            210,
+            285,
+            224
+          ],
+          "area": 37698,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 2
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            700,
+            30,
+            152,
+            167
+          ],
+          "area": 12344,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 3
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            477,
+            69,
+            190,
+            100
+          ],
+          "area": 445,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 4
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            742,
+            5,
+            107,
+            33
+          ],
+          "area": 508,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 5
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            452,
+            112,
+            251,
+            130
+          ],
+          "area": 9761,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 6
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            608,
+            66,
+            244,
+            573
+          ],
+          "area": 69610,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 7
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            0,
+            180,
+            575,
+            459
+          ],
+          "area": 98360,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 8
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            476,
+            159,
+            103,
+            33
+          ],
+          "area": 6,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 9
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            401,
+            0,
+            147,
+            70
+          ],
+          "area": 5973,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 10
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            189,
+            68,
+            103,
+            34
+          ],
+          "area": 2283,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 11
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            0,
+            0,
+            510,
+            132
+          ],
+          "area": 42960,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 12
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            0,
+            370,
+            186,
+            192
+          ],
+          "area": 25532,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 13
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            240,
+            386,
+            90,
+            131
+          ],
+          "area": 1047,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 14
+        },
+        {
+          "frame_idx": 0,
+          "frame_name": "11077.png",
+          "bbox": [
+            0,
+            162,
+            268,
+            154
+          ],
+          "area": 2988,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 15
+        }
+      ]
+    },
+    {
+      "frame_idx": 1,
+      "count": 17,
+      "items": [
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            431,
+            19,
+            247,
+            425
+          ],
+          "area": 38238,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 0
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            280,
+            177,
+            247,
+            213
+          ],
+          "area": 32011,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 1
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            264,
+            278,
+            360,
+            313
+          ],
+          "area": 15392,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 2
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            271,
+            320,
+            171,
+            108
+          ],
+          "area": 6026,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 3
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            130,
+            373,
+            113,
+            132
+          ],
+          "area": 2733,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 4
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            0,
+            353,
+            148,
+            217
+          ],
+          "area": 26056,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 5
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            0,
+            566,
+            116,
+            73
+          ],
+          "area": 6957,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 6
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            0,
+            0,
+            366,
+            113
+          ],
+          "area": 25653,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 7
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            0,
+            0,
+            413,
+            157
+          ],
+          "area": 18657,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 8
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            391,
+            0,
+            162,
+            48
+          ],
+          "area": 4901,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 9
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            68,
+            137,
+            108,
+            136
+          ],
+          "area": 9833,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 10
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            218,
+            84,
+            125,
+            148
+          ],
+          "area": 12788,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 11
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            615,
+            7,
+            156,
+            632
+          ],
+          "area": 64344,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 12
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            0,
+            212,
+            308,
+            427
+          ],
+          "area": 58074,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 13
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            522,
+            7,
+            198,
+            632
+          ],
+          "area": 676,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 14
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            98,
+            385,
+            548,
+            254
+          ],
+          "area": 60984,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 15
+        },
+        {
+          "frame_idx": 1,
+          "frame_name": "11095.png",
+          "bbox": [
+            336,
+            33,
+            222,
+            176
+          ],
+          "area": 22928,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 16
+        }
+      ]
+    },
+    {
+      "frame_idx": 2,
+      "count": 18,
+      "items": [
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            351,
+            0,
+            219,
+            409
+          ],
+          "area": 42126,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 0
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            195,
+            149,
+            226,
+            207
+          ],
+          "area": 29144,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 1
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            522,
+            288,
+            15,
+            59
+          ],
+          "area": 427,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 2
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            755,
+            0,
+            97,
+            273
+          ],
+          "area": 13863,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 3
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            0,
+            364,
+            83,
+            275
+          ],
+          "area": 7281,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 4
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            35,
+            360,
+            137,
+            133
+          ],
+          "area": 3099,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 5
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            691,
+            534,
+            56,
+            105
+          ],
+          "area": 4540,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 6
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            539,
+            0,
+            158,
+            639
+          ],
+          "area": 65367,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 7
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            0,
+            260,
+            581,
+            379
+          ],
+          "area": 125448,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 8
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            446,
+            2,
+            252,
+            637
+          ],
+          "area": 618,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 9
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            250,
+            21,
+            94,
+            159
+          ],
+          "area": 7908,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 10
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            0,
+            0,
+            205,
+            71
+          ],
+          "area": 8629,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 11
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            0,
+            109,
+            83,
+            153
+          ],
+          "area": 7520,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 12
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            115,
+            51,
+            142,
+            161
+          ],
+          "area": 11683,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 13
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            0,
+            0,
+            276,
+            117
+          ],
+          "area": 11662,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 14
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            486,
+            0,
+            39,
+            24
+          ],
+          "area": 544,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 15
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            735,
+            539,
+            116,
+            100
+          ],
+          "area": 10162,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 16
+        },
+        {
+          "frame_idx": 2,
+          "frame_name": "11112.png",
+          "bbox": [
+            649,
+            0,
+            196,
+            547
+          ],
+          "area": 46718,
+          "stability_score": 1.0,
+          "level": 4,
+          "id": 17
+        }
+      ]
+    }
+  ]
+}
