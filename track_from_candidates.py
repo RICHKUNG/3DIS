@@ -486,6 +486,7 @@ def save_comparison_proposals(
         all_frames = [f for f in frames_to_save if f in set(all_frames)]
 
     rng = np.random.default_rng(0)
+    sam_color_map: Dict[int, Tuple[int, int, int]] = {}
 
     def build_instance_map_img(target_size: Tuple[int, int], masks: List[np.ndarray]) -> Image.Image:
         H, W = target_size
@@ -504,6 +505,33 @@ def save_comparison_proposals(
         for idx in range(1, inst_map.max() + 1):
             color = tuple(rng.integers(50, 255, size=3).tolist())
             rgb[inst_map == idx] = color
+        return Image.fromarray(rgb, 'RGB')
+
+    def build_sam_instance_map_img(target_size: Tuple[int, int], masks_by_id: Dict[int, np.ndarray]) -> Image.Image:
+        """Render SAM instance map keeping colors aligned with global object ids."""
+        H, W = target_size
+        inst_map = np.zeros((H, W), dtype=np.int32)
+        for obj_id in sorted(masks_by_id.keys()):
+            seg = masks_by_id[obj_id]
+            if seg is None:
+                continue
+            seg_arr = np.asarray(seg)
+            if seg_arr.ndim > 2:
+                seg_arr = np.squeeze(seg_arr)
+            seg_arr = seg_arr > 0
+            if seg_arr.shape != (H, W):
+                seg_img = Image.fromarray((seg_arr.astype(np.uint8) * 255))
+                seg_img = seg_img.resize((W, H), resample=Image.NEAREST)
+                seg_arr = np.array(seg_img) > 127
+            inst_map[(seg_arr) & (inst_map == 0)] = obj_id
+        rgb = np.zeros((H, W, 3), dtype=np.uint8)
+        unique_obj_ids = np.unique(inst_map)
+        for obj_id in unique_obj_ids:
+            if obj_id == 0:
+                continue
+            if obj_id not in sam_color_map:
+                sam_color_map[obj_id] = tuple(rng.integers(50, 255, size=3).tolist())
+            rgb[inst_map == obj_id] = sam_color_map[obj_id]
         return Image.fromarray(rgb, 'RGB')
 
     for f_idx in all_frames:
@@ -529,13 +557,17 @@ def save_comparison_proposals(
                 seg = m.get('segmentation')
                 if isinstance(seg, np.ndarray):
                     sem_masks.append(seg.astype(bool))
-        sam2_masks = []
+        sam2_masks: Dict[int, np.ndarray] = {}
         if f_idx in video_segments:
-            for _, mask in video_segments[f_idx].items():
-                sam2_masks.append(np.squeeze(mask > 0))
+            for obj_key, mask in video_segments[f_idx].items():
+                obj_id = int(obj_key)
+                sam2_masks[obj_id] = np.squeeze(np.asarray(mask) > 0)
 
         sem_img = build_instance_map_img((H, W), sem_masks)
-        sam2_img = build_instance_map_img((H, W), sam2_masks)
+        if sam2_masks:
+            sam2_img = build_sam_instance_map_img((H, W), sam2_masks)
+        else:
+            sam2_img = build_instance_map_img((H, W), [])
 
         pad = 10
         canvas = Image.new('RGB', (W * 2 + pad, H), (0, 0, 0))
