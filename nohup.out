@@ -1,0 +1,37 @@
+[2025-09-17 22:59:25] Starting freq10_area200_stab0.8 → frames=1000:4000:10 min-area=200 stability=0.8
+[2025-09-17 22:59:29] FAILED freq10_area200_stab0.8 (exit 1)
+
+[2025-09-17 22:59:29] Starting freq10_area300_stab0.8 → frames=1000:4000:10 min-area=300 stability=0.8
+[2025-09-17 22:59:33] FAILED freq10_area300_stab0.8 (exit 1)
+
+[2025-09-17 22:59:33] Starting freq10_area500_stab0.8 → frames=1000:4000:10 min-area=500 stability=0.8
+[2025-09-17 22:59:37] FAILED freq10_area500_stab0.8 (exit 1)
+
+[2025-09-17 22:59:37] Starting freq20_area200_stab0.8 → frames=1000:4000:20 min-area=200 stability=0.8
+[2025-09-17 22:59:40] FAILED freq20_area200_stab0.8 (exit 1)
+
+[2025-09-17 22:59:40] Starting freq20_area300_stab0.8 → frames=1000:4000:20 min-area=300 stability=0.8
+[2025-09-17 22:59:44] FAILED freq20_area300_stab0.8 (exit 1)
+
+[2025-09-17 22:59:44] Starting freq20_area500_stab0.8 → frames=1000:4000:20 min-area=500 stability=0.8
+[2025-09-17 22:59:49] FAILED freq20_area500_stab0.8 (exit 1)
+
+[2025-09-17 22:59:49] Starting freq30_area200_stab0.8 → frames=1000:4000:30 min-area=200 stability=0.8
+[2025-09-17 22:59:53] FAILED freq30_area200_stab0.8 (exit 1)
+
+[2025-09-17 22:59:53] Starting freq30_area300_stab0.8 → frames=1000:4000:30 min-area=300 stability=0.8
+[2025-09-17 22:59:57] FAILED freq30_area300_stab0.8 (exit 1)
+
+[2025-09-17 22:59:57] Starting freq30_area500_stab0.8 → frames=1000:4000:30 min-area=500 stability=0.8
+[2025-09-17 23:00:01] FAILED freq30_area500_stab0.8 (exit 1)
+
+[2025-09-17 23:00:01] Starting freq40_area200_stab0.8 → frames=1000:4000:40 min-area=200 stability=0.8
+[2025-09-17 23:00:05] FAILED freq40_area200_stab0.8 (exit 1)
+
+[2025-09-17 23:00:05] Starting freq40_area300_stab0.8 → frames=1000:4000:40 min-area=300 stability=0.8
+[2025-09-17 23:00:09] FAILED freq40_area300_stab0.8 (exit 1)
+
+[2025-09-17 23:00:09] Starting freq40_area500_stab0.8 → frames=1000:4000:40 min-area=500 stability=0.8
+[2025-09-17 23:00:12] FAILED freq40_area500_stab0.8 (exit 1)
+
+[2025-09-17 23:00:13] Sweep finished. Runs attempted: 12, failures: 12
