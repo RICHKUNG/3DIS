@@ -96,16 +96,16 @@ def generate_with_progressive(
                 area = int(m.get('area', int(np.sum(seg))))
                 x1, y1, x2, y2 = bbox_from_mask_xyxy(seg)
                 bbox = xyxy_to_xywh((x1, y1, x2, y2))
+                stability = float(m.get('stability_score', 1.0))
                 frame_cands.append({
                     'frame_idx': f_idx,
                     'frame_name': fname,
                     'bbox': bbox,
                     'area': area,
-                    'stability_score': 1.0,  # not provided by progressive pipeline
+                    'stability_score': stability,
                     'level': L,
                     'segmentation': seg,
                 })
             per_level[L].append(frame_cands)
 
     return per_level
-

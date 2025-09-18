@@ -80,9 +80,11 @@ NO_TIMESTAMP = False        # True 時不加時間戳記
 try:
     import torch
     from torchvision import transforms
+    from torchvision.transforms import InterpolationMode
 except Exception:
     torch = None
     transforms = None
+    InterpolationMode = None
 
 # =====================
 # 工具函數
@@ -243,7 +245,8 @@ def prepare_image_from_pil(pil_img):
 
     if pil_img.mode != 'RGB':
         pil_img = pil_img.convert('RGB')
-    transform1 = transforms.Resize(640, interpolation=Image.BICUBIC)
+    resize_interpolation = InterpolationMode.BICUBIC if InterpolationMode else Image.BICUBIC
+    transform1 = transforms.Resize(640, interpolation=resize_interpolation)
     image_resized = transform1(pil_img)
     image_ori = np.asarray(image_resized)
     images = torch.from_numpy(image_ori.copy()).permute(2, 0, 1).cuda()

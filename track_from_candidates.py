@@ -9,7 +9,7 @@ import json
 import argparse
 import time
 import logging
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, Optional, Union
 
 import numpy as np
 
@@ -118,6 +118,19 @@ def build_subset_video(
                 from shutil import copy2
                 copy2(src, dst)
     return subset_dir, index_to_subset
+
+
+def configure_logging(explicit_level: Optional[int] = None) -> int:
+    if explicit_level is None:
+        log_level_name = os.environ.get("MY3DIS_LOG_LEVEL", "INFO").upper()
+        explicit_level = getattr(logging, log_level_name, logging.INFO)
+
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(level=explicit_level, format="%(message)s")
+    root_logger.setLevel(explicit_level)
+    LOGGER.setLevel(explicit_level)
+    return explicit_level
 
 
 def load_filtered_candidates(level_root: str) -> List[List[Dict[str, Any]]]:
@@ -593,28 +606,27 @@ def save_comparison_proposals(
         copy2(rep_src, rep_dst)
 
 
-def main():
-    ap = argparse.ArgumentParser(description="SAM2 tracking from pre-generated candidates")
-    ap.add_argument('--data-path', required=True, help='Original frames dir')
-    ap.add_argument('--candidates-root', required=True, help='Root containing level_*/filtered')
-    ap.add_argument('--sam2-cfg', default=DEFAULT_SAM2_CFG,
-                    help='SAM2 config YAML or Hydra path (default: sam2.1_hiera_l)')
-    ap.add_argument('--sam2-ckpt', default=DEFAULT_SAM2_CKPT,
-                    help='SAM2 checkpoint path (default: sam2.1_hiera_large.pt)')
-    ap.add_argument('--output', required=True)
-    ap.add_argument('--levels', default='2,4,6')
-    args = ap.parse_args()
-
-    log_level_name = os.environ.get("MY3DIS_LOG_LEVEL", "INFO").upper()
-    log_level = getattr(logging, log_level_name, logging.INFO)
-    logging.basicConfig(level=log_level, format="%(message)s")
-    LOGGER.setLevel(log_level)
+def run_tracking(
+    *,
+    data_path: str,
+    candidates_root: str,
+    output: str,
+    levels: Union[str, List[int]] = "2,4,6",
+    sam2_cfg: str = DEFAULT_SAM2_CFG,
+    sam2_ckpt: str = DEFAULT_SAM2_CKPT,
+    log_level: Optional[int] = None,
+) -> str:
+    configure_logging(log_level)
 
     overall_start = time.perf_counter()
-    LOGGER.info("SAM2 tracking started (levels=%s)", args.levels)
+    if isinstance(levels, str):
+        level_list = [int(x) for x in levels.split(',') if x.strip()]
+    else:
+        level_list = [int(x) for x in levels]
 
-    # Load manifest to get selected frames (for subset)
-    with open(os.path.join(args.candidates_root, 'manifest.json'), 'r') as f:
+    LOGGER.info("SAM2 tracking started (levels=%s)", ",".join(str(x) for x in level_list))
+
+    with open(os.path.join(candidates_root, 'manifest.json'), 'r') as f:
         manifest = json.load(f)
     selected = manifest.get('selected_frames', [])
     selected_indices = manifest.get('selected_indices')
@@ -624,15 +636,14 @@ def main():
         selected_indices = [int(x) for x in selected_indices]
     subset_dir_manifest = manifest.get('subset_dir')
 
-    # Ensure working dir for relative Hydra config paths
     try:
         os.chdir(DEFAULT_SAM2_ROOT)
     except Exception:
         pass
-    sam2_cfg = resolve_sam2_config_path(args.sam2_cfg)
-    predictor = build_sam2_video_predictor(sam2_cfg, args.sam2_ckpt)
+    sam2_cfg_resolved = resolve_sam2_config_path(sam2_cfg)
+    predictor = build_sam2_video_predictor(sam2_cfg_resolved, sam2_ckpt)
 
-    out_root = ensure_dir(args.output)
+    out_root = ensure_dir(output)
     rebuild_subset = False
     if subset_dir_manifest and os.path.isdir(subset_dir_manifest):
         subset_dir = subset_dir_manifest
@@ -650,23 +661,22 @@ def main():
 
     if rebuild_subset:
         subset_dir, subset_map = build_subset_video(
-            frames_dir=args.data_path,
+            frames_dir=data_path,
             selected=selected,
             selected_indices=selected_indices,
             out_root=out_root,
         )
         manifest['subset_dir'] = subset_dir
         manifest['subset_map'] = subset_map
-        with open(os.path.join(args.candidates_root, 'manifest.json'), 'w') as f:
+        with open(os.path.join(candidates_root, 'manifest.json'), 'w') as f:
             json.dump(manifest, f, indent=2)
     LOGGER.info("Selected frames available at %s", subset_dir)
     frame_index_to_name = {idx: name for idx, name in zip(selected_indices, selected)}
 
-    levels = [int(x) for x in str(args.levels).split(',') if str(x).strip()]
     level_stats = []
-    for level in levels:
+    for level in level_list:
         level_start = time.perf_counter()
-        level_root = os.path.join(args.candidates_root, f'level_{level}')
+        level_root = os.path.join(candidates_root, f'level_{level}')
         track_dir = ensure_dir(os.path.join(out_root, f'level_{level}', 'tracking'))
         per_frame = load_filtered_candidates(level_root)
         track_start = time.perf_counter()
@@ -686,19 +696,17 @@ def main():
         persist_time = time.perf_counter() - persist_start
 
         render_start = time.perf_counter()
-        # save per-object masked frames with level+ID labels
         store_output_masks(
             track_dir,
-            args.data_path,
+            data_path,
             segs,
             level=level,
             frame_lookup=frame_index_to_name,
         )
-        # save per-frame overlays and instance maps into the level's viz folder
-        viz_dir = os.path.join(args.output, f'level_{level}', 'viz')
+        viz_dir = os.path.join(out_root, f'level_{level}', 'viz')
         save_viz_frames(
             viz_dir,
-            args.data_path,
+            data_path,
             segs,
             level,
             frame_lookup=frame_index_to_name,
@@ -706,7 +714,7 @@ def main():
         save_instance_maps(viz_dir, segs, level)
         save_comparison_proposals(
             viz_dir=viz_dir,
-            base_frames_dir=args.data_path,
+            base_frames_dir=data_path,
             filtered_per_frame=per_frame,
             video_segments=segs,
             level=level,
@@ -753,6 +761,30 @@ def main():
     LOGGER.info(
         "Tracking completed in %s",
         format_seconds(time.perf_counter() - overall_start),
+    )
+
+    return out_root
+
+
+def main():
+    ap = argparse.ArgumentParser(description="SAM2 tracking from pre-generated candidates")
+    ap.add_argument('--data-path', required=True, help='Original frames dir')
+    ap.add_argument('--candidates-root', required=True, help='Root containing level_*/filtered')
+    ap.add_argument('--sam2-cfg', default=DEFAULT_SAM2_CFG,
+                    help='SAM2 config YAML or Hydra path (default: sam2.1_hiera_l)')
+    ap.add_argument('--sam2-ckpt', default=DEFAULT_SAM2_CKPT,
+                    help='SAM2 checkpoint path (default: sam2.1_hiera_large.pt)')
+    ap.add_argument('--output', required=True)
+    ap.add_argument('--levels', default='2,4,6')
+    args = ap.parse_args()
+
+    run_tracking(
+        data_path=args.data_path,
+        candidates_root=args.candidates_root,
+        output=args.output,
+        levels=args.levels,
+        sam2_cfg=args.sam2_cfg,
+        sam2_ckpt=args.sam2_ckpt,
     )
 
 

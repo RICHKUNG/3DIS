@@ -6,7 +6,7 @@ Reference
 
 Status
 - Plan agreed: levels [2,4,6], frame slice 1200:1600:20, quick demos use the first three sampled frames.
-- `run_pipeline.py` still supports single-environment runs with baked-in checkpoints, but the default workflow now swaps between dedicated Semantic-SAM and SAM2 conda envs.
+- `run_pipeline.py` now reuses the same candidate/track modules as `run_experiment.sh`, so a single-environment run yields identical artifacts without duplicating logic; the default workflow still swaps between dedicated Semantic-SAM and SAM2 conda envs.
 - `run_experiment.sh` coordinates the two-stage execution (generate → track); dataset/output paths are fixed in the script so the CLI only adjusts levels, frame ranges, and thresholds.
 - Per-level outputs must persist raw and filtered candidate lists alongside SAM2 tracking artifacts.
 
@@ -16,11 +16,12 @@ Progress Log
 - Added `run_experiment.sh` to orchestrate stage execution across environments with sensible defaults.
 - Completed demo run on first three frames of scene_00065_00 via the two-stage path; results saved under `My3DIS/outputs/scene_00065_00/demo`.
 - README updated with consolidated operational guidance from the earlier planning document, plus the fixed-path orchestrator workflow.
+- 2025-09-18: Unified pipeline code paths (run_pipeline → generate_candidates/track_from_candidates, progressive candidates now honor stability thresholds) and executed `./run_experiment.sh --levels "1,3,5" --frames "1200:1600:20" --min-area 400 --stability 0.8`; full run finished in ~22m with outputs under `My3DIS/outputs/scene_00065_00/20250918_095823`.
 
 Next Actions
 1) Create the shared environment from `Algorithm1_env.yml` (optional but recommended).
 2) Update or clone the notebook (`algorithm1.ipynb`) to reuse the helper functions if interactive analysis is needed.
-3) Execute the full frame selection via `./run_experiment.sh` once resource scheduling is available.
+3) Execute the full frame selection via `./run_experiment.sh` once resource scheduling is available. ✅ 2025-09-18 run completed for levels 1/3/5.
 4) Push code to https://github.com/RICHKUNG/3DIS when credentials are ready.
 
 Open Items
