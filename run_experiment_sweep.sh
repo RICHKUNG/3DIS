@@ -25,9 +25,17 @@ LEVELS=${LEVELS:-"2,4,6"}
 LOG_ROOT=${LOG_ROOT:-"$SCRIPT_DIR/logs"}
 mkdir -p "$LOG_ROOT"
 
+SWEEP_STAMP=${SWEEP_STAMP:-$(date +%Y%m%d_%H%M%S)}
+SWEEP_LOG_DIR="$LOG_ROOT/$SWEEP_STAMP"
+mkdir -p "$SWEEP_LOG_DIR"
+
 print_ts() {
   date '+%Y-%m-%d %H:%M:%S'
 }
+
+SWEEP_SUMMARY="$SWEEP_LOG_DIR/sweep_summary.log"
+: > "$SWEEP_SUMMARY"
+echo "[$(print_ts)] Sweep logs directory: $SWEEP_LOG_DIR" | tee -a "$SWEEP_SUMMARY"
 
 run_count=0
 fail_count=0
@@ -39,7 +47,7 @@ for freq in "${FREQUENCIES[@]}"; do
       ((run_count++)) || true
       label="freq${freq}_area${min_area}_stab${stability}"
       stamp=$(date +%Y%m%d_%H%M%S)
-      log_file="$LOG_ROOT/run_${label}_${stamp}.log"
+      log_file="$SWEEP_LOG_DIR/run_${label}_${stamp}.log"
 
       echo "[$(print_ts)] Starting $label → frames=$frames min-area=$min_area stability=$stability" | tee -a "$log_file"
 
@@ -61,4 +69,4 @@ for freq in "${FREQUENCIES[@]}"; do
   done
 done
 
-echo "[$(print_ts)] Sweep finished. Runs attempted: $run_count, failures: $fail_count" | tee -a "$LOG_ROOT/sweep_summary.log"
+echo "[$(print_ts)] Sweep finished. Runs attempted: $run_count, failures: $fail_count" | tee -a "$SWEEP_SUMMARY"

@@ -17,6 +17,7 @@ Progress Log
 - Completed demo run on first three frames of scene_00065_00 via the two-stage path; results saved under `My3DIS/outputs/scene_00065_00/demo`.
 - README updated with consolidated operational guidance from the earlier planning document, plus the fixed-path orchestrator workflow.
 - 2025-09-18: Unified pipeline code paths (run_pipeline → generate_candidates/track_from_candidates, progressive candidates now honor stability thresholds) and executed `./run_experiment.sh --levels "1,3,5" --frames "1200:1600:20" --min-area 400 --stability 0.8`; full run finished in ~22m with outputs under `My3DIS/outputs/scene_00065_00/20250918_095823`.
+- 2025-09-18: Investigated why `python run_pipeline.py` is slower than `./run_experiment.sh`; root cause is single-environment execution missing Semantic-SAM/SAM2 specific CUDA builds and the combined process double-buffering both models in memory. Recommendation kept: prefer `run_experiment.sh` or reintroduce per-stage environments when running the Python orchestrator directly.
 
 Next Actions
 1) Create the shared environment from `Algorithm1_env.yml` (optional but recommended).
