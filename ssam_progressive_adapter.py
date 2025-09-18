@@ -8,6 +8,8 @@ Runs under the Semantic-SAM environment.
 
 import os
 import sys
+import contextlib
+import io
 from typing import List, Dict, Any, Tuple
 import numpy as np
 
@@ -68,6 +70,8 @@ def generate_with_progressive(
 
     per_level: Dict[int, List[List[Dict[str, Any]]]] = {L: [] for L in levels}
 
+    verbose = os.environ.get("MY3DIS_VERBOSE_PROGRESSIVE") == "1"
+
     for f_idx, fname in enumerate(selected_frames):
         image_path = os.path.join(frames_dir, fname)
         # Create isolated output dirs for this image to avoid clashes
@@ -75,15 +79,34 @@ def generate_with_progressive(
         out_dirs = setup_output_directories(image_out)
 
         # Run progressive refinement on this single image
-        results = progressive_refinement_masks(
-            semantic_sam,
-            image_path,
-            level_sequence=levels,
-            output_dirs=out_dirs,
-            min_area=min_area,
-            max_masks_per_level=2000,
-            save_viz=False,
-        )
+        if verbose:
+            results = progressive_refinement_masks(
+                semantic_sam,
+                image_path,
+                level_sequence=levels,
+                output_dirs=out_dirs,
+                min_area=min_area,
+                max_masks_per_level=2000,
+                save_viz=False,
+            )
+        else:
+            buf_out, buf_err = io.StringIO(), io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+                    results = progressive_refinement_masks(
+                        semantic_sam,
+                        image_path,
+                        level_sequence=levels,
+                        output_dirs=out_dirs,
+                        min_area=min_area,
+                        max_masks_per_level=2000,
+                        save_viz=False,
+                    )
+            except Exception:
+                # Preserve captured logs to aid debugging before re-raising
+                print(buf_out.getvalue(), file=sys.stderr, end="")
+                print(buf_err.getvalue(), file=sys.stderr, end="")
+                raise
 
         for L in levels:
             masks = results['levels'].get(L, {}).get('masks', [])

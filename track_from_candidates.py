@@ -23,6 +23,44 @@ import torch
 
 LOGGER = logging.getLogger("my3dis.track_from_candidates")
 
+
+# Masks are stored packed-bytes to keep peak RAM usage manageable while
+# still allowing downstream code to transparently request dense arrays.
+PACKED_MASK_KEY = "packed_bits"
+PACKED_SHAPE_KEY = "shape"
+
+
+def pack_binary_mask(mask: np.ndarray) -> Dict[str, Any]:
+    bool_mask = np.asarray(mask, dtype=np.bool_, order="C")
+    packed = np.packbits(bool_mask.ravel())
+    return {
+        PACKED_MASK_KEY: packed,
+        PACKED_SHAPE_KEY: tuple(int(dim) for dim in bool_mask.shape),
+    }
+
+
+def is_packed_mask(entry: Any) -> bool:
+    return (
+        isinstance(entry, dict)
+        and PACKED_MASK_KEY in entry
+        and PACKED_SHAPE_KEY in entry
+    )
+
+
+def unpack_binary_mask(entry: Any) -> np.ndarray:
+    if is_packed_mask(entry):
+        shape = entry[PACKED_SHAPE_KEY]
+        if isinstance(shape, np.ndarray):
+            shape = tuple(int(v) for v in shape.tolist())
+        total = int(np.prod(shape))
+        unpacked = np.unpackbits(entry[PACKED_MASK_KEY], count=total)
+        return unpacked.reshape(shape).astype(np.bool_)
+    array = np.asarray(entry)
+    if array.dtype != np.bool_:
+        array = array.astype(np.bool_)
+    return array
+
+
 DEFAULT_SAM2_CFG = os.path.join(
     DEFAULT_SAM2_ROOT,
     "sam2",
@@ -81,13 +119,15 @@ def bbox_scalar_fit(bboxes: List[List[int]], scalar_x: float, scalar_y: float) -
     return bboxes
 
 
-def compute_iou(mask1: np.ndarray, mask2: np.ndarray) -> float:
-    if mask1.shape == mask2.shape:
-        inter = np.logical_and(mask1, mask2).sum()
-        union = np.logical_or(mask1, mask2).sum()
+def compute_iou(mask1: Any, mask2: Any) -> float:
+    arr1 = unpack_binary_mask(mask1)
+    arr2 = unpack_binary_mask(mask2)
+    if arr1.shape == arr2.shape:
+        inter = np.logical_and(arr1, arr2).sum()
+        union = np.logical_or(arr1, arr2).sum()
         return float(inter) / float(union) if union else 0.0
-    m1 = torch.from_numpy(mask1.astype(np.float32)).unsqueeze(0).unsqueeze(0)
-    m2 = torch.from_numpy(mask2.astype(np.float32)).unsqueeze(0).unsqueeze(0)
+    m1 = torch.from_numpy(arr1.astype(np.float32)).unsqueeze(0).unsqueeze(0)
+    m2 = torch.from_numpy(arr2.astype(np.float32)).unsqueeze(0).unsqueeze(0)
     m2r = torch.nn.functional.interpolate(m2, size=m1.shape[-2:], mode='bilinear', align_corners=False)
     m2r = (m2r > 0.5).squeeze()
     m1 = m1.squeeze()
@@ -165,7 +205,7 @@ def sam2_tracking(
 ):
     with torch.inference_mode(), torch.autocast("cuda"):
         obj_count = 1
-        final_video_segments: Dict[int, Dict[int, np.ndarray]] = {}
+        final_video_segments: Dict[int, Dict[int, Any]] = {}
 
         # init state once and reuse it across iterations
         state = predictor.init_state(video_path=frames_dir)
@@ -231,10 +271,10 @@ def sam2_tracking(
                     abs_out_idx = local_to_abs.get(out_fidx)
                     if abs_out_idx is None:
                         continue
-                    frame_data = {
-                        out_obj_id: (out_mask_logits[i] > 0.0).cpu().numpy()
-                        for i, out_obj_id in enumerate(out_obj_ids)
-                    }
+                    frame_data = {}
+                    for i, out_obj_id in enumerate(out_obj_ids):
+                        mask_arr = (out_mask_logits[i] > 0.0).cpu().numpy()
+                        frame_data[int(out_obj_id)] = pack_binary_mask(mask_arr)
                     if abs_out_idx not in segs:
                         segs[abs_out_idx] = {}
                     segs[abs_out_idx].update(frame_data)
@@ -264,14 +304,17 @@ def sam2_tracking(
         return final_video_segments
 
 
-def save_video_segments_npz(segments: Dict[int, Dict[int, np.ndarray]], path: str) -> None:
-    packed = {str(k): {str(kk): vv.astype(np.uint8) for kk, vv in v.items()} for k, v in segments.items()}
+def save_video_segments_npz(segments: Dict[int, Dict[int, Any]], path: str) -> None:
+    packed = {
+        str(frame_idx): {str(obj_id): mask for obj_id, mask in frame_data.items()}
+        for frame_idx, frame_data in segments.items()
+    }
     np.savez_compressed(path, data=packed)
 
 
-def reorganize_segments_by_object(segments: Dict[int, Dict[int, np.ndarray]]) -> Dict[int, Dict[int, np.ndarray]]:
+def reorganize_segments_by_object(segments: Dict[int, Dict[int, Any]]) -> Dict[int, Dict[int, Any]]:
     """Re-index frame-major predictions into an object-major structure."""
-    per_object: Dict[int, Dict[int, np.ndarray]] = {}
+    per_object: Dict[int, Dict[int, Any]] = {}
     for frame_idx, frame_data in segments.items():
         for obj_id_raw, mask in frame_data.items():
             obj_id = int(obj_id_raw)
@@ -282,10 +325,10 @@ def reorganize_segments_by_object(segments: Dict[int, Dict[int, np.ndarray]]) ->
     return per_object
 
 
-def save_object_segments_npz(segments: Dict[int, Dict[int, np.ndarray]], path: str) -> None:
+def save_object_segments_npz(segments: Dict[int, Dict[int, Any]], path: str) -> None:
     """Persist object-major mask stacks mirroring the frame-major archive."""
     packed = {
-        str(obj_id): {str(frame_idx): mask.astype(np.uint8) for frame_idx, mask in frames.items()}
+        str(obj_id): {str(frame_idx): mask for frame_idx, mask in frames.items()}
         for obj_id, frames in segments.items()
     }
     np.savez_compressed(path, data=packed)
@@ -294,7 +337,7 @@ def save_object_segments_npz(segments: Dict[int, Dict[int, np.ndarray]], path: s
 def store_output_masks(
     output_root: str,
     frames_dir: str,
-    video_segments: Dict[int, Dict[int, np.ndarray]],
+    video_segments: Dict[int, Dict[int, Any]],
     level: Optional[int] = None,
     frame_lookup: Dict[int, str] = None,
     add_label: bool = True,
@@ -346,7 +389,7 @@ def store_output_masks(
                 frame_array = cache_entry
 
             mask = object_segments[obj_id][frame_idx]
-            mask_arr = np.squeeze(np.asarray(mask) > 0)
+            mask_arr = np.squeeze(unpack_binary_mask(mask))
             if mask_arr.ndim != 2:
                 continue
             if mask_arr.shape != frame_array.shape[:2]:
@@ -404,7 +447,7 @@ def store_output_masks(
 def save_viz_frames(
     viz_dir: str,
     frames_dir: str,
-    video_segments: Dict[int, Dict[int, np.ndarray]],
+    video_segments: Dict[int, Dict[int, Any]],
     level: int,
     frame_lookup: Dict[int, str] = None,
 ):
@@ -428,7 +471,7 @@ def save_viz_frames(
                 if int(obj_id) not in color_map:
                     color_map[int(obj_id)] = tuple(rng.integers(50, 255, size=3).tolist())
                 color = color_map[int(obj_id)]
-                m = np.squeeze(mask>0)
+                m = np.squeeze(unpack_binary_mask(mask))
                 # create colored alpha mask
                 alpha = (m.astype(np.uint8)*120)
                 rgba = np.zeros((m.shape[0], m.shape[1], 4), dtype=np.uint8)
@@ -442,7 +485,7 @@ def save_viz_frames(
         comp.convert('RGB').save(out_path)
 
 
-def save_instance_maps(viz_dir: str, video_segments: Dict[int, Dict[int, np.ndarray]], level: int):
+def save_instance_maps(viz_dir: str, video_segments: Dict[int, Dict[int, Any]], level: int):
     """Save colored instance maps with consistent colors for an object across frames."""
     inst_dir = ensure_dir(os.path.join(viz_dir, 'instance_map'))
     from PIL import Image
@@ -452,13 +495,13 @@ def save_instance_maps(viz_dir: str, video_segments: Dict[int, Dict[int, np.ndar
     for frame_idx in sorted(video_segments.keys()):
         objs = video_segments[frame_idx]
         # find a reference shape
-        first_mask = next(iter(objs.values()))
+        first_mask = unpack_binary_mask(next(iter(objs.values())))
         H, W = first_mask.shape[-2], first_mask.shape[-1]
         inst_map = np.zeros((H, W), dtype=np.int32)
         # assign object ids directly so colors remain consistent across frames
         for obj_id_key in sorted(objs.keys(), key=lambda x: int(x)):
             obj_id = int(obj_id_key)
-            m = np.squeeze(objs[obj_id_key] > 0)
+            m = np.squeeze(unpack_binary_mask(objs[obj_id_key]))
             inst_map[(m) & (inst_map == 0)] = obj_id
         # colorize with a global map per object id
         rgb = np.zeros((H, W, 3), dtype=np.uint8)
@@ -472,7 +515,7 @@ def save_comparison_proposals(
     viz_dir: str,
     base_frames_dir: str,
     filtered_per_frame: List[List[Dict[str, Any]]],
-    video_segments: Dict[int, Dict[int, np.ndarray]],
+    video_segments: Dict[int, Dict[int, Any]],
     level: int,
     frame_numbers: List[int] = None,
     frames_to_save: List[int] = None,
@@ -551,7 +594,7 @@ def save_comparison_proposals(
         # Determine target size
         H = W = None
         if f_idx in video_segments and len(video_segments[f_idx]) > 0:
-            first_mask = next(iter(video_segments[f_idx].values()))
+            first_mask = unpack_binary_mask(next(iter(video_segments[f_idx].values())))
             H, W = first_mask.shape[-2], first_mask.shape[-1]
         else:
             local_idx = frame_number_to_local.get(f_idx)
@@ -574,7 +617,7 @@ def save_comparison_proposals(
         if f_idx in video_segments:
             for obj_key, mask in video_segments[f_idx].items():
                 obj_id = int(obj_key)
-                sam2_masks[obj_id] = np.squeeze(np.asarray(mask) > 0)
+                sam2_masks[obj_id] = np.squeeze(unpack_binary_mask(mask))
 
         sem_img = build_instance_map_img((H, W), sem_masks)
         if sam2_masks:
@@ -603,7 +646,7 @@ def save_comparison_proposals(
         rep_dst = os.path.join(viz_dir, f"compare_L{level}.png")
         if os.path.exists(rep_src):
             from shutil import copy2
-        copy2(rep_src, rep_dst)
+            copy2(rep_src, rep_dst)
 
 
 def run_tracking(

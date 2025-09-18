@@ -9,6 +9,7 @@ match what ``run_experiment.sh`` produces.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -86,7 +87,7 @@ def main():
 
     expected_run_dir = args.output if args.no_timestamp else os.path.join(args.output, '<timestamp>')
 
-    run_dir, stage1_duration = run_stage(
+    stage1_result, stage1_duration = run_stage(
         "Stage 1: Semantic-SAM candidate generation",
         run_candidate_generation,
         data_path=args.data_path,
@@ -101,12 +102,29 @@ def main():
         dry_run=args.dry_run,
         dry_run_details="invoke generate_candidates.run_generation(...)",
     )
+    stage1_manifest = None
     if args.dry_run:
         run_dir = expected_run_dir
     else:
+        if isinstance(stage1_result, tuple):
+            if len(stage1_result) != 2:
+                raise ValueError(
+                    "generate_candidates.run_generation() should return (run_dir, manifest)"
+                )
+            run_dir, stage1_manifest = stage1_result
+        elif isinstance(stage1_result, str):
+            run_dir = stage1_result
+        else:
+            raise TypeError(
+                "Unexpected return type from generate_candidates.run_generation(): "
+                f"{type(stage1_result)!r}"
+            )
         stage_summary.append(("Stage 1", stage1_duration))
 
     print(f"Outputs located at: {run_dir}")
+    if stage1_manifest is not None:
+        print("  Stage 1 manifest:")
+        print(json.dumps(stage1_manifest, indent=2, sort_keys=True))
 
     _, stage2_duration = run_stage(
         "Stage 2: SAM2 tracking",
