@@ -25,6 +25,7 @@ Options:
   --stability THR             Minimum stability_score (default: 0.9)
   --ssam-freq N               Run Semantic-SAM every N frames (default: 1)
   --sam2-max-propagate N      Max frames to propagate in each direction (default: unlimited)
+  --experiment-tag TAG        Optional custom tag to append (default: auto-generated)
   --sam-ckpt PATH             Override Semantic-SAM checkpoint (default set in script)
   --sam2-cfg PATH             Override SAM2 YAML config (default set in script)
   --sam2-ckpt PATH            Override SAM2 checkpoint (default set in script)
@@ -34,23 +35,30 @@ Options:
   --dry-run                   Print the commands without executing
   -h, --help                  Show this help
 
+Note: Folder names automatically include key parameters for easy identification:
+  Format: YYYYMMDD_HHMMSS_L2_4_6_ssam2_prop30_[custom_params]
+
 Examples:
-  # 基本使用
+  # 基本使用 (輸出: 20250922_143052_L2_4_6_ssam1)
   ./run_experiment.sh
 
   # 每2張圖片執行一次SSAM，SAM2最多向前後各傳播30幀
+  # 輸出: 20250922_143052_L2_4_6_ssam2_prop30
   ./run_experiment.sh --ssam-freq 2 --sam2-max-propagate 30
 
-  # 自定義路徑和參數
+  # 自定義參數和幀範圍
+  # 輸出: 20250922_143052_L2_4_ssam3_prop50_area500_stab0.8
   ./run_experiment.sh \
     --levels 2,4 \
-    --frames 1000:2000:10 \
+    --frames 1000:2000:50 \
     --ssam-freq 3 \
     --sam2-max-propagate 50 \
-    --min-area 500
+    --min-area 500 \
+    --stability 0.8
 
-  # 乾運行檢查命令
-  ./run_experiment.sh --ssam-freq 2 --sam2-max-propagate 30 --dry-run
+  # 加上自定義標籤
+  # 輸出: 20250922_143052_L2_4_6_ssam2_prop30_test_run
+  ./run_experiment.sh --ssam-freq 2 --sam2-max-propagate 30 --experiment-tag "test_run"
 USAGE
 }
 
@@ -62,9 +70,10 @@ SAM2_CKPT="$DEFAULT_SAM2_CKPT"
 LEVELS="2,4,6"
 FRAMES="1200:1600:20"
 MIN_AREA="300"
-STABILITY="1.0"
+STABILITY="0.9"
 SSAM_FREQ="1"
 SAM2_MAX_PROPAGATE=""
+EXPERIMENT_TAG=""
 SEM_ENV="Semantic-SAM"
 SAM2_ENV="SAM2"
 NO_TIMESTAMP=0
@@ -81,6 +90,7 @@ while [[ $# -gt 0 ]]; do
     --stability) STABILITY="$2"; shift 2;;
     --ssam-freq) SSAM_FREQ="$2"; shift 2;;
     --sam2-max-propagate) SAM2_MAX_PROPAGATE="$2"; shift 2;;
+    --experiment-tag) EXPERIMENT_TAG="$2"; shift 2;;
     --semantic-env) SEM_ENV="$2"; shift 2;;
     --sam2-env) SAM2_ENV="$2"; shift 2;;
     --no-timestamp) NO_TIMESTAMP=1; shift;;
@@ -110,14 +120,18 @@ stage1_cmd=(conda run --live-stream -n "$SEM_ENV" python -u "$GEN_SCRIPT" \
   --data-path "$DATA_PATH_ABS" \
   --levels "$LEVELS" \
   --frames "$FRAMES" \
-  --sam-ckpt "$SAM_CKPT" \
-  --output "$OUTPUT_ROOT_ABS" \
   --min-area "$MIN_AREA" \
   --stability-threshold "$STABILITY" \
-  --ssam-freq "$SSAM_FREQ")
+  --ssam-freq "$SSAM_FREQ" \
+  --sam-ckpt "$SAM_CKPT" \
+  --output "$OUTPUT_ROOT_ABS")
 
 if [[ -n "$SAM2_MAX_PROPAGATE" ]]; then
   stage1_cmd+=(--sam2-max-propagate "$SAM2_MAX_PROPAGATE")
+fi
+
+if [[ -n "$EXPERIMENT_TAG" ]]; then
+  stage1_cmd+=(--experiment-tag "$EXPERIMENT_TAG")
 fi
 
 if [[ $NO_TIMESTAMP -eq 1 ]]; then

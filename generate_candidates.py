@@ -115,6 +115,7 @@ def run_generation(
     log_level: Optional[int] = None,
     ssam_freq: int = 1,
     sam2_max_propagate: int = None,
+    experiment_tag: str = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Generate candidates and persist them in the standard layout.
 
@@ -158,12 +159,45 @@ def run_generation(
         len(selected),
     )
 
+    # 建立自動化的資料夾名稱，包含重要參數
+    def build_folder_name():
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # 重要參數
+        levels_str = "L" + "_".join(str(x) for x in level_list)
+        ssam_str = f"ssam{ssam_freq}"
+        
+        # 可選參數
+        parts = [timestamp, levels_str, ssam_str]
+        
+        if sam2_max_propagate is not None:
+            parts.append(f"prop{sam2_max_propagate}")
+            
+        if min_area != 300:
+            parts.append(f"area{min_area}")
+            
+        if stability_threshold != 0.9:
+            parts.append(f"stab{stability_threshold:.1f}")
+            
+        if add_gaps:
+            parts.append("gaps")
+            
+        # 如果有自定義標籤，加到最後
+        if experiment_tag:
+            parts.append(experiment_tag)
+            
+        return "_".join(parts)
+
     if no_timestamp:
-        run_root = ensure_dir(output)
+        if experiment_tag:
+            run_root = ensure_dir(os.path.join(output, experiment_tag))
+        else:
+            run_root = ensure_dir(output)
         timestamp = None
     else:
+        folder_name = build_folder_name()
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_root = ensure_dir(os.path.join(output, timestamp))
+        run_root = ensure_dir(os.path.join(output, folder_name))
 
     # 只為有 SSAM 分割的幀建立 subset
     subset_dir, subset_map = build_subset_video(
@@ -183,6 +217,7 @@ def run_generation(
         'ssam_absolute_indices': ssam_absolute_indices,
         'ssam_freq': ssam_freq,
         'sam2_max_propagate': sam2_max_propagate,
+        'experiment_tag': experiment_tag,
         'subset_dir': subset_dir,
         'subset_map': subset_map,
         'sam_ckpt': sam_ckpt,
@@ -320,6 +355,8 @@ def main():
                     help='Run Semantic-SAM every N frames (default: 1, means every frame)')
     ap.add_argument('--sam2-max-propagate', type=int, default=None,
                     help='Maximum number of frames to propagate in each direction for SAM2 (default: no limit)')
+    ap.add_argument('--experiment-tag', type=str, default=None,
+                    help='Custom tag to append to timestamp for experiment identification')
     args = ap.parse_args()
 
     run_generation(
@@ -334,6 +371,7 @@ def main():
         no_timestamp=args.no_timestamp,
         ssam_freq=args.ssam_freq,
         sam2_max_propagate=args.sam2_max_propagate,
+        experiment_tag=args.experiment_tag,
     )
 
 

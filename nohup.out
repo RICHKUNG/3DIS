@@ -1,65 +1,0 @@
-→ Stage 1: Semantic-SAM candidate generation
-Semantic-SAM candidate generation started (levels=2,4, frames=1000:2000:50, ssam_freq=2)
-Will run Semantic-SAM on 10 frames (every 2 frames from 20 selected frames)
-Selected 10 SSAM frames cached at /media/Pluto/richkung/My3DIS/outputs/scene_00065_00/20250922_202057/selected_frames
-URL https://github.com/SwinTransformer/storage/releases/download/v1.0.0/swin_large_patch4_window12_384_22k.pth cached in /home/rich/.torch/iopath_cache/SwinTransformer/storage/releases/download/v1.0.0/swin_large_patch4_window12_384_22k.pth
-$UNUSED$ criterion.empty_weight, Ckpt Shape: torch.Size([2])
-Persisted levels → L2: 76 masks across 10 SSAM frames; L4: 140 masks across 10 SSAM frames
-Candidates saved at /media/Pluto/richkung/My3DIS/outputs/scene_00065_00/20250922_202057
-Candidate generation finished in 02:10
-  completed in 02:17
-Outputs located at: /media/Pluto/richkung/My3DIS/outputs/scene_00065_00/20250922_202057
-
-→ Stage 2: SAM2 tracking
-SAM2 tracking started (levels=2,4)
-Configuration: ssam_freq=2, sam2_max_propagate=10, ssam_frames=10
-Loaded checkpoint sucessfully
-Selected frames available at /media/Pluto/richkung/My3DIS/outputs/scene_00065_00/20250922_202057/selected_frames
-frame loading (JPEG):   0%|          | 0/10 [00:00<?, ?it/s]frame loading (JPEG):  10%|█         | 1/10 [00:00<00:00,  9.54it/s]frame loading (JPEG):  20%|██        | 2/10 [00:00<00:00,  9.50it/s]frame loading (JPEG):  40%|████      | 4/10 [00:00<00:00, 11.74it/s]frame loading (JPEG):  60%|██████    | 6/10 [00:00<00:00, 14.36it/s]frame loading (JPEG):  80%|████████  | 8/10 [00:00<00:00, 16.07it/s]frame loading (JPEG): 100%|██████████| 10/10 [00:00<00:00, 16.79it/s]frame loading (JPEG): 100%|██████████| 10/10 [00:00<00:00, 14.84it/s]
-Traceback (most recent call last):
-  File "/media/Pluto/richkung/My3DIS/track_from_candidates.py", line 893, in <module>
-    main()
-  File "/media/Pluto/richkung/My3DIS/track_from_candidates.py", line 882, in main
-    run_tracking(
-  File "/media/Pluto/richkung/My3DIS/track_from_candidates.py", line 783, in run_tracking
-    segs = sam2_tracking(
-  File "/media/Pluto/richkung/My3DIS/track_from_candidates.py", line 301, in sam2_tracking
-    collect(
-  File "/media/Pluto/richkung/My3DIS/track_from_candidates.py", line 277, in collect
-    for out_fidx, out_obj_ids, out_mask_logits in iterator:
-  File "/home/rich/miniconda3/envs/SAM2/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 27, in generator_context
-    gen = func(*args, **kwargs)
-TypeError: SAM2VideoPredictor.propagate_in_video() got an unexpected keyword argument 'max_frame_num'
-ERROR conda.cli.main_run:execute(125): `conda run python -u /media/Pluto/richkung/My3DIS/track_from_candidates.py --data-path /media/public_dataset2/multiscan/scene_00065_00/outputs/color --sam2-cfg /media/Pluto/richkung/SAM2/sam2/configs/sam2.1/sam2.1_hiera_l.yaml --sam2-ckpt /media/Pluto/richkung/SAM2/checkpoints/sam2.1_hiera_large.pt --levels 2,4 --candidates-root /media/Pluto/richkung/My3DIS/outputs/scene_00065_00/20250922_202057 --output /media/Pluto/richkung/My3DIS/outputs/scene_00065_00/20250922_202057` failed. (See above for error)
-  failed after 01:35
-→ Stage 1: Semantic-SAM candidate generation
-Traceback (most recent call last):
-  File "/media/Pluto/richkung/My3DIS/generate_candidates.py", line 22, in <module>
-    from ssam_progressive_adapter import generate_with_progressive, ensure_dir
-  File "/media/Pluto/richkung/My3DIS/ssam_progressive_adapter.py", line 22, in <module>
-    from semantic_sam import build_semantic_sam, prepare_image  # noqa: E402
-  File "/media/Pluto/richkung/Semantic-SAM/semantic_sam/__init__.py", line 5, in <module>
-    from .architectures import build_model
-  File "/media/Pluto/richkung/Semantic-SAM/semantic_sam/architectures/__init__.py", line 1, in <module>
-    from .interactive_mask_dino import *
-  File "/media/Pluto/richkung/Semantic-SAM/semantic_sam/architectures/interactive_mask_dino.py", line 14, in <module>
-    from ..body import build_semantic_sam_head
-  File "/media/Pluto/richkung/Semantic-SAM/semantic_sam/body/__init__.py", line 1, in <module>
-    from .build import build_semantic_sam_head
-  File "/media/Pluto/richkung/Semantic-SAM/semantic_sam/body/build.py", line 3, in <module>
-    from .general_head import *
-  File "/media/Pluto/richkung/Semantic-SAM/semantic_sam/body/general_head.py", line 15, in <module>
-    from .decoder import build_decoder
-  File "/media/Pluto/richkung/Semantic-SAM/semantic_sam/body/decoder/__init__.py", line 1, in <module>
-    from .build import build_decoder
-  File "<frozen importlib._bootstrap>", line 1007, in _find_and_load
-  File "<frozen importlib._bootstrap>", line 986, in _find_and_load_unlocked
-  File "<frozen importlib._bootstrap>", line 680, in _load_unlocked
-  File "<frozen importlib._bootstrap_external>", line 846, in exec_module
-  File "<frozen importlib._bootstrap_external>", line 941, in get_code
-  File "<frozen importlib._bootstrap_external>", line 1040, in get_data
-KeyboardInterrupt
-
-CondaError: KeyboardInterrupt
-
-  failed after 00:06

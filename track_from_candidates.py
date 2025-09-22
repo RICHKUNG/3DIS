@@ -835,6 +835,8 @@ def run_tracking(
         # 加載候選項和對應的幀索引
         per_frame, frame_indices = load_filtered_candidates(level_root)
         
+        LOGGER.info(f"Level {level}: Processing {len(per_frame)} frames with SAM2 tracking...")
+        
         track_start = time.perf_counter()
         segs = sam2_tracking(
             subset_dir,
@@ -886,13 +888,14 @@ def run_tracking(
         render_time = time.perf_counter() - render_start
 
         form_time = time.perf_counter() - level_start
+        
+        # 只在每個 level 結束時顯示詳細信息
         LOGGER.info(
-            "  Timings → track=%s, persist=%s, render=%s, total=%s",
-            format_seconds(track_time),
-            format_seconds(persist_time),
-            format_seconds(render_time),
-            format_seconds(form_time),
+            f"Level {level} completed → {len(obj_segments)} objects across {len(segs)} frames "
+            f"(track: {format_seconds(track_time)}, persist: {format_seconds(persist_time)}, "
+            f"render: {format_seconds(render_time)}, total: {format_seconds(form_time)})"
         )
+        
         level_stats.append(
             (
                 level,
@@ -903,13 +906,6 @@ def run_tracking(
                 render_time,
                 form_time,
             )
-        )
-        LOGGER.info(
-            "Level %d finished in %s (objects=%d, frames=%d)",
-            level,
-            format_seconds(form_time),
-            len(obj_segments),
-            len(segs),
         )
 
     if level_stats:
