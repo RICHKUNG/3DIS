@@ -15,7 +15,7 @@ import numpy as np
 
 DEFAULT_SAM2_ROOT = "/media/Pluto/richkung/SAM2"
 if DEFAULT_SAM2_ROOT not in sys.path:
-    sys.path.append(DEFAULT_SAM2_ROOT)
+    sys.path.insert(0, DEFAULT_SAM2_ROOT)
 
 from sam2.build_sam import build_sam2_video_predictor
 
@@ -173,12 +173,15 @@ def configure_logging(explicit_level: Optional[int] = None) -> int:
     return explicit_level
 
 
-def load_filtered_candidates(level_root: str) -> List[List[Dict[str, Any]]]:
+def load_filtered_candidates(level_root: str) -> Tuple[List[List[Dict[str, Any]]], List[int]]:
+    """加載篩選後的候選項，返回候選項列表和對應的幀索引"""
     filt_dir = os.path.join(level_root, 'filtered')
     with open(os.path.join(filt_dir, 'filtered.json'), 'r') as f:
         meta = json.load(f)
     frames_meta = meta.get('frames', [])
     per_frame = []
+    frame_indices = []
+    
     for fm in frames_meta:
         fidx = fm['frame_idx']
         items = fm['items']
@@ -193,7 +196,9 @@ def load_filtered_candidates(level_root: str) -> List[List[Dict[str, Any]]]:
             d['segmentation'] = seg
             lst.append(d)
         per_frame.append(lst)
-    return per_frame
+        frame_indices.append(fidx)
+    
+    return per_frame, frame_indices
 
 
 def sam2_tracking(
@@ -202,6 +207,7 @@ def sam2_tracking(
     mask_candidates: List[List[Dict[str, Any]]],
     frame_numbers: List[int],
     iou_threshold=0.6,
+    max_propagate: Optional[int] = None,
 ):
     with torch.inference_mode(), torch.autocast("cuda"):
         obj_count = 1
@@ -216,6 +222,17 @@ def sam2_tracking(
         sy = state['video_height'] / h0
 
         local_to_abs = {i: frame_numbers[i] for i in range(len(frame_numbers))}
+        total_frames = len(frame_numbers)
+
+        if max_propagate is not None:
+            try:
+                max_propagate = max(0, int(max_propagate))
+            except (TypeError, ValueError):
+                LOGGER.warning(
+                    "Invalid max_propagate=%r supplied; disabling propagation limit",
+                    max_propagate,
+                )
+                max_propagate = None
 
         for frame_idx, frame_masks in enumerate(mask_candidates):
             # clear prompts from the previous loop without reloading video frames
@@ -279,22 +296,30 @@ def sam2_tracking(
                         segs[abs_out_idx] = {}
                     segs[abs_out_idx].update(frame_data)
 
-            collect(
-                predictor.propagate_in_video(
-                    state,
-                    start_frame_idx=frame_idx,
-                    reverse=False,
-                )
-            )
-            if frame_idx > 0:
-                # Run an additional backward sweep so late discoveries can fill early frames.
-                collect(
-                    predictor.propagate_in_video(
-                        state,
-                        start_frame_idx=frame_idx,
-                        reverse=True,
-                    )
-                )
+            # Determine propagation budget in both temporal directions.
+            forward_budget = max(0, total_frames - frame_idx - 1)
+            backward_budget = max(0, frame_idx)
+            if max_propagate is not None:
+                forward_budget = min(forward_budget, max_propagate)
+                backward_budget = min(backward_budget, max_propagate)
+
+            if forward_budget > 0:
+                forward_kwargs = {
+                    'start_frame_idx': frame_idx,
+                    'reverse': False,
+                }
+                if max_propagate is not None:
+                    forward_kwargs['max_frame_num_to_track'] = forward_budget
+                collect(predictor.propagate_in_video(state, **forward_kwargs))
+
+            if backward_budget > 0:
+                backward_kwargs = {
+                    'start_frame_idx': frame_idx,
+                    'reverse': True,
+                }
+                if max_propagate is not None:
+                    backward_kwargs['max_frame_num_to_track'] = backward_budget
+                collect(predictor.propagate_in_video(state, **backward_kwargs))
 
             for abs_out_idx, frame_data in segs.items():
                 if abs_out_idx not in final_video_segments:
@@ -485,25 +510,48 @@ def save_viz_frames(
         comp.convert('RGB').save(out_path)
 
 
-def save_instance_maps(viz_dir: str, video_segments: Dict[int, Dict[int, Any]], level: int):
+def save_instance_maps(
+    viz_dir: str,
+    video_segments: Dict[int, Dict[int, Any]],
+    level: int,
+    frame_lookup: Dict[int, str] = None,
+):
     """Save colored instance maps with consistent colors for an object across frames."""
     inst_dir = ensure_dir(os.path.join(viz_dir, 'instance_map'))
     from PIL import Image
-    all_obj_ids = sorted({int(k) for frame in video_segments.values() for k in frame.keys()})
+
+    if frame_lookup:
+        target_frames = [int(idx) for idx in sorted(frame_lookup.keys())]
+    else:
+        target_frames = [int(idx) for idx in sorted(video_segments.keys())]
+
+    if not target_frames:
+        return
+
+    all_obj_ids = sorted(
+        {
+            int(obj_id)
+            for frame_idx in target_frames
+            for obj_id in video_segments.get(frame_idx, {}).keys()
+        }
+    )
+    if not all_obj_ids:
+        return
+
     rng = np.random.default_rng(0)
-    color_map = {oid: tuple(rng.integers(50,255,size=3).tolist()) for oid in all_obj_ids}
-    for frame_idx in sorted(video_segments.keys()):
-        objs = video_segments[frame_idx]
-        # find a reference shape
+    color_map = {oid: tuple(rng.integers(50, 255, size=3).tolist()) for oid in all_obj_ids}
+
+    for frame_idx in target_frames:
+        objs = video_segments.get(frame_idx)
+        if not objs:
+            continue
         first_mask = unpack_binary_mask(next(iter(objs.values())))
         H, W = first_mask.shape[-2], first_mask.shape[-1]
         inst_map = np.zeros((H, W), dtype=np.int32)
-        # assign object ids directly so colors remain consistent across frames
         for obj_id_key in sorted(objs.keys(), key=lambda x: int(x)):
             obj_id = int(obj_id_key)
             m = np.squeeze(unpack_binary_mask(objs[obj_id_key]))
             inst_map[(m) & (inst_map == 0)] = obj_id
-        # colorize with a global map per object id
         rgb = np.zeros((H, W, 3), dtype=np.uint8)
         for obj_id, col in color_map.items():
             rgb[inst_map == obj_id] = col
@@ -521,6 +569,7 @@ def save_comparison_proposals(
     frames_to_save: List[int] = None,
 ):
     """Save side-by-side comparisons using instance maps (no base image).
+    Only render frames that have SSAM processing.
 
     Left: SemanticSAM instance map
     Right: SAM2 instance map
@@ -533,13 +582,10 @@ def save_comparison_proposals(
         frame_numbers = list(range(len(filtered_per_frame)))
     frame_number_to_local = {fn: idx for idx, fn in enumerate(frame_numbers)}
 
-    # Determine all frame indices to render
-    max_f_filtered = len(filtered_per_frame) - 1
-    frames_from_sam2 = sorted(list(video_segments.keys()))
-    frames_from_sem = list(frame_numbers)
-    all_frames = sorted(set(frames_from_sam2) | set(frames_from_sem))
+    # 只渲染有 SSAM 處理的幀（即 frame_numbers 中的幀）
+    frames_to_render = sorted(frame_numbers)
     if frames_to_save is not None:
-        all_frames = [f for f in frames_to_save if f in set(all_frames)]
+        frames_to_render = [f for f in frames_to_save if f in set(frame_numbers)]
 
     rng = np.random.default_rng(0)
     sam_color_map: Dict[int, Tuple[int, int, int]] = {}
@@ -590,29 +636,37 @@ def save_comparison_proposals(
             rgb[inst_map == obj_id] = sam_color_map[obj_id]
         return Image.fromarray(rgb, 'RGB')
 
-    for f_idx in all_frames:
-        # Determine target size
+    rendered_count = 0
+    for f_idx in frames_to_render:
+        # 確保這一幀有 SSAM 處理
+        local_idx = frame_number_to_local.get(f_idx)
+        if local_idx is None or local_idx >= len(filtered_per_frame):
+            continue
+
+        # 從有 SSAM 分割的幀獲取尺寸
         H = W = None
-        if f_idx in video_segments and len(video_segments[f_idx]) > 0:
-            first_mask = unpack_binary_mask(next(iter(video_segments[f_idx].values())))
-            H, W = first_mask.shape[-2], first_mask.shape[-1]
-        else:
-            local_idx = frame_number_to_local.get(f_idx)
-            if local_idx is not None and 0 <= local_idx <= max_f_filtered and filtered_per_frame[local_idx]:
-                seg0 = filtered_per_frame[local_idx][0].get('segmentation')
-                if isinstance(seg0, np.ndarray):
-                    H, W = seg0.shape[:2]
+        if filtered_per_frame[local_idx]:
+            seg0 = filtered_per_frame[local_idx][0].get('segmentation')
+            if isinstance(seg0, np.ndarray):
+                H, W = seg0.shape[:2]
+        
+        # 如果無法從 SSAM 獲取尺寸，嘗試從 SAM2 結果獲取
+        if H is None or W is None:
+            if f_idx in video_segments and len(video_segments[f_idx]) > 0:
+                first_mask = unpack_binary_mask(next(iter(video_segments[f_idx].values())))
+                H, W = first_mask.shape[-2], first_mask.shape[-1]
+        
         if H is None or W is None:
             continue
 
-        # Gather masks
+        # 收集 SSAM masks
         sem_masks = []
-        local_idx = frame_number_to_local.get(f_idx)
-        if local_idx is not None and 0 <= local_idx <= max_f_filtered:
-            for m in filtered_per_frame[local_idx]:
-                seg = m.get('segmentation')
-                if isinstance(seg, np.ndarray):
-                    sem_masks.append(seg.astype(bool))
+        for m in filtered_per_frame[local_idx]:
+            seg = m.get('segmentation')
+            if isinstance(seg, np.ndarray):
+                sem_masks.append(seg.astype(bool))
+
+        # 收集 SAM2 masks
         sam2_masks: Dict[int, np.ndarray] = {}
         if f_idx in video_segments:
             for obj_key, mask in video_segments[f_idx].items():
@@ -640,9 +694,12 @@ def save_comparison_proposals(
 
         out_path = os.path.join(out_dir, f"frame_{f_idx:05d}_L{level}.png")
         canvas.save(out_path)
+        rendered_count += 1
 
-    if all_frames:
-        rep_src = os.path.join(out_dir, f"frame_{all_frames[0]:05d}_L{level}.png")
+    # 創建代表性圖片
+    if rendered_count > 0:
+        first_frame = frames_to_render[0]
+        rep_src = os.path.join(out_dir, f"frame_{first_frame:05d}_L{level}.png")
         rep_dst = os.path.join(viz_dir, f"compare_L{level}.png")
         if os.path.exists(rep_src):
             from shutil import copy2
@@ -657,6 +714,7 @@ def run_tracking(
     levels: Union[str, List[int]] = "2,4,6",
     sam2_cfg: str = DEFAULT_SAM2_CFG,
     sam2_ckpt: str = DEFAULT_SAM2_CKPT,
+    sam2_max_propagate: Optional[int] = None,
     log_level: Optional[int] = None,
 ) -> str:
     configure_logging(log_level)
@@ -671,13 +729,45 @@ def run_tracking(
 
     with open(os.path.join(candidates_root, 'manifest.json'), 'r') as f:
         manifest = json.load(f)
+    
+    # 讀取相關參數
     selected = manifest.get('selected_frames', [])
     selected_indices = manifest.get('selected_indices')
+    ssam_frames = manifest.get('ssam_frames', selected)  # 有 SSAM 分割的幀
+    ssam_absolute_indices = manifest.get('ssam_absolute_indices', selected_indices)
+    ssam_freq = manifest.get('ssam_freq', 1)
+    manifest_max_propagate = manifest.get('sam2_max_propagate')
+    
     if selected_indices is None:
         selected_indices = list(range(len(selected)))
     else:
         selected_indices = [int(x) for x in selected_indices]
+    
+    if ssam_absolute_indices is None:
+        ssam_absolute_indices = selected_indices
+    else:
+        ssam_absolute_indices = [int(x) for x in ssam_absolute_indices]
+        
     subset_dir_manifest = manifest.get('subset_dir')
+
+    if sam2_max_propagate is None:
+        sam2_max_propagate = manifest_max_propagate
+    if sam2_max_propagate is not None:
+        try:
+            sam2_max_propagate = max(0, int(sam2_max_propagate))
+        except (TypeError, ValueError):
+            LOGGER.warning(
+                "Invalid sam2_max_propagate=%r; defaulting to unlimited",
+                sam2_max_propagate,
+            )
+            sam2_max_propagate = None
+
+    LOGGER.info(
+        "Configuration: ssam_freq=%d, sam2_max_propagate=%s, ssam_frames=%d",
+        ssam_freq,
+        sam2_max_propagate if sam2_max_propagate is not None else "unlimited",
+        len(ssam_frames),
+    )
 
     try:
         os.chdir(DEFAULT_SAM2_ROOT)
@@ -703,10 +793,11 @@ def run_tracking(
         rebuild_subset = True
 
     if rebuild_subset:
+        # 使用 SSAM 幀來重建 subset
         subset_dir, subset_map = build_subset_video(
             frames_dir=data_path,
-            selected=selected,
-            selected_indices=selected_indices,
+            selected=ssam_frames,
+            selected_indices=ssam_absolute_indices,
             out_root=out_root,
         )
         manifest['subset_dir'] = subset_dir
@@ -714,21 +805,27 @@ def run_tracking(
         with open(os.path.join(candidates_root, 'manifest.json'), 'w') as f:
             json.dump(manifest, f, indent=2)
     LOGGER.info("Selected frames available at %s", subset_dir)
-    frame_index_to_name = {idx: name for idx, name in zip(selected_indices, selected)}
+    
+    # 建立幀索引對應關係（針對有 SSAM 分割的幀）
+    frame_index_to_name = {idx: name for idx, name in zip(ssam_absolute_indices, ssam_frames)}
 
     level_stats = []
     for level in level_list:
         level_start = time.perf_counter()
         level_root = os.path.join(candidates_root, f'level_{level}')
         track_dir = ensure_dir(os.path.join(out_root, f'level_{level}', 'tracking'))
-        per_frame = load_filtered_candidates(level_root)
+        
+        # 加載候選項和對應的幀索引
+        per_frame, frame_indices = load_filtered_candidates(level_root)
+        
         track_start = time.perf_counter()
         segs = sam2_tracking(
             subset_dir,
             predictor,
             per_frame,
-            frame_numbers=selected_indices,
+            frame_numbers=frame_indices,  # 使用實際的幀索引
             iou_threshold=0.6,
+            max_propagate=sam2_max_propagate,
         )
         track_time = time.perf_counter() - track_start
 
@@ -754,14 +851,19 @@ def run_tracking(
             level,
             frame_lookup=frame_index_to_name,
         )
-        save_instance_maps(viz_dir, segs, level)
+        save_instance_maps(
+            viz_dir,
+            segs,
+            level,
+            frame_lookup=frame_index_to_name,
+        )
         save_comparison_proposals(
             viz_dir=viz_dir,
             base_frames_dir=data_path,
             filtered_per_frame=per_frame,
             video_segments=segs,
             level=level,
-            frame_numbers=selected_indices,
+            frame_numbers=frame_indices,  # 使用實際的幀索引
             frames_to_save=None,
         )
         render_time = time.perf_counter() - render_start
@@ -819,6 +921,8 @@ def main():
                     help='SAM2 checkpoint path (default: sam2.1_hiera_large.pt)')
     ap.add_argument('--output', required=True)
     ap.add_argument('--levels', default='2,4,6')
+    ap.add_argument('--sam2-max-propagate', type=int, default=None,
+                    help='Limit SAM2 propagation to N frames per direction (default: unlimited)')
     args = ap.parse_args()
 
     run_tracking(
@@ -828,6 +932,7 @@ def main():
         levels=args.levels,
         sam2_cfg=args.sam2_cfg,
         sam2_ckpt=args.sam2_ckpt,
+        sam2_max_propagate=args.sam2_max_propagate,
     )
 
 

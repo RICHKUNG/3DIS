@@ -113,6 +113,8 @@ def run_generation(
     add_gaps: bool = False,
     no_timestamp: bool = False,
     log_level: Optional[int] = None,
+    ssam_freq: int = 1,
+    sam2_max_propagate: int = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """Generate candidates and persist them in the standard layout.
 
@@ -126,16 +128,34 @@ def run_generation(
     level_list = parse_levels(levels)
     start_idx, end_idx, step = parse_range(frames)
 
+    try:
+        ssam_freq = max(1, int(ssam_freq))
+    except (TypeError, ValueError):
+        LOGGER.warning("Invalid ssam_freq=%r; defaulting to 1", ssam_freq)
+        ssam_freq = 1
+
     all_frames = sorted(
         [f for f in os.listdir(frames_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
     )
     selected_indices = list(range(start_idx, min(end_idx, len(all_frames)), step))
     selected = [all_frames[i] for i in selected_indices]
 
+    # 選擇需要進行 Semantic-SAM 分割的幀（按 ssam_freq 間隔）
+    ssam_local_indices = list(range(0, len(selected), ssam_freq))
+    ssam_frames = [selected[i] for i in ssam_local_indices]
+    ssam_absolute_indices = [selected_indices[i] for i in ssam_local_indices]
+
     LOGGER.info(
-        "Semantic-SAM candidate generation started (levels=%s, frames=%s)",
+        "Semantic-SAM candidate generation started (levels=%s, frames=%s, ssam_freq=%d)",
         ",".join(str(x) for x in level_list),
         frames,
+        ssam_freq,
+    )
+    LOGGER.info(
+        "Will run Semantic-SAM on %d frames (every %d frames from %d selected frames)",
+        len(ssam_frames),
+        ssam_freq,
+        len(selected),
     )
 
     if no_timestamp:
@@ -145,8 +165,9 @@ def run_generation(
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         run_root = ensure_dir(os.path.join(output, timestamp))
 
+    # 只為有 SSAM 分割的幀建立 subset
     subset_dir, subset_map = build_subset_video(
-        frames_dir, selected, selected_indices, run_root
+        frames_dir, ssam_frames, ssam_absolute_indices, run_root
     )
     manifest = {
         'mode': 'candidates_only',
@@ -157,6 +178,11 @@ def run_generation(
         'data_path': frames_dir,
         'selected_frames': selected,
         'selected_indices': selected_indices,
+        'ssam_frames': ssam_frames,
+        'ssam_indices': ssam_local_indices,
+        'ssam_absolute_indices': ssam_absolute_indices,
+        'ssam_freq': ssam_freq,
+        'sam2_max_propagate': sam2_max_propagate,
         'subset_dir': subset_dir,
         'subset_map': subset_map,
         'sam_ckpt': sam_ckpt,
@@ -166,11 +192,12 @@ def run_generation(
     }
     with open(os.path.join(run_root, 'manifest.json'), 'w') as f:
         json.dump(manifest, f, indent=2)
-    LOGGER.info("Selected %d frames cached at %s", len(selected), subset_dir)
+    LOGGER.info("Selected %d SSAM frames cached at %s", len(ssam_frames), subset_dir)
 
+    # 只對選定的幀進行 Semantic-SAM 分割
     per_level = generate_with_progressive(
         frames_dir=frames_dir,
-        selected_frames=selected,
+        selected_frames=ssam_frames,
         sam_ckpt_path=sam_ckpt,
         levels=level_list,
         min_area=min_area,
@@ -190,8 +217,12 @@ def run_generation(
         frame_count = len(per_frame_list)
         total_masks = 0
 
+        # 只處理有 SSAM 分割的幀
         for f_idx, lst in enumerate(per_frame_list):
             candidates = list(lst)
+            # 記錄這是第幾個 SSAM 處理的幀
+            ssam_frame_idx = ssam_absolute_indices[f_idx]
+
             if add_gaps and candidates:
                 H, W = candidates[0]['segmentation'].shape
                 union = np.zeros((H, W), dtype=bool)
@@ -209,8 +240,8 @@ def run_generation(
                     )
                     bbox = [x1, y1, x2 - x1, y2 - y1]
                     candidates.append({
-                        'frame_idx': f_idx,
-                        'frame_name': f"gap_{f_idx:05d}",
+                        'frame_idx': ssam_frame_idx,
+                        'frame_name': f"gap_{ssam_frame_idx:05d}",
                         'bbox': bbox,
                         'area': gap_area,
                         'stability_score': 1.0,
@@ -222,6 +253,9 @@ def run_generation(
             seg_stack = []
             filtered_local_index = 0
             for m in candidates:
+                # 更新 frame_idx 為在 selected 中的索引
+                m['frame_idx'] = ssam_frame_idx
+                
                 # Persist raw metadata without heavy segmentation masks.
                 raw_items.append({
                     k: (v.tolist() if hasattr(v, 'tolist') else v)
@@ -240,10 +274,10 @@ def run_generation(
                 seg_stack.append(m['segmentation'].astype(np.uint8))
                 filtered_local_index += 1
 
-            filtered_json.append({'frame_idx': f_idx, 'count': len(meta_list), 'items': meta_list})
+            filtered_json.append({'frame_idx': ssam_frame_idx, 'count': len(meta_list), 'items': meta_list})
             if seg_stack:
                 np.save(
-                    os.path.join(filt_dir, f'seg_frame_{f_idx:05d}.npy'),
+                    os.path.join(filt_dir, f'seg_frame_{ssam_frame_idx:05d}.npy'),
                     np.stack(seg_stack, axis=0),
                 )
             total_masks += len(meta_list)
@@ -257,7 +291,7 @@ def run_generation(
 
     if level_stats:
         summary = "; ".join(
-            f"L{lvl}: {masks} masks across {frames} frames"
+            f"L{lvl}: {masks} masks across {frames} SSAM frames"
             for lvl, frames, masks in level_stats
         )
         LOGGER.info("Persisted levels → %s", summary)
@@ -282,6 +316,10 @@ def main():
     ap.add_argument('--stability-threshold', type=float, default=0.9)
     ap.add_argument('--add-gaps', action='store_true', help='Add uncovered area as a candidate per frame per level')
     ap.add_argument('--no-timestamp', action='store_true', help='Do not append a timestamp folder to output root')
+    ap.add_argument('--ssam-freq', type=int, default=1, 
+                    help='Run Semantic-SAM every N frames (default: 1, means every frame)')
+    ap.add_argument('--sam2-max-propagate', type=int, default=None,
+                    help='Maximum number of frames to propagate in each direction for SAM2 (default: no limit)')
     args = ap.parse_args()
 
     run_generation(
@@ -294,6 +332,8 @@ def main():
         stability_threshold=args.stability_threshold,
         add_gaps=args.add_gaps,
         no_timestamp=args.no_timestamp,
+        ssam_freq=args.ssam_freq,
+        sam2_max_propagate=args.sam2_max_propagate,
     )
 
 
