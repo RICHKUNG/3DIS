@@ -209,6 +209,17 @@ def sam2_tracking(
     iou_threshold=0.6,
     max_propagate: Optional[int] = None,
 ):
+    # 禁用 tqdm 進度條
+    import os
+    os.environ['TQDM_DISABLE'] = '1'
+    
+    # 也可以嘗試直接禁用 tqdm
+    try:
+        import tqdm
+        tqdm.tqdm.disable = True
+    except ImportError:
+        pass
+    
     with torch.inference_mode(), torch.autocast("cuda"):
         obj_count = 1
         final_video_segments: Dict[int, Dict[int, Any]] = {}
@@ -303,23 +314,29 @@ def sam2_tracking(
                 forward_budget = min(forward_budget, max_propagate)
                 backward_budget = min(backward_budget, max_propagate)
 
-            if forward_budget > 0:
-                forward_kwargs = {
-                    'start_frame_idx': frame_idx,
-                    'reverse': False,
-                }
-                if max_propagate is not None:
-                    forward_kwargs['max_frame_num_to_track'] = forward_budget
-                collect(predictor.propagate_in_video(state, **forward_kwargs))
+            # 使用上下文管理器來禁用 tqdm
+            import contextlib
+            import io
+            
+            # 捕獲並丟棄 tqdm 輸出
+            with contextlib.redirect_stderr(io.StringIO()):
+                if forward_budget > 0:
+                    forward_kwargs = {
+                        'start_frame_idx': frame_idx,
+                        'reverse': False,
+                    }
+                    if max_propagate is not None:
+                        forward_kwargs['max_frame_num_to_track'] = forward_budget
+                    collect(predictor.propagate_in_video(state, **forward_kwargs))
 
-            if backward_budget > 0:
-                backward_kwargs = {
-                    'start_frame_idx': frame_idx,
-                    'reverse': True,
-                }
-                if max_propagate is not None:
-                    backward_kwargs['max_frame_num_to_track'] = backward_budget
-                collect(predictor.propagate_in_video(state, **backward_kwargs))
+                if backward_budget > 0:
+                    backward_kwargs = {
+                        'start_frame_idx': frame_idx,
+                        'reverse': True,
+                    }
+                    if max_propagate is not None:
+                        backward_kwargs['max_frame_num_to_track'] = backward_budget
+                    collect(predictor.propagate_in_video(state, **backward_kwargs))
 
             for abs_out_idx, frame_data in segs.items():
                 if abs_out_idx not in final_video_segments:

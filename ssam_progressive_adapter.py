@@ -10,6 +10,7 @@ import os
 import sys
 import contextlib
 import io
+import logging
 from typing import List, Dict, Any, Tuple
 import numpy as np
 
@@ -24,6 +25,9 @@ from progressive_refinement import (
     progressive_refinement_masks,  # noqa: E402
     setup_output_directories,      # noqa: E402
 )
+
+
+LOGGER = logging.getLogger("my3dis.ssam_progressive")
 
 
 def ensure_dir(p: str) -> str:
@@ -41,6 +45,69 @@ def bbox_from_mask_xyxy(seg: np.ndarray) -> Tuple[int, int, int, int]:
 def xyxy_to_xywh(b):
     x1, y1, x2, y2 = b
     return [int(x1), int(y1), int(max(0, x2 - x1)), int(max(0, y2 - y1))]
+
+
+def _extract_gap_components(segs: List[np.ndarray], min_area: int) -> List[np.ndarray]:
+    """Return boolean masks for uncovered connected components above min_area."""
+    valid = [np.asarray(seg, dtype=bool) for seg in segs if seg is not None]
+    if not valid:
+        return []
+
+    ref_shape = valid[0].shape
+    coverage = np.zeros(ref_shape, dtype=bool)
+    for seg in valid:
+        if seg.shape != ref_shape:
+            LOGGER.debug(
+                "Skipping gap computation for mask with mismatched shape %s != %s",
+                seg.shape,
+                ref_shape,
+            )
+            continue
+        coverage |= seg
+
+    gap = np.logical_not(coverage)
+    if not gap.any():
+        return []
+
+    h, w = gap.shape
+    visited = np.zeros_like(gap, dtype=bool)
+    gap_components: List[np.ndarray] = []
+
+    def neighbors(y: int, x: int):
+        if y > 0:
+            yield y - 1, x
+        if y + 1 < h:
+            yield y + 1, x
+        if x > 0:
+            yield y, x - 1
+        if x + 1 < w:
+            yield y, x + 1
+
+    for y in range(h):
+        for x in range(w):
+            if not gap[y, x] or visited[y, x]:
+                continue
+            stack = [(y, x)]
+            visited[y, x] = True
+            coords: List[Tuple[int, int]] = []
+
+            while stack:
+                cy, cx = stack.pop()
+                coords.append((cy, cx))
+                for ny, nx in neighbors(cy, cx):
+                    if gap[ny, nx] and not visited[ny, nx]:
+                        visited[ny, nx] = True
+                        stack.append((ny, nx))
+
+            if len(coords) < min_area:
+                continue
+
+            comp_mask = np.zeros_like(gap, dtype=bool)
+            ys, xs = zip(*coords)
+            comp_mask[ys, xs] = True
+            gap_components.append(comp_mask)
+
+    return gap_components
 
 
 def generate_with_progressive(
@@ -71,6 +138,8 @@ def generate_with_progressive(
     per_level: Dict[int, List[List[Dict[str, Any]]]] = {L: [] for L in levels}
 
     verbose = os.environ.get("MY3DIS_VERBOSE_PROGRESSIVE") == "1"
+
+    base_level = min(levels) if levels else None
 
     for f_idx, fname in enumerate(selected_frames):
         image_path = os.path.join(frames_dir, fname)
@@ -108,16 +177,42 @@ def generate_with_progressive(
                 print(buf_err.getvalue(), file=sys.stderr, end="")
                 raise
 
+        additional_gap_masks: List[Dict[str, Any]] = []
+        if base_level is not None:
+            base_masks = results['levels'].get(base_level, {}).get('masks', [])
+            base_segs = [m.get('segmentation') for m in base_masks if m.get('segmentation') is not None]
+            gap_components = _extract_gap_components(base_segs, min_area)
+            if gap_components:
+                for comp in gap_components:
+                    additional_gap_masks.append({
+                        'segmentation': comp,
+                        'stability_score': 1.0,
+                        'area': int(comp.sum()),
+                        'level': base_level,
+                        'source': 'gap_fill',
+                    })
+                LOGGER.info(
+                    "Frame %s: added %d gap-fill masks at level %s",
+                    fname,
+                    len(additional_gap_masks),
+                    base_level,
+                )
+
         for L in levels:
-            masks = results['levels'].get(L, {}).get('masks', [])
+            masks = list(results['levels'].get(L, {}).get('masks', []))
+            if L == base_level and additional_gap_masks:
+                masks.extend(additional_gap_masks)
             # Build candidate list for this frame
             frame_cands: List[Dict[str, Any]] = []
             for m in masks:
                 seg = m.get('segmentation')
                 if seg is None:
                     continue
-                area = int(m.get('area', int(np.sum(seg))))
-                x1, y1, x2, y2 = bbox_from_mask_xyxy(seg)
+                seg_bool = np.asarray(seg, dtype=bool)
+                area = int(m.get('area', int(np.sum(seg_bool))))
+                if area == 0:
+                    continue
+                x1, y1, x2, y2 = bbox_from_mask_xyxy(seg_bool)
                 bbox = xyxy_to_xywh((x1, y1, x2, y2))
                 stability = float(m.get('stability_score', 1.0))
                 frame_cands.append({
@@ -127,7 +222,7 @@ def generate_with_progressive(
                     'area': area,
                     'stability_score': stability,
                     'level': L,
-                    'segmentation': seg,
+                    'segmentation': seg_bool,
                 })
             per_level[L].append(frame_cands)
 
