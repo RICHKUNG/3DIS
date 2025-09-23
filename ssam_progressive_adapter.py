@@ -11,6 +11,7 @@ import sys
 import contextlib
 import io
 import logging
+import tempfile
 from typing import List, Dict, Any, Tuple
 import numpy as np
 
@@ -117,6 +118,7 @@ def generate_with_progressive(
     levels: List[int],
     min_area: int = 300,
     save_root: str = None,
+    persist_outputs: bool = False,
 ) -> Dict[int, List[List[Dict[str, Any]]]]:
     """Generate per-level candidates using progressive_refinement.
 
@@ -131,9 +133,9 @@ def generate_with_progressive(
 
     semantic_sam = build_semantic_sam(model_type="L", ckpt=sam_ckpt_path)
 
-    # Prepare a lightweight output_dirs for progressive_refinement (disable viz to minimize IO)
-    if save_root is None:
-        save_root = ensure_dir(os.path.join(frames_dir, "_tmp_progressive"))
+    # When persist_outputs is False we rely on temporary directories so no artifacts remain on disk.
+    if save_root is not None and persist_outputs:
+        save_root = ensure_dir(save_root)
 
     per_level: Dict[int, List[List[Dict[str, Any]]]] = {L: [] for L in levels}
 
@@ -143,30 +145,26 @@ def generate_with_progressive(
 
     for f_idx, fname in enumerate(selected_frames):
         image_path = os.path.join(frames_dir, fname)
-        # Create isolated output dirs for this image to avoid clashes
-        image_out = ensure_dir(os.path.join(save_root, f"pr_{os.path.splitext(fname)[0]}"))
-        out_dirs = setup_output_directories(image_out)
 
-        # Run progressive refinement on this single image
-        if verbose:
-            results = progressive_refinement_masks(
-                semantic_sam,
-                image_path,
-                level_sequence=levels,
-                output_dirs=out_dirs,
-                min_area=min_area,
-                max_masks_per_level=2000,
-                save_viz=False,
-            )
-        else:
+        def run_progressive(output_dirs: Dict[str, str]):
+            if verbose:
+                return progressive_refinement_masks(
+                    semantic_sam,
+                    image_path,
+                    level_sequence=levels,
+                    output_dirs=output_dirs,
+                    min_area=min_area,
+                    max_masks_per_level=2000,
+                    save_viz=False,
+                )
             buf_out, buf_err = io.StringIO(), io.StringIO()
             try:
                 with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
-                    results = progressive_refinement_masks(
+                    return progressive_refinement_masks(
                         semantic_sam,
                         image_path,
                         level_sequence=levels,
-                        output_dirs=out_dirs,
+                        output_dirs=output_dirs,
                         min_area=min_area,
                         max_masks_per_level=2000,
                         save_viz=False,
@@ -176,6 +174,19 @@ def generate_with_progressive(
                 print(buf_out.getvalue(), file=sys.stderr, end="")
                 print(buf_err.getvalue(), file=sys.stderr, end="")
                 raise
+
+        if persist_outputs:
+            image_out = ensure_dir(os.path.join(save_root, f"pr_{os.path.splitext(fname)[0]}"))
+            out_dirs = setup_output_directories(image_out)
+            results = run_progressive(out_dirs)
+        else:
+            tmp_kwargs = {}
+            if save_root is not None:
+                ensure_dir(save_root)
+                tmp_kwargs["dir"] = save_root
+            with tempfile.TemporaryDirectory(**tmp_kwargs) as tmp_root:
+                out_dirs = setup_output_directories(tmp_root)
+                results = run_progressive(out_dirs)
 
         additional_gap_masks: List[Dict[str, Any]] = []
         if base_level is not None:

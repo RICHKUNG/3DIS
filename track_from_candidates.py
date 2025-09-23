@@ -9,6 +9,7 @@ import json
 import argparse
 import time
 import logging
+import base64
 from typing import List, Dict, Any, Tuple, Optional, Union
 
 import numpy as np
@@ -27,6 +28,7 @@ LOGGER = logging.getLogger("my3dis.track_from_candidates")
 # Masks are stored packed-bytes to keep peak RAM usage manageable while
 # still allowing downstream code to transparently request dense arrays.
 PACKED_MASK_KEY = "packed_bits"
+PACKED_MASK_B64_KEY = "packed_bits_b64"
 PACKED_SHAPE_KEY = "shape"
 
 
@@ -40,11 +42,11 @@ def pack_binary_mask(mask: np.ndarray) -> Dict[str, Any]:
 
 
 def is_packed_mask(entry: Any) -> bool:
-    return (
-        isinstance(entry, dict)
-        and PACKED_MASK_KEY in entry
-        and PACKED_SHAPE_KEY in entry
-    )
+    if not isinstance(entry, dict):
+        return False
+    if PACKED_SHAPE_KEY not in entry:
+        return False
+    return PACKED_MASK_KEY in entry or PACKED_MASK_B64_KEY in entry
 
 
 def unpack_binary_mask(entry: Any) -> np.ndarray:
@@ -52,8 +54,15 @@ def unpack_binary_mask(entry: Any) -> np.ndarray:
         shape = entry[PACKED_SHAPE_KEY]
         if isinstance(shape, np.ndarray):
             shape = tuple(int(v) for v in shape.tolist())
+        elif isinstance(shape, list):
+            shape = tuple(int(v) for v in shape)
         total = int(np.prod(shape))
-        unpacked = np.unpackbits(entry[PACKED_MASK_KEY], count=total)
+        if PACKED_MASK_B64_KEY in entry:
+            packed_bytes = base64.b64decode(entry[PACKED_MASK_B64_KEY])
+            packed_arr = np.frombuffer(packed_bytes, dtype=np.uint8)
+        else:
+            packed_arr = np.asarray(entry[PACKED_MASK_KEY], dtype=np.uint8)
+        unpacked = np.unpackbits(packed_arr, count=total)
         return unpacked.reshape(shape).astype(np.bool_)
     array = np.asarray(entry)
     if array.dtype != np.bool_:
@@ -191,8 +200,15 @@ def load_filtered_candidates(level_root: str) -> Tuple[List[List[Dict[str, Any]]
             seg_stack = np.load(seg_path)
         lst = []
         for j, it in enumerate(items):
-            seg = seg_stack[j] if seg_stack is not None and j < seg_stack.shape[0] else None
             d = dict(it)
+            mask_payload = d.pop('mask', None)
+            seg = None
+            if mask_payload is not None:
+                seg = unpack_binary_mask(mask_payload)
+            elif seg_stack is not None and j < seg_stack.shape[0]:
+                seg = seg_stack[j]
+            if seg is not None:
+                seg = np.asarray(seg, dtype=np.bool_)
             d['segmentation'] = seg
             lst.append(d)
         per_frame.append(lst)
@@ -384,13 +400,12 @@ def store_output_masks(
     frame_lookup: Dict[int, str] = None,
     add_label: bool = True,
 ):
-    """Persist per-object masked images alongside JSON metadata."""
+    """Persist per-object metadata without rendering masked imagery."""
     os.makedirs(output_root, exist_ok=True)
     objects_dir = ensure_dir(os.path.join(output_root, 'objects'))
 
     object_segments = reorganize_segments_by_object(video_segments)
 
-    # Build frame lookup table for reverse mapping to filenames.
     frame_catalog: Dict[int, Dict[str, str]] = {}
     if frame_lookup:
         for raw_idx, fname in frame_lookup.items():
@@ -398,18 +413,13 @@ def store_output_masks(
                 idx = int(raw_idx)
             except (TypeError, ValueError):
                 continue
-            frame_path = os.path.join(frames_dir, fname)
-            if os.path.exists(frame_path):
-                frame_catalog[idx] = {'name': fname, 'path': frame_path}
+            frame_catalog[idx] = {'name': fname}
     if not frame_catalog:
         valid_ext = ('.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG')
         for idx, fname in enumerate(sorted(f for f in os.listdir(frames_dir) if f.endswith(valid_ext))):
-            frame_catalog[idx] = {'name': fname, 'path': os.path.join(frames_dir, fname)}
+            frame_catalog[idx] = {'name': fname}
 
-    frame_cache: Dict[int, np.ndarray] = {}
     index_entries = []
-
-    from PIL import Image, ImageDraw
 
     for obj_id in sorted(object_segments.keys()):
         folder_label = f"L{level}_ID{obj_id}" if level is not None else f"ID{obj_id}"
@@ -419,38 +429,11 @@ def store_output_masks(
         frames_meta = []
         for frame_idx in sorted(object_segments[obj_id].keys()):
             frame_info = frame_catalog.get(int(frame_idx))
-            if frame_info is None:
-                continue
-
-            cache_entry = frame_cache.get(int(frame_idx))
-            if cache_entry is None:
-                with Image.open(frame_info['path']) as img:
-                    frame_array = np.array(img.convert('RGB'))
-                frame_cache[int(frame_idx)] = frame_array
-            else:
-                frame_array = cache_entry
-
             mask = object_segments[obj_id][frame_idx]
             mask_arr = np.squeeze(unpack_binary_mask(mask))
             if mask_arr.ndim != 2:
                 continue
-            if mask_arr.shape != frame_array.shape[:2]:
-                mask_img = Image.fromarray(mask_arr.astype(np.uint8) * 255)
-                mask_img = mask_img.resize((frame_array.shape[1], frame_array.shape[0]), resample=Image.NEAREST)
-                mask_arr = np.array(mask_img) > 127
-
-            base_name, _ = os.path.splitext(frame_info['name'])
-            out_path = os.path.join(obj_dir, f"{base_name}.png")
-
-            masked = frame_array * mask_arr[:, :, np.newaxis]
-            out_img = Image.fromarray(masked.astype(np.uint8))
-            if add_label:
-                draw = ImageDraw.Draw(out_img)
-                label = f"L{level} ID:{obj_id}" if level is not None else f"ID:{obj_id}"
-                width = 6 * len(label) + 20
-                draw.rectangle([5, 5, 5 + width, 28], fill=(0, 0, 0))
-                draw.text((10, 8), label, fill=(255, 255, 255))
-            out_img.save(out_path)
+            mask_arr = np.asarray(mask_arr, dtype=np.bool_)
 
             ys, xs = np.nonzero(mask_arr)
             area = int(mask_arr.sum())
@@ -460,10 +443,9 @@ def store_output_masks(
 
             frames_meta.append({
                 'frame_idx': int(frame_idx),
-                'frame_name': frame_info['name'],
+                'frame_name': frame_info['name'] if frame_info else None,
                 'area': area,
                 'bbox_xyxy': bbox,
-                'mask_path': os.path.relpath(out_path, obj_dir),
             })
 
         meta = {
@@ -863,19 +845,6 @@ def run_tracking(
             frame_lookup=frame_index_to_name,
         )
         viz_dir = os.path.join(out_root, f'level_{level}', 'viz')
-        save_viz_frames(
-            viz_dir,
-            data_path,
-            segs,
-            level,
-            frame_lookup=frame_index_to_name,
-        )
-        save_instance_maps(
-            viz_dir,
-            segs,
-            level,
-            frame_lookup=frame_index_to_name,
-        )
         save_comparison_proposals(
             viz_dir=viz_dir,
             base_frames_dir=data_path,

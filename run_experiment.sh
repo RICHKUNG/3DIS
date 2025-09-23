@@ -166,12 +166,15 @@ run_stage() {
   local label="$1"
   shift || true
 
+  if [[ $# -eq 0 ]]; then
+    echo "No command payload provided for $label" >&2
+    return 1
+  fi
+
   if [[ $DRY_RUN -eq 1 ]]; then
     echo "[dry-run] $label"
-    if [[ $# -gt 0 ]]; then
-      printf '  %q' "$@"
-      printf '\n'
-    fi
+    printf '  %q' "$@"
+    printf '\n'
     return 0
   fi
 
@@ -179,18 +182,16 @@ run_stage() {
   local start_ts
   start_ts=$(date +%s)
   if "$@"; then
-    local end_ts duration friendly
+    local end_ts friendly
     end_ts=$(date +%s)
-    duration=$((end_ts - start_ts))
-    friendly=$(format_duration "$duration")
+    friendly=$(format_duration $((end_ts - start_ts)))
     echo "  completed in $friendly"
     STAGE_SUMMARY+=("$label: $friendly")
   else
     local status=$?
-    local end_ts duration friendly
+    local end_ts friendly
     end_ts=$(date +%s)
-    duration=$((end_ts - start_ts))
-    friendly=$(format_duration "$duration")
+    friendly=$(format_duration $((end_ts - start_ts)))
     echo "  failed after $friendly" >&2
     return "$status"
   fi

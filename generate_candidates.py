@@ -11,6 +11,7 @@ import argparse
 import time
 import datetime
 import logging
+import base64
 from typing import List, Dict, Any, Tuple, Optional, Union
 
 import numpy as np
@@ -50,6 +51,16 @@ def bbox_from_mask_xyxy(seg: np.ndarray):
 def xyxy_to_xywh(b):
     x1, y1, x2, y2 = b
     return [int(x1), int(y1), int(max(0, x2 - x1)), int(max(0, y2 - y1))]
+
+
+def encode_mask(mask: np.ndarray) -> Dict[str, Any]:
+    """Serialize a boolean mask into a JSON-friendly packed representation."""
+    bool_mask = np.asarray(mask, dtype=np.bool_, order='C')
+    packed = np.packbits(bool_mask.reshape(-1))
+    return {
+        'shape': [int(dim) for dim in bool_mask.shape],
+        'packed_bits_b64': base64.b64encode(packed.tobytes()).decode('ascii'),
+    }
 
 
 def format_seconds(seconds: float) -> str:
@@ -236,7 +247,6 @@ def run_generation(
         sam_ckpt_path=sam_ckpt,
         levels=level_list,
         min_area=min_area,
-        save_root=os.path.join(run_root, '_progressive_tmp'),
     )
 
     level_stats = []
@@ -285,7 +295,6 @@ def run_generation(
                     })
 
             meta_list = []
-            seg_stack = []
             filtered_local_index = 0
             for m in candidates:
                 # 更新 frame_idx 為在 selected 中的索引
@@ -303,18 +312,14 @@ def run_generation(
                 if area < min_area or stability < stability_threshold:
                     continue
 
+                seg_data = m.get('segmentation')
                 meta = {k: v for k, v in m.items() if k != 'segmentation'}
                 meta['id'] = filtered_local_index
+                meta['mask'] = encode_mask(seg_data) if seg_data is not None else None
                 meta_list.append(meta)
-                seg_stack.append(m['segmentation'].astype(np.uint8))
                 filtered_local_index += 1
 
             filtered_json.append({'frame_idx': ssam_frame_idx, 'count': len(meta_list), 'items': meta_list})
-            if seg_stack:
-                np.save(
-                    os.path.join(filt_dir, f'seg_frame_{ssam_frame_idx:05d}.npy'),
-                    np.stack(seg_stack, axis=0),
-                )
             total_masks += len(meta_list)
 
         with open(os.path.join(cand_dir, 'candidates.json'), 'w') as f:

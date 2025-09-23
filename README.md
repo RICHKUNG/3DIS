@@ -3,7 +3,7 @@
 Summary
 - Replace SAM in Algorithm 1 with Semantic-SAM and run the modified tracker per Semantic-SAM level.
 - Drive multi-level Semantic-SAM at fixed levels [2,4,6] by default, sampling frames via ranges such as 1200:1600:20, and throttle expensive SSAM calls with `--ssam-freq` when desired.
-- Persist raw candidate lists, filtered candidates, SAM2 tracking masks, and lightweight visualizations for reproducibility while automatically gap-filling large uncovered regions at the coarsest level.
+- Persist raw candidate lists, filtered mask metadata (packed into JSON), SAM2 tracking masks, and streamlined comparison visuals while automatically gap-filling large uncovered regions at the coarsest level.
 - Execute the pipeline through two dedicated conda environments (Semantic-SAM + SAM2); use `run_experiment.sh` to orchestrate stage switching and propagate the shared knobs (levels, frame slice, thresholds, SSAM cadence, SAM2 propagation limit).
 
 Goals
@@ -29,14 +29,14 @@ Pipeline Overview
 1) Frame selection: collect frames per the slice range and create a subset directory.
 2) Semantic-SAM proposal generation (per level): run progressive refinement for each level, computing segmentation, bbox (XYWH), area, stability score, and metadata; any uncovered regions above `min_area` are converted into gap-fill masks at the coarsest level so tracking always receives an explicit prompt.
 3) SAM2 tracking: prompt SAM2 with filtered masks/boxes, propagate (optionally capped by `--sam2-max-propagate`) to build masklets, and merge per-object masks per absolute frame index.
-4) Persistence & visualization: store raw candidates, filtered summaries with `.npy` mask stacks, propagated masks (`video_segments.npz`), per-object masked imagery, overlays, instance maps, and comparison panels.
+4) Persistence & visualization: store raw candidates, filtered summaries with packed masks inside JSON, propagated masks (`video_segments.npz`), per-object metadata, and comparison panels (overlays/instance maps are now skipped by default).
 
 Outputs & Artifacts
 - Default root: `My3DIS/outputs/<scene>/<timestamp>/` (use `--no-timestamp` to override).
 - Level folder layout: `candidates/`, `filtered/`, `tracking/`, `viz/` plus shared `selected_frames/` at the run root.
-- `candidates/candidates.json` keeps raw proposal metadata; `filtered/filtered.json` plus `seg_frame_*.npy` hold filtered masks.
-- `tracking/video_segments.npz` stores propagated masks; `tracking/objects/L<L>_ID<id>/*.png` keeps labeled masked images.
-- `viz/` contains color overlays, instance maps (`instance_map/*.png` & `.npy`), and `compare/` panels contrasting Semantic-SAM vs. SAM2.
+- `candidates/candidates.json` keeps raw proposal metadata; `filtered/filtered.json` embeds filtered masks (packed bits + shape) directly in JSON, so no extra `.npy` files are saved.
+- `tracking/video_segments.npz` stores propagated masks; `tracking/objects/L<L>_ID<id>/metadata.json` summarizes per-object stats alongside an `objects/index.json` roster (no PNG renders by default).
+- `viz/compare/` holds contrast panels for Semantic-SAM vs. SAM2; other overlay/instance-map renders are disabled to minimise runtime and disk usage.
 - Each run writes `manifest.json` with frame selection, thresholds, model paths, timestamps, the SSAM subset (`ssam_frames`, `ssam_freq`), and any SAM2 propagation cap in effect.
 
 Execution
@@ -88,7 +88,7 @@ Notes & Tips
 - Outputs are `.gitignore`d; commit code/configs, or add representative samples selectively.
 
 Implementation Notes
-- Stage 1 (`generate_candidates.py` + `ssam_progressive_adapter.py`): runs Semantic-SAM progressive refinement per level, throttled by `--ssam-freq`, and synthesises gap-fill masks on the base level for uncovered regions larger than `min_area`.
+- Stage 1 (`generate_candidates.py` + `ssam_progressive_adapter.py`): runs Semantic-SAM progressive refinement per level, throttled by `--ssam-freq`, synthesises base-level gap-fill masks for uncovered regions ≥ `min_area`, and keeps progressive outputs in temporary directories (no `_progressive_tmp` folder under the run root).
 - Stage 2 (`track_from_candidates.py`): seeds SAM2 with filtered masks/boxes, respects `--sam2-max-propagate` to cap forward/backward steps, and renders only the SSAM-processed frames for consistency.
 - `run_experiment.sh` wires both stages together, forwarding shared flags so a single CLI controls cadence, thresholds, and propagation depth across environments.
 

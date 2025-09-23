@@ -22,6 +22,7 @@ Progress Log
 - 2025-09-22: Added `--ssam-freq` to throttle Semantic-SAM usage and record the subset of frames that actually run segmentation; `generate_candidates.py` now only builds artifacts for those frames.
 - 2025-09-22: Added SAM2 propagation cap (`--sam2-max-propagate`) throughout CLI/orchestrators and reworked tracking calls to honor frame budgets without hitting the legacy API signature.
 - 2025-09-22: Implemented gap-fill mask synthesis in `ssam_progressive_adapter.py` so uncovered regions larger than `min_area` enter downstream filtering/tracking even if Semantic-SAM misses them in the first pass.
+- 2025-09-23: Streamlined persistence—progressive refinement now runs inside temp dirs (no `_progressive_tmp` artifacts), filtered masks are packed into `filtered.json`, tracking objects emit JSON-only metadata, and viz renders only keep the `compare/` panels.
 
 Next Actions
 1) Create the shared environment from `Algorithm1_env.yml` (optional but recommended).
