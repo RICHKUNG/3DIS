@@ -12,7 +12,12 @@ import time
 import datetime
 import logging
 import base64
+import re
 from typing import List, Dict, Any, Tuple, Optional, Union
+
+RAW_DIR_NAME = "raw"
+RAW_META_TEMPLATE = "frame_{frame_idx:05d}.json"
+RAW_MASK_TEMPLATE = "frame_{frame_idx:05d}.npz"
 
 import numpy as np
 
@@ -72,6 +77,18 @@ def format_seconds(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+def numeric_frame_sort_key(fname: str) -> Tuple[float, str]:
+    """Ensure frames iterate in numerical order when filenames mix padding."""
+    stem, _ = os.path.splitext(fname)
+    match = re.search(r'\d+', stem)
+    if match:
+        try:
+            return float(int(match.group())), fname
+        except ValueError:
+            pass
+    return float('inf'), fname
+
+
 def build_subset_video(
     frames_dir: str,
     selected: List[str],
@@ -94,6 +111,102 @@ def build_subset_video(
                 from shutil import copy2
                 copy2(src, dst)
     return subset_dir, index_to_subset
+
+
+def persist_raw_frame(
+    *,
+    level_root: str,
+    frame_idx: int,
+    frame_name: str,
+    candidates: List[Dict[str, Any]],
+) -> Dict[str, int]:
+    """Persist raw Semantic-SAM candidates for a given frame.
+
+    Stores compact metadata (without segmentation masks) alongside an NPZ file
+    containing the boolean mask stack so later stages can re-apply filtering
+    without re-running Semantic-SAM.
+    """
+
+    raw_dir = ensure_dir(os.path.join(level_root, RAW_DIR_NAME))
+    meta_path = os.path.join(raw_dir, RAW_META_TEMPLATE.format(frame_idx=frame_idx))
+    mask_path = os.path.join(raw_dir, RAW_MASK_TEMPLATE.format(frame_idx=frame_idx))
+
+    metadata_items: List[Dict[str, Any]] = []
+    mask_arrays: List[Optional[np.ndarray]] = []
+    has_mask_flags: List[bool] = []
+
+    mask_shape = None
+    pending_zero_fill: List[int] = []
+
+    for local_idx, cand in enumerate(candidates):
+        c_meta = {
+            k: (v.tolist() if hasattr(v, "tolist") else v)
+            for k, v in cand.items()
+            if k != 'segmentation'
+        }
+        c_meta['raw_index'] = local_idx
+        c_meta.setdefault('frame_idx', frame_idx)
+        c_meta.setdefault('frame_name', frame_name)
+        metadata_items.append(c_meta)
+
+        seg = cand.get('segmentation')
+        if seg is None:
+            has_mask_flags.append(False)
+            if mask_shape is None:
+                mask_arrays.append(None)
+                pending_zero_fill.append(local_idx)
+            else:
+                mask_arrays.append(np.zeros(mask_shape, dtype=np.bool_))
+            continue
+
+        seg_arr = np.asarray(seg, dtype=np.bool_)
+        if mask_shape is None:
+            mask_shape = seg_arr.shape
+            for idx in pending_zero_fill:
+                mask_arrays[idx] = np.zeros(mask_shape, dtype=np.bool_)
+            pending_zero_fill.clear()
+        elif seg_arr.shape != mask_shape:
+            # 如果尺寸不一致，將其重新調整至第一個遮罩的尺寸
+            from PIL import Image
+
+            ref_h, ref_w = mask_shape
+            seg_img = Image.fromarray((seg_arr.astype(np.uint8) * 255))
+            seg_img = seg_img.resize((ref_w, ref_h), resample=Image.NEAREST)
+            seg_arr = np.array(seg_img) > 127
+
+        mask_arrays.append(seg_arr.astype(np.bool_))
+        has_mask_flags.append(True)
+
+    if mask_shape is not None and pending_zero_fill:
+        for idx in pending_zero_fill:
+            mask_arrays[idx] = np.zeros(mask_shape, dtype=np.bool_)
+
+    # 撰寫 JSON metadata
+    frame_record = {
+        'frame_idx': frame_idx,
+        'frame_name': frame_name,
+        'candidate_count': len(metadata_items),
+        'candidates': metadata_items,
+    }
+    with open(meta_path, 'w') as f:
+        json.dump(frame_record, f, indent=2)
+
+    stored_masks = 0
+    if mask_shape is not None:
+        mask_stack = np.stack(mask_arrays, axis=0) if mask_arrays else np.zeros((0, *mask_shape), dtype=np.bool_)
+        np.savez_compressed(
+            mask_path,
+            masks=mask_stack.astype(np.bool_),
+            has_mask=np.asarray(has_mask_flags, dtype=np.bool_),
+        )
+        stored_masks = mask_stack.shape[0]
+    elif os.path.exists(mask_path):
+        os.remove(mask_path)
+
+    return {
+        'meta_count': len(metadata_items),
+        'mask_count': stored_masks,
+    }
 
 
 def configure_logging(explicit_level: Optional[int] = None) -> int:
@@ -127,6 +240,8 @@ def run_generation(
     ssam_freq: int = 1,
     sam2_max_propagate: int = None,
     experiment_tag: str = None,
+    persist_raw: bool = False,
+    skip_filtering: bool = False,
 ) -> Tuple[str, Dict[str, Any]]:
     """Generate candidates and persist them in the standard layout.
 
@@ -147,7 +262,8 @@ def run_generation(
         ssam_freq = 1
 
     all_frames = sorted(
-        [f for f in os.listdir(frames_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+        [f for f in os.listdir(frames_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))],
+        key=numeric_frame_sort_key,
     )
     selected_indices = list(range(start_idx, min(end_idx, len(all_frames)), step))
     selected = [all_frames[i] for i in selected_indices]
@@ -235,9 +351,18 @@ def run_generation(
         'ts_epoch': int(time.time()),
         'timestamp': timestamp,
         'output_root': run_root,
+        'filtering': {
+            'applied': not skip_filtering,
+            'min_area': None if skip_filtering else min_area,
+            'stability_threshold': stability_threshold,
+        },
+        'raw_storage': {
+            'enabled': bool(persist_raw),
+            'format': 'frame_npz_v1',
+            'dir_name': RAW_DIR_NAME if persist_raw else None,
+        },
     }
-    with open(os.path.join(run_root, 'manifest.json'), 'w') as f:
-        json.dump(manifest, f, indent=2)
+    manifest_path = os.path.join(run_root, 'manifest.json')
     LOGGER.info("Selected %d SSAM frames cached at %s", len(ssam_frames), subset_dir)
 
     # 只對選定的幀進行 Semantic-SAM 分割
@@ -249,7 +374,7 @@ def run_generation(
         min_area=min_area,
     )
 
-    level_stats = []
+    level_stats: List[Dict[str, Any]] = []
     for level in level_list:
         level_root = ensure_dir(os.path.join(run_root, f'level_{level}'))
         cand_dir = ensure_dir(os.path.join(level_root, 'candidates'))
@@ -257,16 +382,16 @@ def run_generation(
         ensure_dir(os.path.join(level_root, 'viz'))
 
         raw_items: List[Dict[str, Any]] = []
-        filtered_json: List[Dict[str, Any]] = []
+        filtered_json: List[Dict[str, Any]] = [] if not skip_filtering else []
         per_frame_list = per_level[level]
-        frame_count = len(per_frame_list)
-        total_masks = 0
 
-        # 只處理有 SSAM 分割的幀
+        raw_candidate_total = 0
+        filtered_total = 0
+
         for f_idx, lst in enumerate(per_frame_list):
             candidates = list(lst)
-            # 記錄這是第幾個 SSAM 處理的幀
-            ssam_frame_idx = ssam_absolute_indices[f_idx]
+            ssam_frame_idx = int(ssam_absolute_indices[f_idx])
+            frame_name = ssam_frames[f_idx]
 
             if add_gaps and candidates:
                 H, W = candidates[0]['segmentation'].shape
@@ -294,47 +419,93 @@ def run_generation(
                         'segmentation': gap,
                     })
 
-            meta_list = []
-            filtered_local_index = 0
             for m in candidates:
-                # 更新 frame_idx 為在 selected 中的索引
                 m['frame_idx'] = ssam_frame_idx
-                
-                # Persist raw metadata without heavy segmentation masks.
+                m.setdefault('frame_name', frame_name)
+
+            raw_candidate_total += len(candidates)
+
+            if persist_raw:
+                persist_raw_frame(
+                    level_root=level_root,
+                    frame_idx=ssam_frame_idx,
+                    frame_name=frame_name,
+                    candidates=candidates,
+                )
+
+            for m in candidates:
                 raw_items.append({
                     k: (v.tolist() if hasattr(v, 'tolist') else v)
                     for k, v in m.items()
                     if k != 'segmentation'
                 })
 
+            if skip_filtering:
+                continue
+
+            meta_list = []
+            filtered_local_index = 0
+            for m in candidates:
                 stability = float(m.get('stability_score', 1.0))
                 area = int(m.get('area', 0))
                 if area < min_area or stability < stability_threshold:
                     continue
 
                 seg_data = m.get('segmentation')
+                if seg_data is None:
+                    continue
+
                 meta = {k: v for k, v in m.items() if k != 'segmentation'}
                 meta['id'] = filtered_local_index
-                meta['mask'] = encode_mask(seg_data) if seg_data is not None else None
+                meta['mask'] = encode_mask(seg_data)
                 meta_list.append(meta)
                 filtered_local_index += 1
 
-            filtered_json.append({'frame_idx': ssam_frame_idx, 'count': len(meta_list), 'items': meta_list})
-            total_masks += len(meta_list)
+            filtered_json.append(
+                {
+                    'frame_idx': ssam_frame_idx,
+                    'frame_name': frame_name,
+                    'count': len(meta_list),
+                    'items': meta_list,
+                }
+            )
+            filtered_total += len(meta_list)
 
         with open(os.path.join(cand_dir, 'candidates.json'), 'w') as f:
             json.dump({'items': raw_items}, f, indent=2)
-        with open(os.path.join(filt_dir, 'filtered.json'), 'w') as f:
-            json.dump({'frames': filtered_json}, f, indent=2)
 
-        level_stats.append((level, frame_count, total_masks))
+        if not skip_filtering:
+            with open(os.path.join(filt_dir, 'filtered.json'), 'w') as f:
+                json.dump({'frames': filtered_json}, f, indent=2)
+
+        level_stats.append(
+            {
+                'level': level,
+                'frame_count': len(per_frame_list),
+                'raw_candidates': raw_candidate_total,
+                'filtered_masks': filtered_total,
+                'filtering_applied': not skip_filtering,
+            }
+        )
+
+    manifest['generation_summary'] = level_stats
+    with open(manifest_path, 'w') as f:
+        json.dump(manifest, f, indent=2)
 
     if level_stats:
-        summary = "; ".join(
-            f"L{lvl}: {masks} masks across {frames} SSAM frames"
-            for lvl, frames, masks in level_stats
-        )
-        LOGGER.info("Persisted levels → %s", summary)
+        summary_parts = []
+        for entry in level_stats:
+            lvl = entry['level']
+            raw_count = entry['raw_candidates']
+            filtered_count = entry['filtered_masks']
+            frame_count = entry['frame_count']
+            if skip_filtering:
+                summary_parts.append(f"L{lvl}: raw {raw_count} (frames {frame_count})")
+            else:
+                summary_parts.append(
+                    f"L{lvl}: raw {raw_count} → filtered {filtered_count} (frames {frame_count})"
+                )
+        LOGGER.info("Persisted levels → %s", "; ".join(summary_parts))
     LOGGER.info("Candidates saved at %s", run_root)
     LOGGER.info(
         "Candidate generation finished in %s",
@@ -362,6 +533,10 @@ def main():
                     help='Maximum number of frames to propagate in each direction for SAM2 (default: no limit)')
     ap.add_argument('--experiment-tag', type=str, default=None,
                     help='Custom tag to append to timestamp for experiment identification')
+    ap.add_argument('--persist-raw', action='store_true',
+                    help='Store raw mask stacks for re-filtering later (default: disabled)')
+    ap.add_argument('--skip-filtering', action='store_true',
+                    help='Skip immediate filtering so it can be done as a separate stage')
     args = ap.parse_args()
 
     run_generation(
@@ -377,6 +552,8 @@ def main():
         ssam_freq=args.ssam_freq,
         sam2_max_propagate=args.sam2_max_propagate,
         experiment_tag=args.experiment_tag,
+        persist_raw=args.persist_raw,
+        skip_filtering=args.skip_filtering,
     )
 
 

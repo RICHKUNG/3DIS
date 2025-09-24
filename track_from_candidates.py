@@ -10,6 +10,7 @@ import argparse
 import time
 import logging
 import base64
+import re
 from typing import List, Dict, Any, Tuple, Optional, Union
 
 import numpy as np
@@ -23,6 +24,36 @@ from sam2.build_sam import build_sam2_video_predictor
 import torch
 
 LOGGER = logging.getLogger("my3dis.track_from_candidates")
+
+
+# 簡單的終端進度列，避免依賴 tqdm 以保持可控
+class _ProgressPrinter:
+    def __init__(self, total: int) -> None:
+        self.total = max(0, int(total))
+        self._last_len = 0
+        self._closed = False
+
+    def update(self, index: int, abs_frame: Optional[int] = None) -> None:
+        if self._closed or self.total == 0:
+            return
+        current = min(index + 1, self.total)
+        pct = (current / self.total) * 100.0
+        bars = int((current / self.total) * 20)
+        bar = f"[{'#' * bars}{'.' * (20 - bars)}]"
+        frame_info = f" → frame {abs_frame:05d}" if abs_frame is not None else ""
+        msg = f"SAM2 tracking {bar} {current}/{self.total} SSAM frames ({pct:5.1f}%)" + frame_info
+        pad = ' ' * max(0, self._last_len - len(msg))
+        sys.stdout.write('\r' + msg + pad)
+        sys.stdout.flush()
+        self._last_len = len(msg)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        if self._last_len:
+            sys.stdout.write('\n')
+            sys.stdout.flush()
+        self._closed = True
 
 
 # Masks are stored packed-bytes to keep peak RAM usage manageable while
@@ -68,6 +99,18 @@ def unpack_binary_mask(entry: Any) -> np.ndarray:
     if array.dtype != np.bool_:
         array = array.astype(np.bool_)
     return array
+
+
+def numeric_frame_sort_key(fname: str) -> Tuple[float, str]:
+    """Ensure frame iteration respects numeric order in mixed-padded names."""
+    stem, _ = os.path.splitext(fname)
+    match = re.search(r'\d+', stem)
+    if match:
+        try:
+            return float(int(match.group())), fname
+        except ValueError:
+            pass
+    return float('inf'), fname
 
 
 DEFAULT_SAM2_CFG = os.path.join(
@@ -222,8 +265,11 @@ def sam2_tracking(
     predictor,
     mask_candidates: List[List[Dict[str, Any]]],
     frame_numbers: List[int],
-    iou_threshold=0.6,
+    iou_threshold: float = 0.6,
     max_propagate: Optional[int] = None,
+    use_box_for_small: bool = False,
+    use_box_for_all: bool = False,
+    small_object_area_threshold: Optional[int] = None,
 ):
     # 禁用 tqdm 進度條
     import os
@@ -250,6 +296,7 @@ def sam2_tracking(
 
         local_to_abs = {i: frame_numbers[i] for i in range(len(frame_numbers))}
         total_frames = len(frame_numbers)
+        progress = _ProgressPrinter(total_frames)
 
         if max_propagate is not None:
             try:
@@ -261,103 +308,121 @@ def sam2_tracking(
                 )
                 max_propagate = None
 
-        for frame_idx, frame_masks in enumerate(mask_candidates):
-            # clear prompts from the previous loop without reloading video frames
-            predictor.reset_state(state)
-            abs_idx = local_to_abs.get(frame_idx)
-            if abs_idx is None:
-                continue
+        try:
+            for frame_idx, frame_masks in enumerate(mask_candidates):
+                # clear prompts from the previous loop without reloading video frames
+                predictor.reset_state(state)
+                abs_idx = local_to_abs.get(frame_idx)
+                progress.update(frame_idx, abs_idx)
+                if abs_idx is None:
+                    continue
 
-            # choose objects to add
-            to_add = []
-            prev = final_video_segments.get(abs_idx, {})
-            prev_masks = list(prev.values())
-            if prev_masks:
-                for m in frame_masks:
-                    seg = m.get('segmentation')
-                    if seg is None:
-                        to_add.append(m)
-                        continue
-                    tracked = any(compute_iou(pm, seg) > iou_threshold for pm in prev_masks)
-                    if not tracked:
-                        to_add.append(m)
-            else:
-                to_add = list(frame_masks)
-
-            if len(to_add) == 0:
-                continue
-
-            # Prefer mask prompts for higher fidelity on the annotated frame
-            for m in to_add:
-                seg = m.get('segmentation')
-                if seg is not None:
-                    predictor.add_new_mask(
-                        inference_state=state,
-                        frame_idx=frame_idx,
-                        obj_id=obj_count,
-                        mask=seg.astype(bool),
-                    )
+                # choose objects to add
+                to_add = []
+                prev = final_video_segments.get(abs_idx, {})
+                prev_masks = list(prev.values())
+                if prev_masks:
+                    for m in frame_masks:
+                        seg = m.get('segmentation')
+                        if seg is None:
+                            to_add.append(m)
+                            continue
+                        tracked = any(compute_iou(pm, seg) > iou_threshold for pm in prev_masks)
+                        if not tracked:
+                            to_add.append(m)
                 else:
-                    bbox = m.get('bbox')
-                    if bbox is None:
-                        continue
-                    xyxy = bbox_transform_xywh_to_xyxy([list(bbox)])[0]
-                    xyxy = bbox_scalar_fit([xyxy], sx, sy)[0]
-                    _ , _out_ids, _out_logits = predictor.add_new_points_or_box(
-                        inference_state=state, frame_idx=frame_idx, obj_id=obj_count, box=xyxy
-                    )
-                obj_count += 1
+                    to_add = list(frame_masks)
 
-            segs = {}
+                if len(to_add) == 0:
+                    continue
 
-            def collect(iterator):
-                for out_fidx, out_obj_ids, out_mask_logits in iterator:
-                    abs_out_idx = local_to_abs.get(out_fidx)
-                    if abs_out_idx is None:
-                        continue
-                    frame_data = {}
-                    for i, out_obj_id in enumerate(out_obj_ids):
-                        mask_arr = (out_mask_logits[i] > 0.0).cpu().numpy()
-                        frame_data[int(out_obj_id)] = pack_binary_mask(mask_arr)
-                    if abs_out_idx not in segs:
-                        segs[abs_out_idx] = {}
-                    segs[abs_out_idx].update(frame_data)
+                # Prefer mask prompts for higher fidelity on the annotated frame
+                for m in to_add:
+                    seg = m.get('segmentation')
+                    area_val = m.get('area')
+                    if area_val is None:
+                        bbox_dims = m.get('bbox')
+                        if bbox_dims is not None and len(bbox_dims) == 4:
+                            area_val = int(bbox_dims[2]) * int(bbox_dims[3])
+                    use_box_prompt = use_box_for_all or seg is None
+                    if not use_box_prompt and use_box_for_small and small_object_area_threshold is not None:
+                        try:
+                            area_int = int(area_val)
+                        except (TypeError, ValueError):
+                            area_int = None
+                        if area_int is not None and area_int <= small_object_area_threshold:
+                            use_box_prompt = True
 
-            # Determine propagation budget in both temporal directions.
-            forward_budget = max(0, total_frames - frame_idx - 1)
-            backward_budget = max(0, frame_idx)
-            if max_propagate is not None:
-                forward_budget = min(forward_budget, max_propagate)
-                backward_budget = min(backward_budget, max_propagate)
+                    if not use_box_prompt and seg is not None:
+                        predictor.add_new_mask(
+                            inference_state=state,
+                            frame_idx=frame_idx,
+                            obj_id=obj_count,
+                            mask=np.asarray(seg, dtype=bool),
+                        )
+                    else:
+                        bbox = m.get('bbox')
+                        if bbox is None:
+                            continue
+                        xyxy = bbox_transform_xywh_to_xyxy([list(bbox)])[0]
+                        xyxy = bbox_scalar_fit([xyxy], sx, sy)[0]
+                        _ , _out_ids, _out_logits = predictor.add_new_points_or_box(
+                            inference_state=state, frame_idx=frame_idx, obj_id=obj_count, box=xyxy
+                        )
+                    obj_count += 1
 
-            # 使用上下文管理器來禁用 tqdm
-            import contextlib
-            import io
-            
-            # 捕獲並丟棄 tqdm 輸出
-            with contextlib.redirect_stderr(io.StringIO()):
-                if forward_budget > 0:
-                    forward_kwargs = {
-                        'start_frame_idx': frame_idx,
-                        'reverse': False,
-                    }
-                    if max_propagate is not None:
-                        forward_kwargs['max_frame_num_to_track'] = forward_budget
-                    collect(predictor.propagate_in_video(state, **forward_kwargs))
+                segs = {}
 
-                if backward_budget > 0:
-                    backward_kwargs = {
-                        'start_frame_idx': frame_idx,
-                        'reverse': True,
-                    }
-                    if max_propagate is not None:
-                        backward_kwargs['max_frame_num_to_track'] = backward_budget
-                    collect(predictor.propagate_in_video(state, **backward_kwargs))
+                def collect(iterator):
+                    for out_fidx, out_obj_ids, out_mask_logits in iterator:
+                        abs_out_idx = local_to_abs.get(out_fidx)
+                        if abs_out_idx is None:
+                            continue
+                        frame_data = {}
+                        for i, out_obj_id in enumerate(out_obj_ids):
+                            mask_arr = (out_mask_logits[i] > 0.0).cpu().numpy()
+                            frame_data[int(out_obj_id)] = pack_binary_mask(mask_arr)
+                        if abs_out_idx not in segs:
+                            segs[abs_out_idx] = {}
+                        segs[abs_out_idx].update(frame_data)
 
-            for abs_out_idx, frame_data in segs.items():
-                if abs_out_idx not in final_video_segments:
-                    final_video_segments[abs_out_idx] = {}
-                final_video_segments[abs_out_idx].update(frame_data)
+                # Determine propagation budget in both temporal directions.
+                forward_budget = max(0, total_frames - frame_idx - 1)
+                backward_budget = max(0, frame_idx)
+                if max_propagate is not None:
+                    forward_budget = min(forward_budget, max_propagate)
+                    backward_budget = min(backward_budget, max_propagate)
+
+                # 使用上下文管理器來禁用 tqdm
+                import contextlib
+                import io
+
+                # 捕獲並丟棄 tqdm 輸出
+                with contextlib.redirect_stderr(io.StringIO()):
+                    if forward_budget > 0:
+                        forward_kwargs = {
+                            'start_frame_idx': frame_idx,
+                            'reverse': False,
+                        }
+                        if max_propagate is not None:
+                            forward_kwargs['max_frame_num_to_track'] = forward_budget
+                        collect(predictor.propagate_in_video(state, **forward_kwargs))
+
+                    if backward_budget > 0:
+                        backward_kwargs = {
+                            'start_frame_idx': frame_idx,
+                            'reverse': True,
+                        }
+                        if max_propagate is not None:
+                            backward_kwargs['max_frame_num_to_track'] = backward_budget
+                        collect(predictor.propagate_in_video(state, **backward_kwargs))
+
+                for abs_out_idx, frame_data in segs.items():
+                    if abs_out_idx not in final_video_segments:
+                        final_video_segments[abs_out_idx] = {}
+                    final_video_segments[abs_out_idx].update(frame_data)
+        finally:
+            progress.close()
 
         return final_video_segments
 
@@ -416,7 +481,8 @@ def store_output_masks(
             frame_catalog[idx] = {'name': fname}
     if not frame_catalog:
         valid_ext = ('.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG')
-        for idx, fname in enumerate(sorted(f for f in os.listdir(frames_dir) if f.endswith(valid_ext))):
+        frame_names = [f for f in os.listdir(frames_dir) if f.endswith(valid_ext)]
+        for idx, fname in enumerate(sorted(frame_names, key=numeric_frame_sort_key)):
             frame_catalog[idx] = {'name': fname}
 
     index_entries = []
@@ -481,7 +547,10 @@ def save_viz_frames(
     if frame_lookup is not None:
         frame_items = [(idx, frame_lookup[idx]) for idx in sorted(frame_lookup.keys())]
     else:
-        frame_filenames = sorted([f for f in os.listdir(frames_dir) if f.lower().endswith((".jpg",".jpeg",".png"))])
+        frame_filenames = sorted(
+            [f for f in os.listdir(frames_dir) if f.lower().endswith((".jpg",".jpeg",".png"))],
+            key=numeric_frame_sort_key,
+        )
         frame_items = list(enumerate(frame_filenames))
     rng = np.random.default_rng(0)
     color_map: Dict[int, Tuple[int,int,int]] = {}
@@ -715,6 +784,9 @@ def run_tracking(
     sam2_ckpt: str = DEFAULT_SAM2_CKPT,
     sam2_max_propagate: Optional[int] = None,
     log_level: Optional[int] = None,
+    iou_threshold: float = 0.6,
+    long_tail_box_prompt: bool = False,
+    all_box_prompt: bool = False,
 ) -> str:
     configure_logging(log_level)
 
@@ -762,11 +834,42 @@ def run_tracking(
             sam2_max_propagate = None
 
     LOGGER.info(
-        "Configuration: ssam_freq=%d, sam2_max_propagate=%s, ssam_frames=%d",
+        "Configuration: ssam_freq=%d, sam2_max_propagate=%s, ssam_frames=%d, iou_threshold=%.2f",
         ssam_freq,
         sam2_max_propagate if sam2_max_propagate is not None else "unlimited",
         len(ssam_frames),
+        float(iou_threshold),
     )
+
+    long_tail_area_threshold: Optional[int] = None
+    if all_box_prompt:
+        LOGGER.info("All mask candidates will be converted to SAM2 box prompts")
+        if long_tail_box_prompt:
+            LOGGER.info("Long-tail box prompt flag ignored because all-box prompt is active")
+    elif long_tail_box_prompt:
+        env_area = os.environ.get("MY3DIS_LONG_TAIL_AREA")
+        if env_area:
+            try:
+                long_tail_area_threshold = max(1, int(env_area))
+                LOGGER.info(
+                    "Environment override: MY3DIS_LONG_TAIL_AREA=%d", long_tail_area_threshold
+                )
+            except (TypeError, ValueError):
+                LOGGER.warning("Invalid MY3DIS_LONG_TAIL_AREA=%r; ignoring", env_area)
+        if long_tail_area_threshold is None:
+            manifest_min_area = manifest.get('min_area')
+            try:
+                manifest_min_area = int(manifest_min_area) if manifest_min_area is not None else None
+            except (TypeError, ValueError):
+                manifest_min_area = None
+            if manifest_min_area is not None and manifest_min_area > 0:
+                long_tail_area_threshold = max(manifest_min_area * 3, manifest_min_area + 1)
+        if long_tail_area_threshold is None:
+            long_tail_area_threshold = 1500
+        LOGGER.info(
+            "Long-tail box prompt enabled: masks with area ≤ %d px will use SAM2 box prompts",
+            long_tail_area_threshold,
+        )
 
     try:
         os.chdir(DEFAULT_SAM2_ROOT)
@@ -825,8 +928,11 @@ def run_tracking(
             predictor,
             per_frame,
             frame_numbers=frame_indices,  # 使用實際的幀索引
-            iou_threshold=0.6,
+            iou_threshold=iou_threshold,
             max_propagate=sam2_max_propagate,
+            use_box_for_small=(long_tail_box_prompt and not all_box_prompt),
+            use_box_for_all=all_box_prompt,
+            small_object_area_threshold=long_tail_area_threshold,
         )
         track_time = time.perf_counter() - track_start
 
@@ -905,6 +1011,12 @@ def main():
     ap.add_argument('--levels', default='2,4,6')
     ap.add_argument('--sam2-max-propagate', type=int, default=None,
                     help='Limit SAM2 propagation to N frames per direction (default: unlimited)')
+    ap.add_argument('--iou-threshold', type=float, default=0.6,
+                    help='IoU threshold for deduplicating SAM2 prompts (default: 0.6)')
+    ap.add_argument('--long-tail-box-prompt', action='store_true',
+                    help='Convert long-tail small objects to SAM2 box prompts')
+    ap.add_argument('--all-box-prompt', action='store_true',
+                    help='Convert all mask prompts to SAM2 box prompts')
     args = ap.parse_args()
 
     run_tracking(
@@ -915,6 +1027,9 @@ def main():
         sam2_cfg=args.sam2_cfg,
         sam2_ckpt=args.sam2_ckpt,
         sam2_max_propagate=args.sam2_max_propagate,
+        iou_threshold=args.iou_threshold,
+        long_tail_box_prompt=args.long_tail_box_prompt,
+        all_box_prompt=args.all_box_prompt,
     )
 
 

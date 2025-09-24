@@ -25,6 +25,9 @@ Options:
   --stability THR             Minimum stability_score (default: 0.9)
   --ssam-freq N               Run Semantic-SAM every N frames (default: 1)
   --sam2-max-propagate N      Max frames to propagate in each direction (default: unlimited)
+  --iou-threshold THR         Override SAM2 dedup IoU threshold (default: 0.6)
+  --box-long-tail             Force long-tail small objects to use SAM2 box prompts
+  --box-all                   Force all objects to use SAM2 box prompts
   --experiment-tag TAG        Optional custom tag to append (default: auto-generated)
   --sam-ckpt PATH             Override Semantic-SAM checkpoint (default set in script)
   --sam2-cfg PATH             Override SAM2 YAML config (default set in script)
@@ -73,11 +76,15 @@ MIN_AREA="300"
 STABILITY="0.9"
 SSAM_FREQ="1"
 SAM2_MAX_PROPAGATE=""
+IOU_THRESHOLD=""
+BOX_LONG_TAIL=0
+BOX_ALL=0
 EXPERIMENT_TAG=""
 SEM_ENV="Semantic-SAM"
 SAM2_ENV="SAM2"
 NO_TIMESTAMP=0
 DRY_RUN=0
+PRE_MANIFEST_FILE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -90,6 +97,9 @@ while [[ $# -gt 0 ]]; do
     --stability) STABILITY="$2"; shift 2;;
     --ssam-freq) SSAM_FREQ="$2"; shift 2;;
     --sam2-max-propagate) SAM2_MAX_PROPAGATE="$2"; shift 2;;
+    --iou-threshold) IOU_THRESHOLD="$2"; shift 2;;
+    --box-long-tail) BOX_LONG_TAIL=1; shift;;
+    --box-all) BOX_ALL=1; shift;;
     --experiment-tag) EXPERIMENT_TAG="$2"; shift 2;;
     --semantic-env) SEM_ENV="$2"; shift 2;;
     --sam2-env) SAM2_ENV="$2"; shift 2;;
@@ -147,6 +157,15 @@ stage2_cmd_base=(conda run --live-stream -n "$SAM2_ENV" python -u "$TRACK_SCRIPT
 if [[ -n "$SAM2_MAX_PROPAGATE" ]]; then
   stage2_cmd_base+=(--sam2-max-propagate "$SAM2_MAX_PROPAGATE")
 fi
+if [[ -n "$IOU_THRESHOLD" ]]; then
+  stage2_cmd_base+=(--iou-threshold "$IOU_THRESHOLD")
+fi
+if [[ $BOX_LONG_TAIL -eq 1 ]]; then
+  stage2_cmd_base+=(--long-tail-box-prompt)
+fi
+if [[ $BOX_ALL -eq 1 ]]; then
+  stage2_cmd_base+=(--all-box-prompt)
+fi
 
 format_duration() {
   local total=$1
@@ -199,28 +218,151 @@ run_stage() {
 
 SCRIPT_START_TS=$(date +%s)
 
+if [[ $DRY_RUN -ne 1 ]]; then
+  PRE_MANIFEST_FILE=$(mktemp)
+  trap 'rm -f "$PRE_MANIFEST_FILE"' EXIT
+  $PYTHON_ABS - "$OUTPUT_ROOT_ABS" "$PRE_MANIFEST_FILE" <<'PY'
+import os
+import sys
+
+root = sys.argv[1]
+dst = sys.argv[2]
+
+entries = []
+
+root_manifest = os.path.join(root, 'manifest.json')
+if os.path.isfile(root_manifest):
+    try:
+        entries.append((os.path.abspath(root_manifest), os.path.getmtime(root_manifest)))
+    except OSError:
+        pass
+
+try:
+    names = os.listdir(root)
+except FileNotFoundError:
+    names = []
+
+for name in names:
+    full = os.path.join(root, name)
+    if not os.path.isdir(full):
+        continue
+    manifest = os.path.join(full, 'manifest.json')
+    if not os.path.isfile(manifest):
+        continue
+    try:
+        entries.append((os.path.abspath(manifest), os.path.getmtime(manifest)))
+    except OSError:
+        continue
+
+with open(dst, 'w') as fh:
+    for path, ts in entries:
+        fh.write(f"{ts}\t{path}\n")
+PY
+fi
+
 run_stage "Stage 1: Semantic-SAM candidate generation" "${stage1_cmd[@]}"
 
 if [[ $DRY_RUN -eq 1 ]]; then
   if [[ $NO_TIMESTAMP -eq 1 ]]; then
-    RUN_DIR="$OUTPUT_ROOT_ABS"
+    if [[ -n "$EXPERIMENT_TAG" ]]; then
+      RUN_DIR="$OUTPUT_ROOT_ABS/$EXPERIMENT_TAG"
+    else
+      RUN_DIR="$OUTPUT_ROOT_ABS"
+    fi
   else
     RUN_DIR="$OUTPUT_ROOT_ABS/<timestamp>"
   fi
 else
-  if [[ $NO_TIMESTAMP -eq 1 ]]; then
-    RUN_DIR="$OUTPUT_ROOT_ABS"
-  else
-    latest=$(ls -1dt "$OUTPUT_ROOT_ABS"/* 2>/dev/null | head -n1 || true)
-    if [[ -z "$latest" ]]; then
-      echo "Could not locate timestamped output under $OUTPUT_ROOT_ABS" >&2
-      exit 1
-    fi
-    RUN_DIR="$latest"
+  manifest_path=$($PYTHON_ABS - "$OUTPUT_ROOT_ABS" "${PRE_MANIFEST_FILE:-}" <<'PY'
+import os
+import sys
+
+root = sys.argv[1]
+snapshot_path = sys.argv[2] if len(sys.argv) > 2 else ''
+
+before = {}
+if snapshot_path and os.path.isfile(snapshot_path):
+    with open(snapshot_path, 'r') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ts_str, path = line.split('\t', 1)
+            except ValueError:
+                continue
+            try:
+                before[path] = float(ts_str)
+            except ValueError:
+                continue
+
+candidates = []
+
+root_manifest = os.path.join(root, 'manifest.json')
+if os.path.isfile(root_manifest):
+    try:
+        candidates.append((os.path.getmtime(root_manifest), os.path.abspath(root_manifest)))
+    except OSError:
+        pass
+
+try:
+    names = os.listdir(root)
+except FileNotFoundError:
+    names = []
+
+for name in names:
+    full = os.path.join(root, name)
+    if not os.path.isdir(full):
+        continue
+    manifest = os.path.join(full, 'manifest.json')
+    if not os.path.isfile(manifest):
+        continue
+    try:
+        candidates.append((os.path.getmtime(manifest), os.path.abspath(manifest)))
+    except OSError:
+        continue
+
+if not candidates:
+    sys.exit(0)
+
+updated = []
+for ts, path in candidates:
+    prev = before.get(path)
+    if prev is None or ts > prev + 1e-6:
+        updated.append((ts, path))
+
+target_list = updated if updated else candidates
+target_list.sort()
+print(target_list[-1][1])
+PY
+)
+
+  if [[ -z ${manifest_path:-} ]]; then
+    echo "Could not find manifest.json under $OUTPUT_ROOT_ABS after Stage 1" >&2
+    exit 1
   fi
 
-  if [[ ! -f "$RUN_DIR/manifest.json" ]]; then
-    echo "manifest.json not found in $RUN_DIR; stage 1 may have failed" >&2
+  run_dir_from_manifest=$($PYTHON_ABS - "$manifest_path" <<'PY'
+import json
+import os
+import sys
+
+manifest_path = sys.argv[1]
+with open(manifest_path, 'r') as f:
+    manifest = json.load(f)
+
+run_root = manifest.get('output_root')
+if not run_root:
+    run_root = os.path.dirname(manifest_path)
+
+print(os.path.abspath(run_root))
+PY
+)
+
+  RUN_DIR=${run_dir_from_manifest:-}
+
+  if [[ -z ${RUN_DIR:-} || ! -d "$RUN_DIR" ]]; then
+    echo "manifest.json at $manifest_path does not specify a valid output_root" >&2
     exit 1
   fi
 fi

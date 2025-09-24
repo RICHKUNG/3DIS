@@ -23,6 +23,8 @@ Progress Log
 - 2025-09-22: Added SAM2 propagation cap (`--sam2-max-propagate`) throughout CLI/orchestrators and reworked tracking calls to honor frame budgets without hitting the legacy API signature.
 - 2025-09-22: Implemented gap-fill mask synthesis in `ssam_progressive_adapter.py` so uncovered regions larger than `min_area` enter downstream filtering/tracking even if Semantic-SAM misses them in the first pass.
 - 2025-09-23: Streamlined persistence—progressive refinement now runs inside temp dirs (no `_progressive_tmp` artifacts), filtered masks are packed into `filtered.json`, tracking objects emit JSON-only metadata, and viz renders only keep the `compare/` panels.
+- 2025-09-24: Reviewed recent SAM2 tracking failures; noted ~5k mask prompts per long run (logs `nohupGPU0.out`/`nohupGPU1.out`) which translate to ~24–36 GB of GPU tensor memory because each mask prompt persists as a 1024² float tensor. Advised throttling mask additions (filtering, chunked propagation, or converting to boxes) to stay within GPU limits.
+- 2025-09-25: Added CLI overrides for SAM2 IoU threshold and box-prompt policies (`run_experiment.sh` → `track_from_candidates.py`); long-tail objects default to area ≤ max(3×min_area, min_area+1) with `MY3DIS_LONG_TAIL_AREA` override, and scripts log the active prompt strategy.
 
 Next Actions
 1) Create the shared environment from `Algorithm1_env.yml` (optional but recommended).
@@ -33,6 +35,7 @@ Next Actions
 Open Items
 - Confirm the initial MultiScan scene(s) for full processing beyond the demo slice.
 - Tuning knobs: `min_area`, `stability_threshold`, and SAM2 IoU threshold (currently 0.6).
+- Explore safe mask downsampling/quantization once SAM2 propagation completes (ensure reprojection back to RGB-D resolution).
 
 GitHub
 - Initialize/push sequence from `My3DIS/`:
