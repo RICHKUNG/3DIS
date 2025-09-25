@@ -18,7 +18,11 @@ try:
 except ImportError as exc:  # pragma: no cover - dependency check
     raise SystemExit("PyYAML is required: pip install pyyaml") from exc
 
-from generate_candidates import RAW_DIR_NAME, run_generation as run_candidate_generation
+from generate_candidates import (
+    RAW_DIR_NAME,
+    DEFAULT_SEMANTIC_SAM_CKPT,
+    run_generation as run_candidate_generation,
+)
 from filter_candidates import run_filtering
 from track_from_candidates import run_tracking as run_candidate_tracking
 from generate_report import build_report
@@ -126,6 +130,12 @@ def stage_frames_string(stage_cfg: Dict[str, Any]) -> str:
     return f"{start}:{end}:{step}"
 
 
+def resolve_stage_gpu(stage_cfg: Optional[Dict[str, Any]], default_gpu: Optional[Any]) -> Optional[Any]:
+    if isinstance(stage_cfg, dict) and 'gpu' in stage_cfg:
+        return stage_cfg.get('gpu')
+    return default_gpu
+
+
 def update_summary_config(summary: Dict[str, Any], config: Dict[str, Any]) -> None:
     summary['config_snapshot'] = config
 
@@ -167,6 +177,7 @@ def main() -> int:
     stages_cfg = config.get('stages', {})
     if not isinstance(stages_cfg, dict):
         raise SystemExit('`stages` section must be a mapping')
+    default_stage_gpu = stages_cfg.get('gpu')
 
     summary: Dict[str, Any] = {
         'config_path': str(config_path),
@@ -193,9 +204,19 @@ def main() -> int:
         add_gaps = bool(ssam_cfg.get('add_gaps', False))
         append_timestamp = ssam_cfg.get('append_timestamp', True)
         experiment_tag = ssam_cfg.get('experiment_tag') or experiment_cfg.get('tag')
-        sam_ckpt = ssam_cfg.get('sam_ckpt') or experiment_cfg.get('sam_ckpt')
+        sam_ckpt_cfg = ssam_cfg.get('sam_ckpt') or experiment_cfg.get('sam_ckpt')
+        if sam_ckpt_cfg:
+            sam_ckpt_path = Path(str(sam_ckpt_cfg)).expanduser()
+        else:
+            sam_ckpt_path = Path(DEFAULT_SEMANTIC_SAM_CKPT)
+        if not sam_ckpt_path.exists():
+            raise SystemExit(
+                f'Semantic-SAM checkpoint not found at {sam_ckpt_path}. '
+                'Set stages.ssam.sam_ckpt or experiment.sam_ckpt to a valid file path.'
+            )
+        sam_ckpt = str(sam_ckpt_path)
 
-        ssam_gpu = ssam_cfg.get('gpu')
+        ssam_gpu = resolve_stage_gpu(ssam_cfg, default_stage_gpu)
 
         print('Stage SSAM: Semantic-SAM 採樣與候選輸出')
         with StageRecorder(summary, 'ssam', ssam_gpu), using_gpu(ssam_gpu):
@@ -249,7 +270,7 @@ def main() -> int:
     filter_enabled = filter_cfg.get('enabled', True)
     if filter_enabled:
         levels = resolve_levels(filter_cfg, manifest, experiment_cfg.get('levels'))
-        filter_gpu = filter_cfg.get('gpu')
+        filter_gpu = resolve_stage_gpu(filter_cfg, default_stage_gpu)
         min_area = int(filter_cfg.get('min_area', ssam_cfg.get('min_area', 300)))
         stability = float(filter_cfg.get('stability_threshold', ssam_cfg.get('stability_threshold', 0.9)))
         update_manifest_flag = filter_cfg.get('update_manifest', True)
@@ -289,7 +310,7 @@ def main() -> int:
     tracker_enabled = tracker_cfg.get('enabled', True)
     if tracker_enabled:
         levels = resolve_levels(tracker_cfg, manifest, experiment_cfg.get('levels'))
-        tracker_gpu = tracker_cfg.get('gpu')
+        tracker_gpu = resolve_stage_gpu(tracker_cfg, default_stage_gpu)
         max_propagate = tracker_cfg.get('max_propagate')
         iou_threshold = float(tracker_cfg.get('iou_threshold', 0.6))
         prompt_mode = tracker_cfg.get('prompt_mode', 'none')
@@ -335,7 +356,8 @@ def main() -> int:
 
     if report_enabled:
         print('Stage Report: 生成 Markdown 紀錄')
-        with StageRecorder(summary, 'report', report_cfg.get('gpu')), using_gpu(report_cfg.get('gpu')):
+        report_gpu = resolve_stage_gpu(report_cfg, default_stage_gpu)
+        with StageRecorder(summary, 'report', report_gpu), using_gpu(report_gpu):
             build_report(run_dir, report_name=report_name, max_preview_width=max_width)
             summary['stages']['report'].setdefault('params', {})['max_width'] = max_width
             summary['stages']['report']['params']['report_name'] = report_name

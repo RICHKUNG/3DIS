@@ -298,21 +298,18 @@ def run_generation(
         parts = [timestamp, levels_str, ssam_str]
         
         if sam2_max_propagate is not None:
-            parts.append(f"prop{sam2_max_propagate}")
-            
+            parts.append(f"propmax{sam2_max_propagate}")
+
         if min_area != 300:
             parts.append(f"area{min_area}")
-            
-        if stability_threshold != 0.9:
-            parts.append(f"stab{stability_threshold:.1f}")
-            
+
         if add_gaps:
             parts.append("gaps")
-            
+
         # 如果有自定義標籤，加到最後
         if experiment_tag:
             parts.append(experiment_tag)
-            
+
         return "_".join(parts)
 
     if no_timestamp:
@@ -375,11 +372,14 @@ def run_generation(
     )
 
     level_stats: List[Dict[str, Any]] = []
-    for level in level_list:
+    for level_idx, level in enumerate(level_list):
         level_root = ensure_dir(os.path.join(run_root, f'level_{level}'))
         cand_dir = ensure_dir(os.path.join(level_root, 'candidates'))
         filt_dir = ensure_dir(os.path.join(level_root, 'filtered'))
         ensure_dir(os.path.join(level_root, 'viz'))
+
+        # 只讓第一個 level 執行 gap 填補（add_gaps=True 時）
+        level_add_gaps = bool(add_gaps) and level_idx == 0
 
         raw_items: List[Dict[str, Any]] = []
         filtered_json: List[Dict[str, Any]] = [] if not skip_filtering else []
@@ -393,7 +393,7 @@ def run_generation(
             ssam_frame_idx = int(ssam_absolute_indices[f_idx])
             frame_name = ssam_frames[f_idx]
 
-            if add_gaps and candidates:
+            if level_add_gaps and candidates:
                 H, W = candidates[0]['segmentation'].shape
                 union = np.zeros((H, W), dtype=bool)
                 for m in candidates:

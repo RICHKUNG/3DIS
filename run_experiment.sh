@@ -39,18 +39,18 @@ Options:
   -h, --help                  Show this help
 
 Note: Folder names automatically include key parameters for easy identification:
-  Format: YYYYMMDD_HHMMSS_L2_4_6_ssam2_prop30_[custom_params]
+  Format: YYYYMMDD_HHMMSS_L2_4_6_ssam2_propmax30_[custom_params]
 
 Examples:
   # 基本使用 (輸出: 20250922_143052_L2_4_6_ssam1)
   ./run_experiment.sh
 
   # 每2張圖片執行一次SSAM，SAM2最多向前後各傳播30幀
-  # 輸出: 20250922_143052_L2_4_6_ssam2_prop30
+  # 輸出: 20250922_143052_L2_4_6_ssam2_propmax30
   ./run_experiment.sh --ssam-freq 2 --sam2-max-propagate 30
 
   # 自定義參數和幀範圍
-  # 輸出: 20250922_143052_L2_4_ssam3_prop50_area500_stab0.8
+  # 輸出: 20250922_143052_L2_4_ssam3_propmax50_area500
   ./run_experiment.sh \
     --levels 2,4 \
     --frames 1000:2000:50 \
@@ -60,7 +60,7 @@ Examples:
     --stability 0.8
 
   # 加上自定義標籤
-  # 輸出: 20250922_143052_L2_4_6_ssam2_prop30_test_run
+  # 輸出: 20250922_143052_L2_4_6_ssam2_propmax30_test_run
   ./run_experiment.sh --ssam-freq 2 --sam2-max-propagate 30 --experiment-tag "test_run"
 USAGE
 }

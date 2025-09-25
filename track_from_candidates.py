@@ -11,7 +11,6 @@ import time
 import logging
 import base64
 import re
-import shutil
 from typing import List, Dict, Any, Tuple, Optional, Union
 
 import numpy as np
@@ -151,6 +150,75 @@ def format_seconds(seconds: float) -> str:
     if hours:
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
     return f"{minutes:02d}:{secs:02d}"
+
+
+def format_duration_precise(seconds: float) -> str:
+    seconds = max(0.0, float(seconds))
+    if seconds < 1e-3:
+        return "0m"
+    minutes = seconds / 60.0
+    if seconds < 60.0:
+        return f"{minutes:.2f}m"
+    hours = minutes / 60.0
+    if seconds < 3600.0:
+        return f"{minutes:.1f}m"
+    return f"{hours:.1f}h"
+
+
+class _TimingSection:
+    def __init__(self, aggregator: "TimingAggregator", stage: str) -> None:
+        self._aggregator = aggregator
+        self._stage = stage
+        self._start = 0.0
+
+    def __enter__(self) -> None:
+        self._start = time.perf_counter()
+
+    def __exit__(self, exc_type, exc, exc_tb) -> bool:
+        duration = time.perf_counter() - self._start
+        self._aggregator.add(self._stage, duration)
+        return False
+
+
+class TimingAggregator:
+    """Collects and aggregates named timing spans while preserving insertion order."""
+
+    def __init__(self) -> None:
+        self._totals: Dict[str, float] = {}
+        self._order: List[str] = []
+
+    def add(self, stage: str, duration: float) -> None:
+        stage = str(stage)
+        duration = float(duration)
+        if stage not in self._totals:
+            self._totals[stage] = 0.0
+            self._order.append(stage)
+        self._totals[stage] += max(0.0, duration)
+
+    def track(self, stage: str) -> _TimingSection:
+        return _TimingSection(self, stage)
+
+    def total(self, stage: str) -> float:
+        return self._totals.get(stage, 0.0)
+
+    def total_prefix(self, prefix: str) -> float:
+        return sum(self._totals[name] for name in self._totals if name.startswith(prefix))
+
+    def total_all(self) -> float:
+        return sum(self._totals.values())
+
+    def items(self) -> List[Tuple[str, float]]:
+        return [(stage, self._totals[stage]) for stage in self._order]
+
+    def merge(self, other: "TimingAggregator") -> None:
+        for stage, duration in other.items():
+            self.add(stage, duration)
+
+    def format_breakdown(self) -> str:
+        if not self._order:
+            return "n/a"
+        parts = [f"{name}={format_duration_precise(duration)}" for name, duration in self.items()]
+        return ", ".join(parts)
 
 
 def bbox_transform_xywh_to_xyxy(bboxes: List[List[int]]) -> List[List[int]]:
@@ -458,128 +526,6 @@ def save_object_segments_npz(segments: Dict[int, Dict[int, Any]], path: str) -> 
     np.savez_compressed(path, data=packed)
 
 
-def store_output_masks(
-    output_root: str,
-    frames_dir: str,
-    video_segments: Dict[int, Dict[int, Any]],
-    level: Optional[int] = None,
-    frame_lookup: Dict[int, str] = None,
-    add_label: bool = True,
-):
-    """Persist per-object metadata without rendering masked imagery."""
-    os.makedirs(output_root, exist_ok=True)
-    objects_dir = ensure_dir(os.path.join(output_root, 'objects'))
-
-    object_segments = reorganize_segments_by_object(video_segments)
-
-    frame_catalog: Dict[int, Dict[str, str]] = {}
-    if frame_lookup:
-        for raw_idx, fname in frame_lookup.items():
-            try:
-                idx = int(raw_idx)
-            except (TypeError, ValueError):
-                continue
-            frame_catalog[idx] = {'name': fname}
-    if not frame_catalog:
-        valid_ext = ('.jpg', '.jpeg', '.png', '.JPG', '.JPEG', '.PNG')
-        frame_names = [f for f in os.listdir(frames_dir) if f.endswith(valid_ext)]
-        for idx, fname in enumerate(sorted(frame_names, key=numeric_frame_sort_key)):
-            frame_catalog[idx] = {'name': fname}
-
-    index_entries = []
-
-    for obj_id in sorted(object_segments.keys()):
-        folder_label = f"L{level}_ID{obj_id}" if level is not None else f"ID{obj_id}"
-        obj_dir = ensure_dir(os.path.join(objects_dir, folder_label))
-        frames_subdir = ensure_dir(os.path.join(obj_dir, 'frames'))
-        masks_subdir = ensure_dir(os.path.join(obj_dir, 'masks'))
-        meta_path = os.path.join(obj_dir, 'metadata.json')
-
-        frames_meta = []
-        for frame_idx in sorted(object_segments[obj_id].keys()):
-            frame_info = frame_catalog.get(int(frame_idx))
-            mask = object_segments[obj_id][frame_idx]
-            mask_arr = np.squeeze(unpack_binary_mask(mask))
-            if mask_arr.ndim != 2:
-                continue
-            mask_arr = np.asarray(mask_arr, dtype=np.bool_)
-
-            ys, xs = np.nonzero(mask_arr)
-            area = int(mask_arr.sum())
-            bbox = None
-            if ys.size > 0:
-                bbox = [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
-
-            frame_name = frame_info['name'] if frame_info else None
-            frame_source = os.path.join(frames_dir, frame_name) if frame_name else None
-            frame_dest_name = frame_name or f"frame_{int(frame_idx):05d}.png"
-            frame_dest_path = os.path.join(frames_subdir, frame_dest_name)
-
-            frame_rel_path = None
-            if frame_source and os.path.isfile(frame_source):
-                try:
-                    if not os.path.isfile(frame_dest_path):
-                        shutil.copy2(frame_source, frame_dest_path)
-                    frame_rel_path = os.path.relpath(frame_dest_path, obj_dir)
-                except Exception as exc:
-                    LOGGER.warning(
-                        "Failed to copy frame %s for object %s: %s",
-                        frame_source,
-                        folder_label,
-                        exc,
-                    )
-            else:
-                if not frame_name:
-                    LOGGER.debug(
-                        "Frame name missing for object %s at index %s; skipping frame copy",
-                        folder_label,
-                        frame_idx,
-                    )
-                else:
-                    LOGGER.warning(
-                        "Source frame %s not found for object %s",
-                        frame_source,
-                        folder_label,
-                    )
-
-            mask_dest_name = f"{os.path.splitext(frame_dest_name)[0]}_mask.npz"
-            mask_dest_path = os.path.join(masks_subdir, mask_dest_name)
-            np.savez_compressed(mask_dest_path, mask=mask_arr.astype(np.bool_))
-            mask_rel_path = os.path.relpath(mask_dest_path, obj_dir)
-
-            frames_meta.append({
-                'frame_idx': int(frame_idx),
-                'frame_name': frame_name,
-                'frame_path': frame_rel_path,
-                'mask_path': mask_rel_path,
-                'mask_shape_hw': list(mask_arr.shape),
-                'area': area,
-                'bbox_xyxy': bbox,
-            })
-
-        meta = {
-            'level': level,
-            'object_id': int(obj_id),
-            'frame_count': len(frames_meta),
-            'frames': frames_meta,
-        }
-        with open(meta_path, 'w') as f:
-            json.dump(meta, f, indent=2)
-
-        index_entries.append({
-            'object_id': int(obj_id),
-            'level': level,
-            'folder': folder_label,
-            'metadata_path': os.path.relpath(meta_path, objects_dir),
-            'frames_subdir': os.path.relpath(frames_subdir, objects_dir),
-            'masks_subdir': os.path.relpath(masks_subdir, objects_dir),
-            'frame_count': len(frames_meta),
-        })
-
-    with open(os.path.join(objects_dir, 'index.json'), 'w') as f:
-        json.dump({'level': level, 'objects': index_entries}, f, indent=2)
-
-
 def save_viz_frames(
     viz_dir: str,
     frames_dir: str,
@@ -700,6 +646,10 @@ def save_comparison_proposals(
     frames_to_render = sorted(frame_numbers)
     if frames_to_save is not None:
         frames_to_render = [f for f in frames_to_save if f in set(frame_numbers)]
+
+    # 只輸出每 10 個 SSAM 幀的比較圖，避免產生過多檔案
+    if frames_to_render:
+        frames_to_render = [f for idx, f in enumerate(frames_to_render) if idx % 10 == 0]
 
     rng = np.random.default_rng(0)
     sam_color_map: Dict[int, Tuple[int, int, int]] = {}
@@ -826,14 +776,21 @@ def run_tracking(
     candidates_root: str,
     output: str,
     levels: Union[str, List[int]] = "2,4,6",
-    sam2_cfg: str = DEFAULT_SAM2_CFG,
-    sam2_ckpt: str = DEFAULT_SAM2_CKPT,
+    sam2_cfg: Optional[Union[str, os.PathLike]] = DEFAULT_SAM2_CFG,
+    sam2_ckpt: Optional[Union[str, os.PathLike]] = DEFAULT_SAM2_CKPT,
     sam2_max_propagate: Optional[int] = None,
     log_level: Optional[int] = None,
     iou_threshold: float = 0.6,
     long_tail_box_prompt: bool = False,
     all_box_prompt: bool = False,
 ) -> str:
+    if not sam2_cfg:
+        sam2_cfg = DEFAULT_SAM2_CFG
+    if not sam2_ckpt:
+        sam2_ckpt = DEFAULT_SAM2_CKPT
+    sam2_cfg = os.fspath(sam2_cfg) if isinstance(sam2_cfg, os.PathLike) else sam2_cfg
+    sam2_ckpt = os.fspath(sam2_ckpt) if isinstance(sam2_ckpt, os.PathLike) else sam2_ckpt
+
     configure_logging(log_level)
 
     overall_start = time.perf_counter()
@@ -958,6 +915,7 @@ def run_tracking(
     frame_index_to_name = {idx: name for idx, name in zip(ssam_absolute_indices, ssam_frames)}
 
     level_stats = []
+    overall_timer = TimingAggregator()
     for level in level_list:
         level_start = time.perf_counter()
         level_root = os.path.join(candidates_root, f'level_{level}')
@@ -967,56 +925,55 @@ def run_tracking(
         per_frame, frame_indices = load_filtered_candidates(level_root)
         
         LOGGER.info(f"Level {level}: Processing {len(per_frame)} frames with SAM2 tracking...")
-        
-        track_start = time.perf_counter()
-        segs = sam2_tracking(
-            subset_dir,
-            predictor,
-            per_frame,
-            frame_numbers=frame_indices,  # 使用實際的幀索引
-            iou_threshold=iou_threshold,
-            max_propagate=sam2_max_propagate,
-            use_box_for_small=(long_tail_box_prompt and not all_box_prompt),
-            use_box_for_all=all_box_prompt,
-            small_object_area_threshold=long_tail_area_threshold,
-        )
-        track_time = time.perf_counter() - track_start
+        level_timer = TimingAggregator()
 
-        persist_start = time.perf_counter()
-        save_video_segments_npz(segs, os.path.join(track_dir, 'video_segments.npz'))
-        obj_segments = reorganize_segments_by_object(segs)
-        save_object_segments_npz(obj_segments, os.path.join(track_dir, 'object_segments.npz'))
-        persist_time = time.perf_counter() - persist_start
+        with level_timer.track('track.sam2'):
+            segs = sam2_tracking(
+                subset_dir,
+                predictor,
+                per_frame,
+                frame_numbers=frame_indices,  # 使用實際的幀索引
+                iou_threshold=iou_threshold,
+                max_propagate=sam2_max_propagate,
+                use_box_for_small=(long_tail_box_prompt and not all_box_prompt),
+                use_box_for_all=all_box_prompt,
+                small_object_area_threshold=long_tail_area_threshold,
+            )
 
-        render_start = time.perf_counter()
-        store_output_masks(
-            track_dir,
-            data_path,
-            segs,
-            level=level,
-            frame_lookup=frame_index_to_name,
-        )
+        with level_timer.track('persist.video_segments'):
+            save_video_segments_npz(segs, os.path.join(track_dir, 'video_segments.npz'))
+
+        with level_timer.track('persist.object_npz'):
+            obj_segments = reorganize_segments_by_object(segs)
+            save_object_segments_npz(obj_segments, os.path.join(track_dir, 'object_segments.npz'))
+
         viz_dir = os.path.join(out_root, f'level_{level}', 'viz')
-        save_comparison_proposals(
-            viz_dir=viz_dir,
-            base_frames_dir=data_path,
-            filtered_per_frame=per_frame,
-            video_segments=segs,
-            level=level,
-            frame_numbers=frame_indices,  # 使用實際的幀索引
-            frames_to_save=None,
-        )
-        render_time = time.perf_counter() - render_start
+        with level_timer.track('viz.comparison'):
+            save_comparison_proposals(
+                viz_dir=viz_dir,
+                base_frames_dir=data_path,
+                filtered_per_frame=per_frame,
+                video_segments=segs,
+                level=level,
+                frame_numbers=frame_indices,  # 使用實際的幀索引
+                frames_to_save=None,
+            )
 
-        form_time = time.perf_counter() - level_start
-        
-        # 只在每個 level 結束時顯示詳細信息
+        level_total = time.perf_counter() - level_start
+
+        track_time = level_timer.total('track.sam2')
+        persist_time = level_timer.total_prefix('persist.')
+        viz_time = level_timer.total_prefix('viz.')
+        render_time = viz_time
+
         LOGGER.info(
-            f"Level {level} completed → {len(obj_segments)} objects across {len(segs)} frames "
-            f"(track: {format_seconds(track_time)}, persist: {format_seconds(persist_time)}, "
-            f"render: {format_seconds(render_time)}, total: {format_seconds(form_time)})"
+            "Level %d finished (%d objects / %d frames) → %s",
+            level,
+            len(obj_segments),
+            len(segs),
+            level_timer.format_breakdown(),
         )
-        
+
         level_stats.append(
             (
                 level,
@@ -1024,22 +981,50 @@ def run_tracking(
                 len(segs),
                 track_time,
                 persist_time,
+                viz_time,
                 render_time,
-                form_time,
+                level_total,
             )
         )
+
+        overall_timer.merge(level_timer)
 
     if level_stats:
         summary = "; ".join(
             f"L{lvl}: {objs} objects / {frames} frames "
-            f"(track={format_seconds(track)}, render={format_seconds(render)}, total={format_seconds(total)})"
-            for lvl, objs, frames, track, _, render, total in level_stats
+            f"(track={format_duration_precise(track)}, persist={format_duration_precise(persist)}, "
+            f"viz={format_duration_precise(viz)}, render={format_duration_precise(render)}, "
+            f"total={format_duration_precise(total)})"
+            for (
+                lvl,
+                objs,
+                frames,
+                track,
+                persist,
+                viz,
+                render,
+                total,
+            ) in level_stats
         )
         LOGGER.info("Tracking summary → %s", summary)
+
+    if overall_timer.items():
+        category_summary = []
+        for label, prefix in [
+            ("track", 'track.'),
+            ("persist", 'persist.'),
+            ("viz", 'viz.'),
+        ]:
+            total = overall_timer.total_prefix(prefix)
+            if total > 0:
+                category_summary.append(f"{label}={format_duration_precise(total)}")
+        if category_summary:
+            LOGGER.info("Aggregate timing by stage → %s", ", ".join(category_summary))
+        LOGGER.debug("Aggregate timing breakdown → %s", overall_timer.format_breakdown())
     LOGGER.info("Tracking results saved at %s", out_root)
     LOGGER.info(
         "Tracking completed in %s",
-        format_seconds(time.perf_counter() - overall_start),
+        format_duration_precise(time.perf_counter() - overall_start),
     )
 
     return out_root
