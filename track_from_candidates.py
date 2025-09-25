@@ -11,6 +11,7 @@ import time
 import logging
 import base64
 import re
+import shutil
 from typing import List, Dict, Any, Tuple, Optional, Union
 
 import numpy as np
@@ -490,6 +491,8 @@ def store_output_masks(
     for obj_id in sorted(object_segments.keys()):
         folder_label = f"L{level}_ID{obj_id}" if level is not None else f"ID{obj_id}"
         obj_dir = ensure_dir(os.path.join(objects_dir, folder_label))
+        frames_subdir = ensure_dir(os.path.join(obj_dir, 'frames'))
+        masks_subdir = ensure_dir(os.path.join(obj_dir, 'masks'))
         meta_path = os.path.join(obj_dir, 'metadata.json')
 
         frames_meta = []
@@ -507,9 +510,49 @@ def store_output_masks(
             if ys.size > 0:
                 bbox = [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
 
+            frame_name = frame_info['name'] if frame_info else None
+            frame_source = os.path.join(frames_dir, frame_name) if frame_name else None
+            frame_dest_name = frame_name or f"frame_{int(frame_idx):05d}.png"
+            frame_dest_path = os.path.join(frames_subdir, frame_dest_name)
+
+            frame_rel_path = None
+            if frame_source and os.path.isfile(frame_source):
+                try:
+                    if not os.path.isfile(frame_dest_path):
+                        shutil.copy2(frame_source, frame_dest_path)
+                    frame_rel_path = os.path.relpath(frame_dest_path, obj_dir)
+                except Exception as exc:
+                    LOGGER.warning(
+                        "Failed to copy frame %s for object %s: %s",
+                        frame_source,
+                        folder_label,
+                        exc,
+                    )
+            else:
+                if not frame_name:
+                    LOGGER.debug(
+                        "Frame name missing for object %s at index %s; skipping frame copy",
+                        folder_label,
+                        frame_idx,
+                    )
+                else:
+                    LOGGER.warning(
+                        "Source frame %s not found for object %s",
+                        frame_source,
+                        folder_label,
+                    )
+
+            mask_dest_name = f"{os.path.splitext(frame_dest_name)[0]}_mask.npz"
+            mask_dest_path = os.path.join(masks_subdir, mask_dest_name)
+            np.savez_compressed(mask_dest_path, mask=mask_arr.astype(np.bool_))
+            mask_rel_path = os.path.relpath(mask_dest_path, obj_dir)
+
             frames_meta.append({
                 'frame_idx': int(frame_idx),
-                'frame_name': frame_info['name'] if frame_info else None,
+                'frame_name': frame_name,
+                'frame_path': frame_rel_path,
+                'mask_path': mask_rel_path,
+                'mask_shape_hw': list(mask_arr.shape),
                 'area': area,
                 'bbox_xyxy': bbox,
             })
@@ -526,7 +569,10 @@ def store_output_masks(
         index_entries.append({
             'object_id': int(obj_id),
             'level': level,
+            'folder': folder_label,
             'metadata_path': os.path.relpath(meta_path, objects_dir),
+            'frames_subdir': os.path.relpath(frames_subdir, objects_dir),
+            'masks_subdir': os.path.relpath(masks_subdir, objects_dir),
             'frame_count': len(frames_meta),
         })
 

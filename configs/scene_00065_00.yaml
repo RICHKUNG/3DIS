@@ -1,0 +1,42 @@
+experiment:
+  name: scene_00065_00
+  data_path: /media/public_dataset2/multiscan/scene_00065_00/outputs/color
+  output_root: /media/Pluto/richkung/My3DIS/outputs/scene_00065_00
+  levels: [2, 4, 6]
+  tag: baseline
+
+stages:
+  ssam:
+    enabled: true
+    gpu: 0
+    levels: [2, 4, 6]
+    frames:
+      start: 0
+      end: 20000
+      step: 20
+    ssam_freq: 4
+    min_area: 500
+    stability_threshold: 0.9
+    persist_raw: true
+    skip_filtering: true
+    add_gaps: false
+    append_timestamp: true
+
+  filter:
+    enabled: true
+    min_area: 500
+    stability_threshold: 0.9
+    update_manifest: true
+
+  tracker:
+    enabled: true
+    gpu: 1
+    levels: [2, 4, 6]
+    prompt_mode: all  # 選項：none / long_tail / all
+    max_propagate: 30
+    iou_threshold: 0.6
+
+  report:
+    enabled: true
+    name: report.md
+    max_width: 640

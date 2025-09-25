@@ -10,6 +10,7 @@ Status
 - `run_experiment.sh` coordinates the two-stage execution (generate → track); dataset/output paths are fixed in the script so the CLI only adjusts levels, frame ranges, thresholds, Semantic-SAM cadence, and SAM2 propagation depth.
 - Progressive refinement now back-fills large uncovered regions at the coarsest level, so SAM2 always receives explicit masks for gaps that exceed `min_area`.
 - Per-level outputs must persist raw and filtered candidate lists alongside SAM2 tracking artifacts.
+- YAML 驅動的 `run_workflow.py` 可依配置自動執行 SSAM → filter → SAM2 → 報告，並在 YAML 中指定 GPU/參數、產出 Markdown 紀錄。
 
 Progress Log
 - Added `My3DIS/run_pipeline.py` to glue Semantic-SAM candidate generation with SAM2 tracking.
@@ -25,6 +26,7 @@ Progress Log
 - 2025-09-23: Streamlined persistence—progressive refinement now runs inside temp dirs (no `_progressive_tmp` artifacts), filtered masks are packed into `filtered.json`, tracking objects emit JSON-only metadata, and viz renders only keep the `compare/` panels.
 - 2025-09-24: Reviewed recent SAM2 tracking failures; noted ~5k mask prompts per long run (logs `nohupGPU0.out`/`nohupGPU1.out`) which translate to ~24–36 GB of GPU tensor memory because each mask prompt persists as a 1024² float tensor. Advised throttling mask additions (filtering, chunked propagation, or converting to boxes) to stay within GPU limits.
 - 2025-09-25: Added CLI overrides for SAM2 IoU threshold and box-prompt policies (`run_experiment.sh` → `track_from_candidates.py`); long-tail objects default to area ≤ max(3×min_area, min_area+1) with `MY3DIS_LONG_TAIL_AREA` override, and scripts log the active prompt strategy.
+- 2025-09-26: 建立 `configs/scene_00065_00.yaml` 與 `run_workflow.py`，將 SSAM/Filter/SAM2/報告拆成 stage，可在 YAML 中調整 level、frame freq、SSAM freq、GPU 配置；新增 `filter_candidates.py`、`generate_report.py` 支援重複篩選與 Markdown 報告（含每層第一/中位/最後 compare 圖、時間摘要）。
 
 Next Actions
 1) Create the shared environment from `Algorithm1_env.yml` (optional but recommended).
