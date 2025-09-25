@@ -3,7 +3,7 @@
 Summary
 - Replace SAM in Algorithm 1 with Semantic-SAM and run the modified tracker per Semantic-SAM level.
 - Drive multi-level Semantic-SAM at fixed levels [2,4,6] by default, sampling frames via ranges such as 1200:1600:20, and throttle expensive SSAM calls with `--ssam-freq` when desired.
-- Persist raw candidate lists, filtered mask metadata (packed into JSON), SAM2 tracking masks, and streamlined comparison visuals while automatically gap-filling large uncovered regions at the coarsest level.
+- Persist raw candidate lists, filtered mask metadata (packed into JSON), SAM2 tracking `.npz` artifacts (frame-major + object-major), and comparison visuals while automatically gap-filling large uncovered regions on the coarsest level only when `add_gaps=true`.
 - Execute the pipeline through two dedicated conda environments (Semantic-SAM + SAM2); use `run_experiment.sh` or the new YAML-driven `run_workflow.py` to orchestrate stage switching and propagate the shared knobs (levels, frame slice, thresholds, SSAM cadence, SAM2 propagation limit, prompt 策略等)。
 - 透過 `generate_report.py` 自動輸出 Markdown 報告，記錄階段耗時、參數設定與各層代表性的 Semantic-SAM / SAM2 比對圖，有助於後續調參與結果彙整。
 
@@ -28,10 +28,10 @@ Data & Selection
 
 Pipeline Overview
 1) Frame selection: collect frames per the slice range and create a subset directory.
-2) Semantic-SAM proposal generation (per level): run progressive refinement for each level, computing segmentation, bbox (XYWH), area, stability score, and metadata; any uncovered regions above `min_area` are converted into gap-fill masks at the coarsest level so tracking always receives an explicit prompt.
+2) Semantic-SAM proposal generation (per level): run progressive refinement for each level, computing segmentation, bbox (XYWH), area, stability score, and metadata; when `add_gaps=true`, uncovered regions above `min_area` are converted into gap-fill masks for the first (typically coarsest) level only, guaranteeing at least one prompt for large holes without duplicating them across scales.
 3) SAM2 tracking: prompt SAM2 with filtered masks/boxes, propagate (optionally capped by `--sam2-max-propagate`) to build masklets, and merge per-object masks per absolute frame index.
 4) Filtering (optional stage): 如在 SSAM 階段啟用 raw 儲存 (`persist_raw=true`)，可在後續任意時間透過 `filter_candidates.py` 重新套用不同的 `min_area`、`stability` 門檻，而不必重跑 Semantic-SAM。
-5) Persistence, report & visualization: store raw candidates, filtered summaries with packed masks inside JSON, propagated masks (`video_segments.npz`), per-object metadata, comparison panels，以及由 `generate_report.py` 產生的 Markdown 報告（含代表性縮圖與各階段耗時）。
+5) Persistence, report & visualization: store raw candidates, filtered summaries with packed masks inside JSON, propagated masks (`video_segments.npz` + `object_segments.npz`), sparsified comparison panels（預設僅保留每第 10 個 SSAM 幀），以及由 `generate_report.py` 產生的 Markdown 報告（含代表性縮圖與各階段耗時）。
 
 Workflow Orchestrators
 
@@ -57,8 +57,8 @@ Workflow Orchestrators
 - Level folder layout: `candidates/`, `raw/`（若有啟用持久化）、`filtered/`, `tracking/`, `viz/`, `report/`。
 - `candidates/candidates.json` keeps raw proposal metadata；若啟用 `persist_raw=True`，`raw/frame_XXXXX.json` + `raw/frame_XXXXX.npz` 會保存完整遮罩堆疊，供 `filter_candidates.py` 重跑。
 - `filtered/filtered.json` embeds filtered masks (packed bits + shape) directly in JSON，若重新套用篩選則會覆寫此檔案並更新 manifest。
-- `tracking/video_segments.npz` stores propagated masks，`tracking/objects/index.json` 以及 `objects/L<L>_ID<id>/metadata.json` 記錄每個物件的出現框 (bbox_xyxy) 與面積。
-- `viz/compare/` holds contrast panels for Semantic-SAM vs. SAM2；`level_x/report/` 底下會保留縮小後的代表性圖檔（第一張／中位／最後一張），供 Markdown 報告引用。
+- `tracking/video_segments.npz`（frame-major）與 `tracking/object_segments.npz`（object-major）存放 SAM2 傳播結果，採 packed mask 形式，方便依需求載入。
+- `viz/compare/` holds contrast panels for Semantic-SAM vs. SAM2；輸出已稀疏化為每第 10 個 SSAM 幀。`level_x/report/` 底下仍保留縮小後的代表性圖檔（第一張／中位／最後一張），供 Markdown 報告引用。
 - `report.md`（根目錄）為中文摘要，包含階段耗時表格、主要參數、每個 level 的代表圖表連結；`workflow_summary.json` 保存原始紀錄。
 - Each run writes `manifest.json` with frame selection, thresholds, model paths, timestamps, the SSAM subset (`ssam_frames`, `ssam_freq`), any SAM2 propagation cap in effect，以及篩選/原始資料的設定。
 
@@ -74,7 +74,7 @@ outputs/scene_00065_00/2025xxxx_xxxxxx/
 │   ├── raw/frame_01200.json + .npz   # 若 persist_raw
 │   ├── filtered/filtered.json
 │   ├── tracking/video_segments.npz
-│   ├── tracking/objects/index.json
+│   ├── tracking/object_segments.npz
 │   ├── viz/compare/frame_01200_L2.png
 │   └── report/frame_01200_第一張.png
 ├── level_4/
@@ -145,13 +145,13 @@ Notes & Tips
 - Outputs are `.gitignore`d; commit code/configs, or add representative samples selectively.
 
 Implementation Notes
-- Stage 1 (`generate_candidates.py` + `ssam_progressive_adapter.py`): runs Semantic-SAM progressive refinement per level, throttled by `--ssam-freq`, synthesises base-level gap-fill masks for uncovered regions ≥ `min_area`, and keeps progressive outputs in temporary directories (no `_progressive_tmp` folder under the run root).
-- Stage 2 (`track_from_candidates.py`): seeds SAM2 with filtered masks/boxes, respects `--sam2-max-propagate` to cap forward/backward steps, and renders only the SSAM-processed frames for consistency.
+- Stage 1 (`generate_candidates.py` + `ssam_progressive_adapter.py`): runs Semantic-SAM progressive refinement per level, throttled by `--ssam-freq`, synthesises gap-fill masks ≥ `min_area` only on the first level when `add_gaps=true`, and keeps progressive outputs in temporary directories (no `_progressive_tmp` folder under the run root).
+- Stage 2 (`track_from_candidates.py`): seeds SAM2 with filtered masks/boxes, respects `--sam2-max-propagate` to cap forward/backward steps, persists only the frame/object `.npz` archives, and renders comparison panels on a decimated (every 10th) SSAM frame set.
 - `run_experiment.sh` wires both stages together, forwarding shared flags so a single CLI controls cadence, thresholds, and propagation depth across environments.
 
 實作說明（繁體中文版）
-- 第一階段（`generate_candidates.py` 與 `ssam_progressive_adapter.py`）：針對指定的 SSAM 取樣頻率執行 progressive refinement，並在最粗層自動補上大於 `min_area` 的未覆蓋區域，使後續追蹤一定有對應的遮罩。
-- 第二階段（`track_from_candidates.py`）：以篩選後的遮罩／方框提示 SAM2，依 `--sam2-max-propagate` 限制向前向後的傳播步數，僅渲染真正做過 SSAM 的影格以保持輸出一致。
+- 第一階段（`generate_candidates.py` 與 `ssam_progressive_adapter.py`）：針對指定的 SSAM 取樣頻率執行 progressive refinement，並僅在第 1 個 level (`add_gaps=true` 時) 補上大於 `min_area` 的未覆蓋區域，避免同一缺口在多層重複出現。
+- 第二階段（`track_from_candidates.py`）：以篩選後的遮罩／方框提示 SAM2，依 `--sam2-max-propagate` 限制向前向後的傳播步數，只輸出 `video_segments.npz` / `object_segments.npz` 兩種結果，且比較圖僅保留每第 10 個 SSAM 影格。
 - `run_experiment.sh` 串接兩個環境，將層級、時間取樣、SSAM 頻率與 SAM2 傳播深度等參數一次傳遞，方便透過同一個指令調整流程。
 
 - `My3DIS/run_workflow.py` — YAML orchestrator，整合 SSAM → filter → SAM2 → 報告。

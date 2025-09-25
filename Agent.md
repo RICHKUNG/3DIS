@@ -27,6 +27,7 @@ Progress Log
 - 2025-09-24: Reviewed recent SAM2 tracking failures; noted ~5k mask prompts per long run (logs `nohupGPU0.out`/`nohupGPU1.out`) which translate to ~24–36 GB of GPU tensor memory because each mask prompt persists as a 1024² float tensor. Advised throttling mask additions (filtering, chunked propagation, or converting to boxes) to stay within GPU limits.
 - 2025-09-25: Added CLI overrides for SAM2 IoU threshold and box-prompt policies (`run_experiment.sh` → `track_from_candidates.py`); long-tail objects default to area ≤ max(3×min_area, min_area+1) with `MY3DIS_LONG_TAIL_AREA` override, and scripts log the active prompt strategy.
 - 2025-09-26: 建立 `configs/scene_00065_00.yaml` 與 `run_workflow.py`，將 SSAM/Filter/SAM2/報告拆成 stage，可在 YAML 中調整 level、frame freq、SSAM freq、GPU 配置；新增 `filter_candidates.py`、`generate_report.py` 支援重複篩選與 Markdown 報告（含每層第一/中位/最後 compare 圖、時間摘要）。
+- 2025-09-26: Refined tracking artifacts—gap-fill僅在第一個 level 啟用、SAM2 僅輸出 `video_segments.npz` / `object_segments.npz`、viz 比較圖改為每 10 張 SSAM 幀儲存；README / Agent 記錄同步更新。
 
 Next Actions
 1) Create the shared environment from `Algorithm1_env.yml` (optional but recommended).
