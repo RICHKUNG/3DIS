@@ -12,7 +12,7 @@ import contextlib
 import io
 import logging
 import tempfile
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import numpy as np
 
 DEFAULT_SEMANTIC_SAM_ROOT = "/media/Pluto/richkung/Semantic-SAM"
@@ -48,8 +48,8 @@ def xyxy_to_xywh(b):
     return [int(x1), int(y1), int(max(0, x2 - x1)), int(max(0, y2 - y1))]
 
 
-def _extract_gap_components(segs: List[np.ndarray], min_area: int) -> List[np.ndarray]:
-    """Return boolean masks for uncovered connected components above min_area."""
+def _extract_gap_components(segs: List[np.ndarray], fill_area: int) -> List[np.ndarray]:
+    """Return boolean masks for uncovered regions above the fill_area threshold."""
     valid = [np.asarray(seg, dtype=bool) for seg in segs if seg is not None]
     if not valid:
         return []
@@ -100,7 +100,7 @@ def _extract_gap_components(segs: List[np.ndarray], min_area: int) -> List[np.nd
                         visited[ny, nx] = True
                         stack.append((ny, nx))
 
-            if len(coords) < min_area:
+            if len(coords) < fill_area:
                 continue
 
             comp_mask = np.zeros_like(gap, dtype=bool)
@@ -117,8 +117,10 @@ def generate_with_progressive(
     sam_ckpt_path: str,
     levels: List[int],
     min_area: int = 300,
+    fill_area: Optional[int] = None,
     save_root: str = None,
     persist_outputs: bool = False,
+    enable_gap_fill: bool = True,
 ) -> Dict[int, List[List[Dict[str, Any]]]]:
     """Generate per-level candidates using progressive_refinement.
 
@@ -132,6 +134,10 @@ def generate_with_progressive(
         pass
 
     semantic_sam = build_semantic_sam(model_type="L", ckpt=sam_ckpt_path)
+
+    if fill_area is None:
+        fill_area = min_area
+    fill_area = int(max(0, fill_area))
 
     # When persist_outputs is False we rely on temporary directories so no artifacts remain on disk.
     if save_root is not None and persist_outputs:
@@ -189,10 +195,10 @@ def generate_with_progressive(
                 results = run_progressive(out_dirs)
 
         additional_gap_masks: List[Dict[str, Any]] = []
-        if base_level is not None:
+        if enable_gap_fill and base_level is not None:
             base_masks = results['levels'].get(base_level, {}).get('masks', [])
             base_segs = [m.get('segmentation') for m in base_masks if m.get('segmentation') is not None]
-            gap_components = _extract_gap_components(base_segs, min_area)
+            gap_components = _extract_gap_components(base_segs, fill_area)
             if gap_components:
                 for comp in gap_components:
                     additional_gap_masks.append({

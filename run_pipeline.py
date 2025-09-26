@@ -76,6 +76,8 @@ def main():
                         help='SAM2 checkpoint path')
     parser.add_argument('--output', default=DEFAULT_OUTPUT_ROOT, help='Output root inside My3DIS')
     parser.add_argument('--min-area', type=int, default=300)
+    parser.add_argument('--fill-area', type=int, default=None,
+                        help='Minimum area for SSAM gap-fill masks (default: min-area)')
     parser.add_argument('--stability', '--stability-threshold', dest='stability_threshold',
                         type=float, default=0.9, help='Minimum stability_score (default: 0.9)')
     parser.add_argument('--no-timestamp', action='store_true', help='Do not append timestamp folder to output root')
@@ -96,6 +98,7 @@ def main():
         sam_ckpt=args.sam_ckpt,
         output=args.output,
         min_area=args.min_area,
+        fill_area=args.fill_area,
         stability_threshold=args.stability_threshold,
         add_gaps=False,
         no_timestamp=args.no_timestamp,

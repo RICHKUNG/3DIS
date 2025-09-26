@@ -118,8 +118,8 @@ def resolve_levels(stage_cfg: Dict[str, Any], manifest: Optional[Dict[str, Any]]
 
 def stage_frames_string(stage_cfg: Dict[str, Any]) -> str:
     frames_cfg = stage_cfg.get('frames', {}) or {}
-    start = int(frames_cfg.get('start', frames_cfg.get('from', 0)))
-    end = int(frames_cfg.get('end', frames_cfg.get('to', 0)))
+    start_raw = frames_cfg.get('start', frames_cfg.get('from'))
+    end_raw = frames_cfg.get('end', frames_cfg.get('to'))
     step = int(
         frames_cfg.get('step')
         or frames_cfg.get('freq')
@@ -127,6 +127,9 @@ def stage_frames_string(stage_cfg: Dict[str, Any]) -> str:
         or stage_cfg.get('freq')
         or 1
     )
+    start = int(start_raw) if start_raw is not None else 0
+    # Use -1 as sentinel to indicate "until end" when end not provided.
+    end = int(end_raw) if end_raw is not None else -1
     return f"{start}:{end}:{step}"
 
 
@@ -198,6 +201,15 @@ def main() -> int:
         frames_str = stage_frames_string(ssam_cfg)
         ssam_freq = int(ssam_cfg.get('ssam_freq', 1))
         min_area = int(ssam_cfg.get('min_area', 300))
+        fill_area_cfg = ssam_cfg.get('fill_area')
+        if fill_area_cfg is None:
+            fill_area = min_area
+        else:
+            try:
+                fill_area = int(fill_area_cfg)
+            except (TypeError, ValueError) as exc:
+                raise SystemExit(f'invalid stages.ssam.fill_area: {fill_area_cfg!r}') from exc
+        fill_area = max(0, fill_area)
         stability = float(ssam_cfg.get('stability_threshold', 0.9))
         persist_raw = bool(ssam_cfg.get('persist_raw', True))
         skip_filtering = bool(ssam_cfg.get('skip_filtering', False))
@@ -227,6 +239,7 @@ def main() -> int:
                 sam_ckpt=sam_ckpt,
                 output=output_root,
                 min_area=min_area,
+                fill_area=fill_area,
                 stability_threshold=stability,
                 add_gaps=add_gaps,
                 no_timestamp=not append_timestamp,
@@ -244,6 +257,7 @@ def main() -> int:
                         'frames': frames_str,
                         'ssam_freq': ssam_freq,
                         'min_area': min_area,
+                        'fill_area': fill_area,
                         'stability_threshold': stability,
                         'persist_raw': persist_raw,
                         'skip_filtering': skip_filtering,
@@ -320,6 +334,16 @@ def main() -> int:
         all_box = prompt_mode == 'all'
         long_tail_box = prompt_mode == 'long_tail'
 
+        downscale_enabled = bool(tracker_cfg.get('downscale_masks', False))
+        downscale_ratio = tracker_cfg.get('downscale_ratio', 0.3)
+        try:
+            downscale_ratio = float(downscale_ratio)
+        except (TypeError, ValueError):
+            raise SystemExit(f'Invalid tracker.downscale_ratio={downscale_ratio!r}')
+        mask_scale_ratio = downscale_ratio if downscale_enabled else 1.0
+        if mask_scale_ratio <= 0.0 or mask_scale_ratio > 1.0:
+            raise SystemExit('tracker.downscale_ratio must be in (0, 1] when downscale_masks is true')
+
         sam2_cfg = tracker_cfg.get('sam2_cfg') or experiment_cfg.get('sam2_cfg')
         sam2_ckpt = tracker_cfg.get('sam2_ckpt') or experiment_cfg.get('sam2_ckpt')
 
@@ -336,6 +360,7 @@ def main() -> int:
                 iou_threshold=iou_threshold,
                 long_tail_box_prompt=long_tail_box,
                 all_box_prompt=all_box,
+                mask_scale_ratio=mask_scale_ratio,
             )
             summary['stages']['tracker'].update(
                 {
@@ -344,6 +369,8 @@ def main() -> int:
                         'max_propagate': max_propagate,
                         'iou_threshold': iou_threshold,
                         'prompt_mode': prompt_mode,
+                        'downscale_masks': downscale_enabled,
+                        'downscale_ratio': mask_scale_ratio,
                     }
                 }
             )

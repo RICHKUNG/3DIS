@@ -38,8 +38,15 @@ DEFAULT_SEMANTIC_SAM_CKPT = os.path.join(
 
 
 def parse_range(range_str: str):
-    s, e, st = [int(x) for x in str(range_str).split(':')]
-    return s, e, st
+    parts = str(range_str).split(':')
+    if len(parts) != 3:
+        raise ValueError(f'Invalid range spec: {range_str!r}')
+    start = int(parts[0]) if parts[0] else 0
+    end = int(parts[1]) if parts[1] else -1
+    step = int(parts[2]) if parts[2] else 1
+    if step <= 0:
+        raise ValueError('step must be positive')
+    return start, end, step
 
 
 def parse_levels(levels_str: str):
@@ -233,6 +240,7 @@ def run_generation(
     sam_ckpt: str = DEFAULT_SEMANTIC_SAM_CKPT,
     output: str,
     min_area: int = 300,
+    fill_area: Optional[int] = None,
     stability_threshold: float = 0.9,
     add_gaps: bool = False,
     no_timestamp: bool = False,
@@ -252,8 +260,17 @@ def run_generation(
     start_time = time.perf_counter()
 
     frames_dir = data_path
+    if fill_area is None:
+        fill_area = min_area
+    try:
+        fill_area = int(fill_area)
+    except (TypeError, ValueError):
+        LOGGER.warning("Invalid fill_area=%r; defaulting to min_area=%d", fill_area, min_area)
+        fill_area = int(min_area)
+    fill_area = max(0, fill_area)
     level_list = parse_levels(levels)
     start_idx, end_idx, step = parse_range(frames)
+    start_idx = max(0, start_idx)
 
     try:
         ssam_freq = max(1, int(ssam_freq))
@@ -265,7 +282,11 @@ def run_generation(
         [f for f in os.listdir(frames_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))],
         key=numeric_frame_sort_key,
     )
-    selected_indices = list(range(start_idx, min(end_idx, len(all_frames)), step))
+    if end_idx < 0:
+        range_end = len(all_frames)
+    else:
+        range_end = min(end_idx, len(all_frames))
+    selected_indices = list(range(start_idx, range_end, step))
     selected = [all_frames[i] for i in selected_indices]
 
     # 選擇需要進行 Semantic-SAM 分割的幀（按 ssam_freq 間隔）
@@ -302,6 +323,8 @@ def run_generation(
 
         if min_area != 300:
             parts.append(f"area{min_area}")
+        if fill_area != min_area:
+            parts.append(f"fill{fill_area}")
 
         if add_gaps:
             parts.append("gaps")
@@ -332,6 +355,7 @@ def run_generation(
         'levels': level_list,
         'frames': frames,
         'min_area': min_area,
+        'fill_area': fill_area,
         'stability_threshold': stability_threshold,
         'data_path': frames_dir,
         'selected_frames': selected,
@@ -348,6 +372,10 @@ def run_generation(
         'ts_epoch': int(time.time()),
         'timestamp': timestamp,
         'output_root': run_root,
+        'gap_fill': {
+            'fill_area': fill_area,
+            'add_gaps': bool(add_gaps),
+        },
         'filtering': {
             'applied': not skip_filtering,
             'min_area': None if skip_filtering else min_area,
@@ -369,6 +397,8 @@ def run_generation(
         sam_ckpt_path=sam_ckpt,
         levels=level_list,
         min_area=min_area,
+        fill_area=fill_area,
+        enable_gap_fill=bool(add_gaps),
     )
 
     level_stats: List[Dict[str, Any]] = []
@@ -400,7 +430,7 @@ def run_generation(
                     union |= m['segmentation']
                 gap = ~union
                 gap_area = int(gap.sum())
-                if gap_area >= min_area:
+                if gap_area >= fill_area:
                     ys, xs = np.where(gap)
                     x1, y1, x2, y2 = (
                         int(xs.min()),
@@ -524,6 +554,8 @@ def main():
                     help='Semantic-SAM checkpoint path (default: swinl_only_sam_many2many.pth)')
     ap.add_argument('--output', required=True)
     ap.add_argument('--min-area', type=int, default=300)
+    ap.add_argument('--fill-area', type=int, default=None,
+                    help='Minimum area for SSAM gap-fill masks (default: min-area)')
     ap.add_argument('--stability-threshold', type=float, default=0.9)
     ap.add_argument('--add-gaps', action='store_true', help='Add uncovered area as a candidate per frame per level')
     ap.add_argument('--no-timestamp', action='store_true', help='Do not append a timestamp folder to output root')
@@ -546,6 +578,7 @@ def main():
         sam_ckpt=args.sam_ckpt,
         output=args.output,
         min_area=args.min_area,
+        fill_area=args.fill_area,
         stability_threshold=args.stability_threshold,
         add_gaps=args.add_gaps,
         no_timestamp=args.no_timestamp,

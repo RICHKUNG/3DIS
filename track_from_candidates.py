@@ -61,15 +61,19 @@ class _ProgressPrinter:
 PACKED_MASK_KEY = "packed_bits"
 PACKED_MASK_B64_KEY = "packed_bits_b64"
 PACKED_SHAPE_KEY = "shape"
+PACKED_ORIG_SHAPE_KEY = "full_resolution_shape"
 
 
-def pack_binary_mask(mask: np.ndarray) -> Dict[str, Any]:
+def pack_binary_mask(mask: np.ndarray, *, full_resolution_shape: Optional[Tuple[int, int]] = None) -> Dict[str, Any]:
     bool_mask = np.asarray(mask, dtype=np.bool_, order="C")
     packed = np.packbits(bool_mask.ravel())
-    return {
+    payload = {
         PACKED_MASK_KEY: packed,
         PACKED_SHAPE_KEY: tuple(int(dim) for dim in bool_mask.shape),
     }
+    if full_resolution_shape is not None:
+        payload[PACKED_ORIG_SHAPE_KEY] = tuple(int(dim) for dim in full_resolution_shape)
+    return payload
 
 
 def is_packed_mask(entry: Any) -> bool:
@@ -99,6 +103,82 @@ def unpack_binary_mask(entry: Any) -> np.ndarray:
     if array.dtype != np.bool_:
         array = array.astype(np.bool_)
     return array
+
+
+def maybe_downscale_mask(mask: np.ndarray, ratio: float) -> np.ndarray:
+    """Resize binary mask using nearest neighbour while keeping boolean dtype."""
+    if mask is None:
+        return None
+    try:
+        ratio_val = float(ratio)
+    except (TypeError, ValueError):
+        ratio_val = 1.0
+    if not (0.0 < ratio_val < 1.0):
+        return np.asarray(mask, dtype=np.bool_)
+    arr = np.asarray(mask, dtype=np.bool_)
+    if arr.ndim > 2:
+        arr = np.squeeze(arr)
+    if arr.ndim != 2:
+        raise ValueError(f"Unsupported mask dimensionality for downscale: {arr.shape}")
+    h, w = arr.shape
+    new_h = max(1, int(round(h * ratio_val)))
+    new_w = max(1, int(round(w * ratio_val)))
+    if new_h == h and new_w == w:
+        return arr
+    from PIL import Image
+
+    img = Image.fromarray(arr.astype(np.uint8) * 255)
+    resized = img.resize((new_w, new_h), resample=Image.NEAREST)
+    return (np.array(resized, dtype=np.uint8) >= 128)
+
+
+def format_scale_suffix(ratio: float) -> str:
+    clean = f"{float(ratio):.3f}".rstrip('0').rstrip('.')
+    return clean or "1"
+
+
+def scaled_npz_path(path: str, ratio: float) -> str:
+    if not (0.0 < float(ratio) < 1.0):
+        return path
+    directory, filename = os.path.split(path)
+    stem, ext = os.path.splitext(filename)
+    suffix = format_scale_suffix(ratio)
+    new_name = f"{stem}_scale{suffix}x{ext}"
+    return os.path.join(directory, new_name)
+
+
+def resize_mask_to_shape(mask: np.ndarray, target_shape: Tuple[int, int]) -> np.ndarray:
+    """Resize boolean mask to target (H, W) using nearest neighbour."""
+    if mask is None:
+        return None
+    arr = np.asarray(mask, dtype=np.bool_)
+    if arr.ndim > 2:
+        arr = np.squeeze(arr)
+    target_h, target_w = target_shape
+    if arr.shape == (target_h, target_w):
+        return arr
+    from PIL import Image
+
+    img = Image.fromarray(arr.astype(np.uint8) * 255)
+    resized = img.resize((target_w, target_h), resample=Image.NEAREST)
+    return (np.array(resized, dtype=np.uint8) >= 128)
+
+
+def determine_mask_shape(mask_entry: Any, fallback: Optional[Tuple[int, int]] = None) -> Optional[Tuple[int, int]]:
+    """Best-effort retrieval of the full-resolution (H, W) for a mask entry."""
+    if isinstance(mask_entry, dict):
+        if PACKED_ORIG_SHAPE_KEY in mask_entry:
+            orig = mask_entry[PACKED_ORIG_SHAPE_KEY]
+            if isinstance(orig, (list, tuple)) and len(orig) >= 2:
+                return int(orig[0]), int(orig[1])
+    if is_packed_mask(mask_entry):
+        arr = unpack_binary_mask(mask_entry)
+        return arr.shape[-2], arr.shape[-1]
+    if isinstance(mask_entry, np.ndarray):
+        arr = np.asarray(mask_entry)
+        if arr.ndim >= 2:
+            return arr.shape[-2], arr.shape[-1]
+    return fallback
 
 
 def numeric_frame_sort_key(fname: str) -> Tuple[float, str]:
@@ -294,7 +374,11 @@ def configure_logging(explicit_level: Optional[int] = None) -> int:
     return explicit_level
 
 
-def load_filtered_candidates(level_root: str) -> Tuple[List[List[Dict[str, Any]]], List[int]]:
+def load_filtered_candidates(
+    level_root: str,
+    *,
+    mask_scale_ratio: float = 1.0,
+) -> Tuple[List[List[Dict[str, Any]]], List[int]]:
     """加載篩選後的候選項，返回候選項列表和對應的幀索引"""
     filt_dir = os.path.join(level_root, 'filtered')
     with open(os.path.join(filt_dir, 'filtered.json'), 'r') as f:
@@ -319,9 +403,14 @@ def load_filtered_candidates(level_root: str) -> Tuple[List[List[Dict[str, Any]]
                 seg = unpack_binary_mask(mask_payload)
             elif seg_stack is not None and j < seg_stack.shape[0]:
                 seg = seg_stack[j]
+            seg_scaled = None
             if seg is not None:
                 seg = np.asarray(seg, dtype=np.bool_)
+                if mask_scale_ratio < 1.0:
+                    seg_scaled = maybe_downscale_mask(seg, mask_scale_ratio)
             d['segmentation'] = seg
+            if seg_scaled is not None:
+                d['segmentation_scaled'] = seg_scaled
             lst.append(d)
         per_frame.append(lst)
         frame_indices.append(fidx)
@@ -339,6 +428,7 @@ def sam2_tracking(
     use_box_for_small: bool = False,
     use_box_for_all: bool = False,
     small_object_area_threshold: Optional[int] = None,
+    mask_scale_ratio: float = 1.0,
 ):
     # 禁用 tqdm 進度條
     import os
@@ -357,9 +447,20 @@ def sam2_tracking(
 
         # init state once and reuse it across iterations
         state = predictor.init_state(video_path=frames_dir)
-        # get scaling
-        h0 = mask_candidates[0][0]['segmentation'].shape[0]
-        w0 = mask_candidates[0][0]['segmentation'].shape[1]
+        # get scaling based on first available full-resolution segmentation
+        first_seg = None
+        for frame_masks in mask_candidates:
+            for item in frame_masks:
+                candidate_seg = item.get('segmentation')
+                if isinstance(candidate_seg, np.ndarray):
+                    first_seg = candidate_seg
+                    break
+            if first_seg is not None:
+                break
+        if first_seg is None:
+            raise RuntimeError('No segmentation masks available to derive resolution')
+        h0 = first_seg.shape[0]
+        w0 = first_seg.shape[1]
         sx = state['video_width'] / w0
         sy = state['video_height'] / h0
 
@@ -392,11 +493,16 @@ def sam2_tracking(
                 prev_masks = list(prev.values())
                 if prev_masks:
                     for m in frame_masks:
-                        seg = m.get('segmentation')
-                        if seg is None:
+                        seg_prompt = m.get('segmentation')
+                        seg_for_iou = m.get('segmentation_scaled')
+                        if seg_for_iou is None:
+                            seg_for_iou = seg_prompt
+                        if seg_for_iou is None:
                             to_add.append(m)
                             continue
-                        tracked = any(compute_iou(pm, seg) > iou_threshold for pm in prev_masks)
+                        tracked = any(
+                            compute_iou(pm, seg_for_iou) > iou_threshold for pm in prev_masks
+                        )
                         if not tracked:
                             to_add.append(m)
                 else:
@@ -450,7 +556,15 @@ def sam2_tracking(
                         frame_data = {}
                         for i, out_obj_id in enumerate(out_obj_ids):
                             mask_arr = (out_mask_logits[i] > 0.0).cpu().numpy()
-                            frame_data[int(out_obj_id)] = pack_binary_mask(mask_arr)
+                            orig_shape = mask_arr.shape
+                            if mask_scale_ratio < 1.0:
+                                mask_arr = maybe_downscale_mask(mask_arr, mask_scale_ratio)
+                                full_shape = orig_shape
+                            else:
+                                full_shape = None
+                            frame_data[int(out_obj_id)] = pack_binary_mask(
+                                mask_arr, full_resolution_shape=full_shape
+                            )
                         if abs_out_idx not in segs:
                             segs[abs_out_idx] = {}
                         segs[abs_out_idx].update(frame_data)
@@ -496,12 +610,19 @@ def sam2_tracking(
         return final_video_segments
 
 
-def save_video_segments_npz(segments: Dict[int, Dict[int, Any]], path: str) -> None:
+def save_video_segments_npz(
+    segments: Dict[int, Dict[int, Any]],
+    path: str,
+    *,
+    mask_scale_ratio: float = 1.0,
+) -> str:
+    actual_path = scaled_npz_path(path, mask_scale_ratio)
     packed = {
         str(frame_idx): {str(obj_id): mask for obj_id, mask in frame_data.items()}
         for frame_idx, frame_data in segments.items()
     }
-    np.savez_compressed(path, data=packed)
+    np.savez_compressed(actual_path, data=packed)
+    return actual_path
 
 
 def reorganize_segments_by_object(segments: Dict[int, Dict[int, Any]]) -> Dict[int, Dict[int, Any]]:
@@ -517,13 +638,20 @@ def reorganize_segments_by_object(segments: Dict[int, Dict[int, Any]]) -> Dict[i
     return per_object
 
 
-def save_object_segments_npz(segments: Dict[int, Dict[int, Any]], path: str) -> None:
+def save_object_segments_npz(
+    segments: Dict[int, Dict[int, Any]],
+    path: str,
+    *,
+    mask_scale_ratio: float = 1.0,
+) -> str:
     """Persist object-major mask stacks mirroring the frame-major archive."""
+    actual_path = scaled_npz_path(path, mask_scale_ratio)
     packed = {
         str(obj_id): {str(frame_idx): mask for frame_idx, mask in frames.items()}
         for obj_id, frames in segments.items()
     }
-    np.savez_compressed(path, data=packed)
+    np.savez_compressed(actual_path, data=packed)
+    return actual_path
 
 
 def save_viz_frames(
@@ -556,7 +684,13 @@ def save_viz_frames(
                 if int(obj_id) not in color_map:
                     color_map[int(obj_id)] = tuple(rng.integers(50, 255, size=3).tolist())
                 color = color_map[int(obj_id)]
+                base_h, base_w = base.size[1], base.size[0]
+                desired_shape = determine_mask_shape(mask, (base_h, base_w))
                 m = np.squeeze(unpack_binary_mask(mask))
+                if desired_shape:
+                    m = resize_mask_to_shape(m, desired_shape)
+                if m.shape != (base_h, base_w):
+                    m = resize_mask_to_shape(m, (base_h, base_w))
                 # create colored alpha mask
                 alpha = (m.astype(np.uint8)*120)
                 rgba = np.zeros((m.shape[0], m.shape[1], 4), dtype=np.uint8)
@@ -605,12 +739,17 @@ def save_instance_maps(
         objs = video_segments.get(frame_idx)
         if not objs:
             continue
-        first_mask = unpack_binary_mask(next(iter(objs.values())))
-        H, W = first_mask.shape[-2], first_mask.shape[-1]
+        first_entry = next(iter(objs.values()))
+        target_shape = determine_mask_shape(first_entry)
+        if target_shape is None:
+            first_mask = unpack_binary_mask(first_entry)
+            target_shape = (first_mask.shape[-2], first_mask.shape[-1])
+        H, W = target_shape
         inst_map = np.zeros((H, W), dtype=np.int32)
         for obj_id_key in sorted(objs.keys(), key=lambda x: int(x)):
             obj_id = int(obj_id_key)
             m = np.squeeze(unpack_binary_mask(objs[obj_id_key]))
+            m = resize_mask_to_shape(m, (H, W))
             inst_map[(m) & (inst_map == 0)] = obj_id
         rgb = np.zeros((H, W, 3), dtype=np.uint8)
         for obj_id, col in color_map.items():
@@ -717,8 +856,13 @@ def save_comparison_proposals(
         # 如果無法從 SSAM 獲取尺寸，嘗試從 SAM2 結果獲取
         if H is None or W is None:
             if f_idx in video_segments and len(video_segments[f_idx]) > 0:
-                first_mask = unpack_binary_mask(next(iter(video_segments[f_idx].values())))
-                H, W = first_mask.shape[-2], first_mask.shape[-1]
+                first_entry = next(iter(video_segments[f_idx].values()))
+                shape = determine_mask_shape(first_entry)
+                if shape is None:
+                    first_mask = unpack_binary_mask(first_entry)
+                    shape = (first_mask.shape[-2], first_mask.shape[-1])
+                if shape is not None:
+                    H, W = shape
         
         if H is None or W is None:
             continue
@@ -735,7 +879,10 @@ def save_comparison_proposals(
         if f_idx in video_segments:
             for obj_key, mask in video_segments[f_idx].items():
                 obj_id = int(obj_key)
-                sam2_masks[obj_id] = np.squeeze(unpack_binary_mask(mask))
+                mask_arr = np.squeeze(unpack_binary_mask(mask))
+                if H is not None and W is not None:
+                    mask_arr = resize_mask_to_shape(mask_arr, (H, W))
+                sam2_masks[obj_id] = mask_arr
 
         sem_img = build_instance_map_img((H, W), sem_masks)
         if sam2_masks:
@@ -783,6 +930,7 @@ def run_tracking(
     iou_threshold: float = 0.6,
     long_tail_box_prompt: bool = False,
     all_box_prompt: bool = False,
+    mask_scale_ratio: float = 1.0,
 ) -> str:
     if not sam2_cfg:
         sam2_cfg = DEFAULT_SAM2_CFG
@@ -792,6 +940,13 @@ def run_tracking(
     sam2_ckpt = os.fspath(sam2_ckpt) if isinstance(sam2_ckpt, os.PathLike) else sam2_ckpt
 
     configure_logging(log_level)
+
+    try:
+        mask_scale_ratio = float(mask_scale_ratio)
+    except (TypeError, ValueError):
+        raise ValueError(f'Invalid mask_scale_ratio={mask_scale_ratio!r}')
+    if mask_scale_ratio <= 0.0 or mask_scale_ratio > 1.0:
+        raise ValueError('mask_scale_ratio must be within (0, 1]')
 
     overall_start = time.perf_counter()
     if isinstance(levels, str):
@@ -837,11 +992,12 @@ def run_tracking(
             sam2_max_propagate = None
 
     LOGGER.info(
-        "Configuration: ssam_freq=%d, sam2_max_propagate=%s, ssam_frames=%d, iou_threshold=%.2f",
+        "Configuration: ssam_freq=%d, sam2_max_propagate=%s, ssam_frames=%d, iou_threshold=%.2f, mask_scale_ratio=%.3f",
         ssam_freq,
         sam2_max_propagate if sam2_max_propagate is not None else "unlimited",
         len(ssam_frames),
         float(iou_threshold),
+        float(mask_scale_ratio),
     )
 
     long_tail_area_threshold: Optional[int] = None
@@ -915,6 +1071,7 @@ def run_tracking(
     frame_index_to_name = {idx: name for idx, name in zip(ssam_absolute_indices, ssam_frames)}
 
     level_stats = []
+    level_artifacts: Dict[int, Dict[str, str]] = {}
     overall_timer = TimingAggregator()
     for level in level_list:
         level_start = time.perf_counter()
@@ -922,7 +1079,9 @@ def run_tracking(
         track_dir = ensure_dir(os.path.join(out_root, f'level_{level}', 'tracking'))
         
         # 加載候選項和對應的幀索引
-        per_frame, frame_indices = load_filtered_candidates(level_root)
+        per_frame, frame_indices = load_filtered_candidates(
+            level_root, mask_scale_ratio=mask_scale_ratio
+        )
         
         LOGGER.info(f"Level {level}: Processing {len(per_frame)} frames with SAM2 tracking...")
         level_timer = TimingAggregator()
@@ -938,14 +1097,37 @@ def run_tracking(
                 use_box_for_small=(long_tail_box_prompt and not all_box_prompt),
                 use_box_for_all=all_box_prompt,
                 small_object_area_threshold=long_tail_area_threshold,
+                mask_scale_ratio=mask_scale_ratio,
             )
 
+        level_video_path = None
+        level_object_path = None
+
         with level_timer.track('persist.video_segments'):
-            save_video_segments_npz(segs, os.path.join(track_dir, 'video_segments.npz'))
+            level_video_path = save_video_segments_npz(
+                segs,
+                os.path.join(track_dir, 'video_segments.npz'),
+                mask_scale_ratio=mask_scale_ratio,
+            )
 
         with level_timer.track('persist.object_npz'):
             obj_segments = reorganize_segments_by_object(segs)
-            save_object_segments_npz(obj_segments, os.path.join(track_dir, 'object_segments.npz'))
+            level_object_path = save_object_segments_npz(
+                obj_segments,
+                os.path.join(track_dir, 'object_segments.npz'),
+                mask_scale_ratio=mask_scale_ratio,
+            )
+
+        level_artifacts[level] = {
+            'video_segments': level_video_path,
+            'object_segments': level_object_path,
+        }
+        LOGGER.info(
+            "Level %d artifacts saved (video=%s, object=%s)",
+            level,
+            os.path.basename(level_video_path) if level_video_path else 'n/a',
+            os.path.basename(level_object_path) if level_object_path else 'n/a',
+        )
 
         viz_dir = os.path.join(out_root, f'level_{level}', 'viz')
         with level_timer.track('viz.comparison'):
@@ -1021,6 +1203,26 @@ def run_tracking(
         if category_summary:
             LOGGER.info("Aggregate timing by stage → %s", ", ".join(category_summary))
         LOGGER.debug("Aggregate timing breakdown → %s", overall_timer.format_breakdown())
+
+    manifest['mask_scale_ratio'] = float(mask_scale_ratio)
+    tracking_artifacts: Dict[str, Dict[str, Optional[str]]] = {}
+    for lvl, paths in level_artifacts.items():
+        video_path = paths.get('video_segments') if paths else None
+        object_path = paths.get('object_segments') if paths else None
+        rel_video = os.path.relpath(video_path, out_root) if video_path else None
+        rel_object = os.path.relpath(object_path, out_root) if object_path else None
+        tracking_artifacts[f"level_{lvl}"] = {
+            'video_segments': rel_video,
+            'object_segments': rel_object,
+        }
+    manifest['tracking_artifacts'] = tracking_artifacts
+    manifest_path = os.path.join(candidates_root, 'manifest.json')
+    try:
+        with open(manifest_path, 'w') as f:
+            json.dump(manifest, f, indent=2)
+    except Exception:
+        LOGGER.warning('Failed to update manifest at %s', manifest_path, exc_info=True)
+
     LOGGER.info("Tracking results saved at %s", out_root)
     LOGGER.info(
         "Tracking completed in %s",
@@ -1048,6 +1250,8 @@ def main():
                     help='Convert long-tail small objects to SAM2 box prompts')
     ap.add_argument('--all-box-prompt', action='store_true',
                     help='Convert all mask prompts to SAM2 box prompts')
+    ap.add_argument('--mask-scale-ratio', type=float, default=1.0,
+                    help='Downscale masks before persistence (e.g., 0.3 keeps 30% resolution)')
     args = ap.parse_args()
 
     run_tracking(
@@ -1061,6 +1265,7 @@ def main():
         iou_threshold=args.iou_threshold,
         long_tail_box_prompt=args.long_tail_box_prompt,
         all_box_prompt=args.all_box_prompt,
+        mask_scale_ratio=args.mask_scale_ratio,
     )
 
 

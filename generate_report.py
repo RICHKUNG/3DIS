@@ -113,6 +113,7 @@ def render_level_section(
     viz_dir: Path,
     report_dir: Path,
     max_width: int,
+    markdown_root: Path,
 ) -> List[str]:
     compare_dir = viz_dir / 'compare'
     if not compare_dir.exists():
@@ -142,7 +143,10 @@ def render_level_section(
         safe_label = label
         dst_path = report_dir / f'frame_{frame_idx:05d}_{label}.png'
         downscale_image(src_path, dst_path, max_width=max_width)
-        rel_path = dst_path.relative_to(report_dir.parent)
+        try:
+            rel_path = dst_path.relative_to(markdown_root)
+        except ValueError:
+            rel_path = Path(os.path.relpath(dst_path, markdown_root))
         lines.append(
             f"| {safe_label} (frame {frame_idx:05d}) | ![]({rel_path.as_posix()}) |"
         )
@@ -242,6 +246,7 @@ def build_report(
                 viz_dir=viz_dir,
                 report_dir=report_dir,
                 max_width=max_preview_width,
+                markdown_root=run_dir,
             )
         )
 
