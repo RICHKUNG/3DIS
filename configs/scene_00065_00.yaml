@@ -1,16 +1,19 @@
 experiment:
-  name: 00065_00
-  data_path: /media/public_dataset2/multiscan/scene_00065_00/outputs/color
-  output_root: /media/Pluto/richkung/My3DIS/outputs/scene_00065_00
-  run_dir: /media/Pluto/richkung/My3DIS/outputs/scene_00065_00/20250926_010357_L2_4_6_ssam2_area0_fill1000_gaps_unlimited_mask
-  levels: [2, 4, 6]
-  tag: prop30_box_downscale  #########################################################
-
+  name: multiscan_batch
+  dataset_root: /media/public_dataset2/multiscan
+  scenes:
+  - scene_00065_00
+  - scene_00075_00
+  output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
+  levels:
+  - 2
+  - 4
+  - 6
+  tag: no_fill_unlimited
 stages:
   gpu: 1
   ssam:
-    enabled: false
-    levels: [2, 4, 6]
+    enabled: true
     frames:
       step: 50
     ssam_freq: 2
@@ -19,25 +22,23 @@ stages:
     persist_raw: false
     skip_filtering: false
     add_gaps: true
-    fill_area: 1000
+    fill_area: 10000
     append_timestamp: true
-
   filter:
     enabled: false
     min_area: 0
-    stability_threshold: 0
+    stability_threshold: 0.0
     update_manifest: true
-
   tracker:
     enabled: true
-    levels: [2, 4, 6]
-    prompt_mode: all  # 選項：none / long_tail / all
-    max_propagate: 30
+    prompt_mode: all_mask
+    max_propagate: 40
     iou_threshold: 0.6
     downscale_masks: true
-    downscale_ratio: 0.3  # shrink SAM2/SSAM masks to 30% side length before saving
-
+    downscale_ratio: 0.3
   report:
     enabled: true
     name: report.md
     max_width: 640
+    record_timings: true
+    timing_output: stage_timings.json

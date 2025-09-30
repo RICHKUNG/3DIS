@@ -11,6 +11,8 @@ Status
 - Progressive refinement now back-fills large uncovered regions at the coarsest level, so SAM2 always receives explicit masks for gaps that exceed the `fill_area` threshold (defaulting to `min_area`).
 - Per-level outputs must persist raw and filtered candidate lists alongside SAM2 tracking artifacts.
 - YAML 驅動的 `run_workflow.py` 可依配置自動執行 SSAM → filter → SAM2 → 報告，並在 YAML 中指定 GPU/參數、產出 Markdown 紀錄。
+- `run_workflow_batch.py` + `configs/multiscan/` 已覆蓋 MultiScan 全場景，並自動將執行摘要寫入 `logs/workflow_history.csv` 與批次報表，方便規劃跨場景 sweep。
+- YAML `experiment.scenes` + `experiment.dataset_root` 現在支援單一實驗跑多個場景，輸出集中在 `outputs/experiments/<experiment>/<scene>/...`。
 
 Progress Log
 - Added `My3DIS/run_pipeline.py` to glue Semantic-SAM candidate generation with SAM2 tracking.
@@ -29,6 +31,8 @@ Progress Log
 - 2025-09-26: 建立 `configs/scene_00065_00.yaml` 與 `run_workflow.py`，將 SSAM/Filter/SAM2/報告拆成 stage，可在 YAML 中調整 level、frame freq、SSAM freq、GPU 配置；新增 `filter_candidates.py`、`generate_report.py` 支援重複篩選與 Markdown 報告（含每層第一/中位/最後 compare 圖、時間摘要）。
 - 2025-09-26: Refined tracking artifacts—gap-fill僅在第一個 level 啟用、SAM2 僅輸出 frame/object `.npz` 成對檔案、viz 比較圖改為每 10 張 SSAM 幀儲存；README / Agent 記錄同步更新。
 - 2025-09-27: Tracker 支援遮罩縮放開關（YAML `downscale_masks` + `downscale_ratio`），SAM2/SSAM 遮罩可縮至 0.3× 後再封裝，輸出的 `.npz` 以 `_scale{ratio}x` 後綴標示並記錄原始尺寸以供還原。
+- 2025-09-27: 匯出 MultiScan 場景 config (`configs/multiscan/*.yaml`) 與 `multiscan_scene_index.json`，新增 `run_workflow_batch.py` 與 `scripts/prepare_scene_configs.py`，workflow 結束時自動寫入 `logs/workflow_history.csv`／`logs/batch/*.json`。
+- 2025-09-27: `run_workflow.py` 支援 `experiment.scenes` 多場景執行，將 `experiment.output_root` 當作實驗根目錄並在 `/<scene>/` 建立 run；History CSV 新增 `parent_experiment` / `scene_index` 欄位，`run_workflow_batch.py` 會展開每個場景的紀錄。
 
 Next Actions
 1) Create the shared environment from `Algorithm1_env.yml` (optional but recommended).
@@ -37,7 +41,7 @@ Next Actions
 4) Push code to https://github.com/RICHKUNG/3DIS when credentials are ready.
 
 Open Items
-- Confirm the initial MultiScan scene(s) for full processing beyond the demo slice.
+- 啟動第一批跨場景 batch（透過 `run_workflow_batch.py`），並確認 `logs/workflow_history.csv`、`logs/batch/*.json` 的內容完整。
 - Tuning knobs: `min_area`, `fill_area`, `stability_threshold`, and SAM2 IoU threshold (currently 0.6).
 - Validate the 0.3× mask persistence path on a longer scene（確保 `_scale{ratio}x` 輸出仍可還原與生成報表）。
 

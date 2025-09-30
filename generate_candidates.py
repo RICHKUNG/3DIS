@@ -13,6 +13,7 @@ import datetime
 import logging
 import base64
 import re
+from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional, Union
 
 RAW_DIR_NAME = "raw"
@@ -111,12 +112,26 @@ def build_subset_video(
         dst_name = f"{local_idx:06d}.jpg"
         dst = os.path.join(subset_dir, dst_name)
         index_to_subset[abs_idx] = dst_name
-        if not os.path.exists(dst):
+        if os.path.lexists(dst):
             try:
-                os.symlink(src, dst)
-            except Exception:
-                from shutil import copy2
+                if os.path.samefile(src, dst):
+                    continue
+            except FileNotFoundError:
+                os.unlink(dst)
+            except OSError:
+                os.unlink(dst)
+            else:
+                os.unlink(dst)
+        try:
+            os.symlink(src, dst)
+        except OSError:
+            from shutil import copy2, SameFileError
+
+            try:
                 copy2(src, dst)
+            except SameFileError:
+                # Already linked/copied from a previous run; nothing to do.
+                continue
     return subset_dir, index_to_subset
 
 
@@ -350,6 +365,23 @@ def run_generation(
     subset_dir, subset_map = build_subset_video(
         frames_dir, ssam_frames, ssam_absolute_indices, run_root
     )
+    frames_path = Path(frames_dir).expanduser()
+    try:
+        frames_path = frames_path.resolve()
+    except FileNotFoundError:
+        frames_path = frames_path.absolute()
+
+    scene_name = None
+    scene_root = None
+    dataset_root = None
+    for parent in [frames_path] + list(frames_path.parents):
+        name = parent.name
+        if name.startswith('scene_'):
+            scene_name = name
+            scene_root = parent
+            dataset_root = parent.parent
+            break
+
     manifest = {
         'mode': 'candidates_only',
         'levels': level_list,
@@ -387,6 +419,18 @@ def run_generation(
             'dir_name': RAW_DIR_NAME if persist_raw else None,
         },
     }
+
+    if scene_name:
+        manifest['scene'] = scene_name
+        if scene_root:
+            manifest['scene_dir'] = str(scene_root)
+        if dataset_root:
+            manifest['dataset_root'] = str(dataset_root)
+
+    manifest['frames_total'] = len(all_frames)
+    manifest['frames_selected'] = len(selected)
+    manifest['frames_ssam'] = len(ssam_frames)
+
     manifest_path = os.path.join(run_root, 'manifest.json')
     LOGGER.info("Selected %d SSAM frames cached at %s", len(ssam_frames), subset_dir)
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import sys
@@ -94,6 +95,70 @@ class StageRecorder:
             stage_entry['error'] = str(exc)
 
 
+def export_stage_timings(summary: Dict[str, Any], output_path: Path) -> None:
+    """Persist stage timing metadata as a JSON artifact."""
+    stages = summary.get('stages')
+    if not stages:
+        return
+
+    ordered_names: List[str] = []
+    order = summary.get('order')
+    if isinstance(order, list):
+        ordered_names.extend(name for name in order if name in stages)
+
+    for name in stages:
+        if name not in ordered_names:
+            ordered_names.append(name)
+
+    records: List[Dict[str, Any]] = []
+    total_duration = 0.0
+    for name in ordered_names:
+        meta = stages.get(name, {})
+        duration_raw = meta.get('duration_sec')
+        try:
+            duration = float(duration_raw) if duration_raw is not None else 0.0
+        except (TypeError, ValueError):
+            duration = 0.0
+        total_duration += duration
+        records.append(
+            {
+                'stage': name,
+                'duration_sec': duration,
+                'duration_text': meta.get('duration_text'),
+                'started_at': meta.get('started_at'),
+                'ended_at': meta.get('ended_at'),
+                'gpu': meta.get('gpu'),
+            }
+        )
+
+    payload = {
+        'generated_at': datetime.utcnow().isoformat(timespec='seconds'),
+        'total_duration_sec': total_duration,
+        'total_duration_text': format_duration(total_duration),
+        'stages': records,
+    }
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open('w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2)
+
+
+def expand_output_path_template(path_value: Any, experiment_cfg: Dict[str, Any]) -> str:
+    if path_value is None:
+        raise SystemExit('experiment.output_root is required (or override via --override-output)')
+
+    path_str = str(path_value)
+    if '{name}' in path_str:
+        experiment_name = experiment_cfg.get('name')
+        if not experiment_name:
+            raise SystemExit(
+                'experiment.output_root 使用了 {name} 但未提供 experiment.name'
+            )
+        path_str = path_str.replace('{name}', str(experiment_name))
+
+    return path_str
+
+
 def list_to_csv(values: Optional[List[Any]]) -> str:
     if not values:
         return ''
@@ -139,6 +204,30 @@ def resolve_stage_gpu(stage_cfg: Optional[Dict[str, Any]], default_gpu: Optional
     return default_gpu
 
 
+def derive_scene_metadata(data_path: str) -> Dict[str, Optional[str]]:
+    path = Path(str(data_path)).expanduser()
+    try:
+        resolved = path.resolve()
+    except FileNotFoundError:
+        resolved = path.absolute()
+
+    scene_name: Optional[str] = None
+    scene_root: Optional[Path] = None
+    dataset_root: Optional[Path] = None
+    for candidate in [resolved] + list(resolved.parents):
+        if candidate.name.startswith('scene_'):
+            scene_name = candidate.name
+            scene_root = candidate
+            dataset_root = candidate.parent
+            break
+
+    return {
+        'scene': scene_name,
+        'scene_root': str(scene_root) if scene_root else None,
+        'dataset_root': str(dataset_root) if dataset_root else None,
+    }
+
+
 def update_summary_config(summary: Dict[str, Any], config: Dict[str, Any]) -> None:
     summary['config_snapshot'] = config
 
@@ -154,44 +243,129 @@ def load_manifest(run_dir: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description='Run workflow defined by a YAML config')
-    parser.add_argument('--config', required=True, help='Path to YAML workflow config')
-    parser.add_argument('--override-output', help='Override output root directory')
-    args = parser.parse_args()
+def append_run_history(
+    summary: Dict[str, Any],
+    manifest: Optional[Dict[str, Any]],
+    history_root: Optional[Path] = None,
+) -> None:
+    history_root = history_root or Path(__file__).resolve().parent / 'logs'
+    try:
+        history_root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
 
-    config_path = Path(args.config).expanduser().resolve()
-    config = load_yaml(config_path)
+    history_path = history_root / 'workflow_history.csv'
+    is_new = not history_path.exists()
 
-    experiment_cfg = config.get('experiment', {})
-    if not isinstance(experiment_cfg, dict):
-        raise SystemExit('`experiment` section must be a mapping')
+    experiment = summary.get('experiment', {}) if isinstance(summary.get('experiment'), dict) else {}
+    stages = summary.get('stages', {}) if isinstance(summary.get('stages'), dict) else {}
+    ssam_params = stages.get('ssam', {}).get('params', {}) if isinstance(stages.get('ssam'), dict) else {}
 
-    data_path = experiment_cfg.get('data_path')
-    if not data_path:
-        raise SystemExit('experiment.data_path is required')
+    def _flatten_levels(levels_val: Any) -> str:
+        if isinstance(levels_val, (list, tuple)):
+            return ','.join(str(v) for v in levels_val)
+        return str(levels_val) if levels_val is not None else ''
+
+    entry = {
+        'timestamp': summary.get('generated_at') or datetime.utcnow().isoformat(timespec='seconds'),
+        'scene': experiment.get('scene') or '',
+        'experiment_name': experiment.get('name') or '',
+        'config_path': summary.get('config_path') or '',
+        'data_path': experiment.get('data_path') or '',
+        'output_root': experiment.get('output_root') or '',
+        'run_dir': summary.get('run_dir') or '',
+        'levels': _flatten_levels(experiment.get('levels')),
+        'ssam_freq': ssam_params.get('ssam_freq') or '',
+        'frames_total': '',
+        'frames_selected': '',
+        'frames_ssam': '',
+        'parent_experiment': experiment.get('parent_experiment') or '',
+        'experiment_root': experiment.get('experiment_root') or '',
+        'scene_output_root': experiment.get('scene_output_root') or '',
+        'scene_index': '' if experiment.get('scene_index') is None else str(experiment.get('scene_index')),
+    }
+
+    if manifest:
+        entry['frames_total'] = manifest.get('frames_total', '')
+        entry['frames_selected'] = manifest.get('frames_selected', '')
+        entry['frames_ssam'] = manifest.get('frames_ssam', '')
+
+    fieldnames = [
+        'timestamp',
+        'scene',
+        'experiment_name',
+        'config_path',
+        'data_path',
+        'output_root',
+        'run_dir',
+        'levels',
+        'ssam_freq',
+        'frames_total',
+        'frames_selected',
+        'frames_ssam',
+        'parent_experiment',
+        'experiment_root',
+        'scene_output_root',
+        'scene_index',
+    ]
+
+    try:
+        with history_path.open('a', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            if is_new:
+                writer.writeheader()
+            writer.writerow(entry)
+    except OSError:
+        return
+
+
+def _run_scene_workflow(
+    *,
+    config: Dict[str, Any],
+    experiment_cfg: Dict[str, Any],
+    stages_cfg: Dict[str, Any],
+    default_stage_gpu: Optional[Any],
+    data_path: str,
+    output_root: str,
+    config_path: Optional[Path],
+    parent_meta: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     data_path = str(Path(data_path).expanduser())
-
-    output_root = args.override_output or experiment_cfg.get('output_root')
-    if not output_root:
-        raise SystemExit('experiment.output_root is required (or override via --override-output)')
     output_root = str(Path(output_root).expanduser())
 
-    stages_cfg = config.get('stages', {})
-    if not isinstance(stages_cfg, dict):
-        raise SystemExit('`stages` section must be a mapping')
-    default_stage_gpu = stages_cfg.get('gpu')
-
     summary: Dict[str, Any] = {
-        'config_path': str(config_path),
+        'config_path': str(config_path) if config_path else None,
         'invoked_at': datetime.utcnow().isoformat(timespec='seconds'),
     }
     update_summary_config(summary, config)
 
+    scene_meta = derive_scene_metadata(data_path)
+    experiment_name = (
+        experiment_cfg.get('name')
+        or (parent_meta.get('name') if parent_meta else None)
+        or scene_meta.get('scene')
+    )
+    summary['experiment'] = {
+        'name': experiment_name,
+        'scene': scene_meta.get('scene'),
+        'scene_root': scene_meta.get('scene_root'),
+        'dataset_root': scene_meta.get('dataset_root'),
+        'data_path': data_path,
+        'output_root': output_root,
+        'levels': experiment_cfg.get('levels'),
+        'tag': experiment_cfg.get('tag'),
+        'scene_output_root': output_root,
+    }
+    if parent_meta:
+        summary['experiment']['parent_experiment'] = parent_meta.get('name')
+        summary['experiment']['experiment_root'] = parent_meta.get('experiment_root')
+        summary['experiment']['scene_index'] = parent_meta.get('index')
+        if parent_meta.get('scenes') is not None:
+            summary['experiment']['scene_list'] = parent_meta.get('scenes')
+
     manifest: Optional[Dict[str, Any]] = None
     run_dir: Optional[Path] = None
 
-    # Stage: Semantic-SAM generation
     ssam_cfg = stages_cfg.get('ssam', {}) if isinstance(stages_cfg.get('ssam'), dict) else {}
     ssam_enabled = ssam_cfg.get('enabled', True)
 
@@ -277,9 +451,7 @@ def main() -> int:
         raise SystemExit('Failed to determine run directory from SSAM stage')
 
     manifest = manifest or load_manifest(run_dir)
-    manifest_path = run_dir / 'manifest.json'
 
-    # Stage: Filtering
     filter_cfg = stages_cfg.get('filter', {}) if isinstance(stages_cfg.get('filter'), dict) else {}
     filter_enabled = filter_cfg.get('enabled', True)
     if filter_enabled:
@@ -319,7 +491,6 @@ def main() -> int:
                 )
             manifest = load_manifest(run_dir)
 
-    # Stage: Tracking
     tracker_cfg = stages_cfg.get('tracker', {}) if isinstance(stages_cfg.get('tracker'), dict) else {}
     tracker_enabled = tracker_cfg.get('enabled', True)
     if tracker_enabled:
@@ -327,12 +498,20 @@ def main() -> int:
         tracker_gpu = resolve_stage_gpu(tracker_cfg, default_stage_gpu)
         max_propagate = tracker_cfg.get('max_propagate')
         iou_threshold = float(tracker_cfg.get('iou_threshold', 0.6))
-        prompt_mode = tracker_cfg.get('prompt_mode', 'none')
-        prompt_mode = str(prompt_mode).lower()
-        if prompt_mode not in {'none', 'long_tail', 'all'}:
-            raise SystemExit(f'Unknown tracker.prompt_mode={prompt_mode}')
-        all_box = prompt_mode == 'all'
-        long_tail_box = prompt_mode == 'long_tail'
+        prompt_mode_raw = str(tracker_cfg.get('prompt_mode', 'all_mask')).lower()
+        prompt_aliases = {
+            'none': 'all_mask',
+            'all_mask': 'all_mask',
+            'long_tail': 'lt_bbox',
+            'lt_bbox': 'lt_bbox',
+            'all': 'all_bbox',
+            'all_bbox': 'all_bbox',
+        }
+        if prompt_mode_raw not in prompt_aliases:
+            raise SystemExit(f'Unknown tracker.prompt_mode={prompt_mode_raw}')
+        prompt_mode = prompt_aliases[prompt_mode_raw]
+        all_box = prompt_mode == 'all_bbox'
+        long_tail_box = prompt_mode == 'lt_bbox'
 
         downscale_enabled = bool(tracker_cfg.get('downscale_masks', False))
         downscale_ratio = tracker_cfg.get('downscale_ratio', 0.3)
@@ -375,7 +554,6 @@ def main() -> int:
                 }
             )
 
-    # Stage: Report
     report_cfg = stages_cfg.get('report', {}) if isinstance(stages_cfg.get('report'), dict) else {}
     report_enabled = report_cfg.get('enabled', True)
     report_name = report_cfg.get('name', 'report.md')
@@ -389,13 +567,117 @@ def main() -> int:
             summary['stages']['report'].setdefault('params', {})['max_width'] = max_width
             summary['stages']['report']['params']['report_name'] = report_name
 
+        record_timings_flag = bool(report_cfg.get('record_timings'))
+        timing_output_name = report_cfg.get('timing_output')
+        if record_timings_flag or timing_output_name:
+            output_name = timing_output_name or 'stage_timings.json'
+            timings_path = run_dir / output_name
+            export_stage_timings(summary, timings_path)
+            summary['stages']['report'].setdefault('artifacts', {})['timings'] = str(timings_path)
+
     summary['generated_at'] = datetime.utcnow().isoformat(timespec='seconds')
     summary['run_dir'] = str(run_dir)
 
     with (run_dir / 'workflow_summary.json').open('w') as f:
         json.dump(summary, f, indent=2)
 
+    append_run_history(summary, manifest)
+
     print(f'Workflow finished. 輸出路徑：{run_dir}')
+    return summary
+
+
+def execute_workflow(
+    config: Dict[str, Any],
+    *,
+    override_output: Optional[str] = None,
+    config_path: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
+    experiment_cfg = config.get('experiment', {})
+    if not isinstance(experiment_cfg, dict):
+        raise SystemExit('`experiment` section must be a mapping')
+
+    stages_cfg = config.get('stages', {})
+    if not isinstance(stages_cfg, dict):
+        raise SystemExit('`stages` section must be a mapping')
+    default_stage_gpu = stages_cfg.get('gpu')
+
+    scenes = experiment_cfg.get('scenes')
+    if scenes:
+        if not isinstance(scenes, (list, tuple)):
+            raise SystemExit('experiment.scenes must be a list when provided')
+        dataset_root_raw = experiment_cfg.get('dataset_root')
+        if not dataset_root_raw:
+            raise SystemExit('experiment.dataset_root is required when experiment.scenes is provided')
+        dataset_root = Path(dataset_root_raw).expanduser()
+        output_root_base_raw = override_output or experiment_cfg.get('output_root')
+        output_root_base_resolved = expand_output_path_template(output_root_base_raw, experiment_cfg)
+        output_root_base = Path(output_root_base_resolved).expanduser()
+        parent_meta = {
+            'name': experiment_cfg.get('name'),
+            'scenes': [str(s) for s in scenes],
+            'experiment_root': str(output_root_base),
+        }
+
+        summaries: List[Dict[str, Any]] = []
+        for index, scene_name in enumerate(parent_meta['scenes']):
+            scene_data_path = dataset_root / scene_name / 'outputs' / 'color'
+            if not scene_data_path.exists():
+                raise SystemExit(f'data path not found for scene {scene_name}: {scene_data_path}')
+            scene_output_root = output_root_base / scene_name
+            scene_experiment_cfg = dict(experiment_cfg)
+            scene_experiment_cfg['name'] = experiment_cfg.get('name')
+            scene_experiment_cfg['data_path'] = str(scene_data_path)
+            scene_experiment_cfg['output_root'] = str(scene_output_root)
+            parent_meta_scene = dict(parent_meta)
+            parent_meta_scene['index'] = index
+            parent_meta_scene['scene'] = scene_name
+            summary = _run_scene_workflow(
+                config=config,
+                experiment_cfg=scene_experiment_cfg,
+                stages_cfg=stages_cfg,
+                default_stage_gpu=default_stage_gpu,
+                data_path=str(scene_data_path),
+                output_root=str(scene_output_root),
+                config_path=config_path,
+                parent_meta=parent_meta_scene,
+            )
+            summaries.append(summary)
+        return summaries
+
+    data_path_raw = experiment_cfg.get('data_path')
+    if not data_path_raw:
+        raise SystemExit('experiment.data_path is required')
+    output_root_raw = expand_output_path_template(override_output or experiment_cfg.get('output_root'), experiment_cfg)
+
+    summary = _run_scene_workflow(
+        config=config,
+        experiment_cfg=experiment_cfg,
+        stages_cfg=stages_cfg,
+        default_stage_gpu=default_stage_gpu,
+        data_path=data_path_raw,
+        output_root=output_root_raw,
+        config_path=config_path,
+        parent_meta=None,
+    )
+    return [summary]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description='Run workflow defined by a YAML config')
+    parser.add_argument('--config', required=True, help='Path to YAML workflow config')
+    parser.add_argument('--override-output', help='Override output root directory')
+    args = parser.parse_args()
+
+    config_path = Path(args.config).expanduser().resolve()
+    config = load_yaml(config_path)
+
+    execute_workflow(
+        config,
+        override_output=args.override_output,
+        config_path=config_path,
+    )
+
     return 0
 
 

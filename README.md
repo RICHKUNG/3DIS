@@ -6,6 +6,8 @@ Summary
 - Persist raw candidate lists, filtered mask metadata (packed into JSON), SAM2 tracking `.npz` artifacts (frame-major + object-major, suffixed with `_scale{ratio}x` when mask downsampling is enabled), and comparison visuals while automatically gap-filling large uncovered regions on the coarsest level only when `add_gaps=true`.
 - Execute the pipeline through two dedicated conda environments (Semantic-SAM + SAM2); use `run_experiment.sh` or the new YAML-driven `run_workflow.py` to orchestrate stage switching and propagate the shared knobs (levels, frame slice, thresholds, SSAM cadence, SAM2 propagation limit, prompt 策略等)。
 - 透過 `generate_report.py` 自動輸出 Markdown 報告，記錄階段耗時、參數設定與各層代表性的 Semantic-SAM / SAM2 比對圖，有助於後續調參與結果彙整。
+- 匯出 MultiScan 全場景的 YAML 設定至 `configs/multiscan/`，可透過 `scripts/prepare_scene_configs.py` 更新，並利用 `run_workflow_batch.py` 進行跨場景批次執行；每次 workflow 會同步記錄於 `logs/workflow_history.csv`。
+- YAML `experiment.scenes` 搭配 `experiment.dataset_root` 可一次指定多個場景，輸出會集中放在 `experiment.output_root/<scene>/...`，最外層依實驗命名。
 
 Goals
 - Produce per-level mask candidates with Semantic-SAM for a chosen frame range.
@@ -25,6 +27,8 @@ Data & Selection
 - Source frames come from /media/public_dataset2/multiscan/<scene>/outputs/color (do not write to this location).
 - Frame sampling accepts Python slice syntax `start:end:step` (end exclusive). When using `run_workflow.py`, omitting `start`/`end` and keeping only `step` automatically spans every available frame; the canonical demo slice remains 1200:1600:20 for quick CLI tests.
 - Selected frames are symlinked or copied into `selected_frames/` inside each run directory for traceability.
+- `configs/multiscan_scene_index.json` 彙整所有場景、影格總數與對應的 YAML 路徑，方便挑選與查詢。
+- Multi-scene YAML 指定 `experiment.dataset_root`（如 `/media/public_dataset2/multiscan`）與 `experiment.scenes` 名稱列表，系統會自動解析 `outputs/color` 子資料夾並於 `experiment.output_root/<scene>/` 建立執行結果。
 
 Pipeline Overview
 1) Frame selection: collect frames per the slice range and create a subset directory.
@@ -38,6 +42,7 @@ Workflow Orchestrators
 **YAML 驅動 (`run_workflow.py`)**
 - 透過 `configs/*.yaml` 定義實驗：`experiment` 區塊指定資料來源、輸出根目錄、預設 levels，並可用 `run_dir` 直接指向既有的 SSAM 輸出以跳過重跑；`stages` 區塊逐段調整是否啟用、GPU ID、取樣頻率、prompt 模式（`none` / `long_tail` / `all`）、最大傳播步數等。
 - 新增的 `StageRecorder` 會在 `workflow_summary.json` 記錄每個 stage 的 GPU、開始/結束時間與耗時，供 `generate_report.py` 匯整。
+- 若 `experiment.scenes` 列出多個場景，`run_workflow.py` 會依序執行並在 `experiment.output_root/<scene>/` 寫入 timestamp 子資料夾，同時在 summary 與 `workflow_history.csv` 中附上 `parent_experiment` 與 `scene_index`。
 - 示例：
   ```bash
   # 在具備 Torch + Semantic-SAM + SAM2 的環境中執行
@@ -46,10 +51,26 @@ Workflow Orchestrators
     --config configs/scene_00065_00.yaml \
     > logs/workflow_$(date +%Y%m%d_%H%M).log 2>&1 &
   ```
-  - 將 `stages.tracker.prompt_mode` 改成 `all` 可改用 bbox prompt；改成 `long_tail` 則只對小面積遮罩改用 box。
+  - `stages.tracker.prompt_mode` 選項：`all_mask`（僅用 mask prompt）、`lt_bbox`（小面積用 bbox）、`all_bbox`（全部用 bbox）。
   - `stages.tracker.downscale_masks=true` 會在追蹤階段將 SAM2/SSAM mask 以 `downscale_ratio`（預設 0.3）等比例縮小後再持久化，輸出的 `.npz` 會附上 `_scale{ratio}x` 後綴以標示倍率。
   - `filter` stage 會自動檢查 `level_*/raw` 是否存在，若尚未啟用 `persist_raw` 則跳過並在 summary 標記 `skipped=missing_raw`。
   - 報告 (`report.md`) 與縮圖輸出在各 `level_x/report/` 底下，方便比較不同 run。
+
+**批次執行 (`run_workflow_batch.py`)**
+- 從指定目錄（預設 `configs/multiscan/`）蒐集 YAML，依序呼叫 `run_workflow.execute_workflow`，並在 `logs/batch/batch_<timestamp>.json` 寫入整體批次摘要。
+- 每個 workflow 完成後會於 `logs/workflow_history.csv` 追加一列記錄（scene、levels、frame 統計、執行參數等），方便後續查詢與彙整。
+- 常見指令：
+  ```bash
+  # 依序跑完整個 MultiScan 清單（使用預設 config 目錄）
+  python3 run_workflow_batch.py --config-dir configs/multiscan
+
+  # 僅針對指定場景
+  python3 run_workflow_batch.py --config-dir configs/multiscan --scenes scene_00065_00 scene_00075_00
+
+  # 先查看預計執行的前三個場景
+  python3 run_workflow_batch.py --config-dir configs/multiscan --limit 3 --dry-run
+  ```
+- 若需重新匯出全套 config，可執行 `python3 scripts/prepare_scene_configs.py --project-root .`（支援 `--scenes`、`--skip-existing` 等參數）。
 
 **雙環境 Shell (`run_experiment.sh`)**
 - 維持原先的兩段指令流程，適合沒有統一環境的情境；同樣支援 `--ssam-freq`、`--sam2-max-propagate`、`--min-area`、`--fill-area` 等參數。
@@ -62,10 +83,11 @@ Workflow Orchestrators
 - `viz/compare/` holds contrast panels for Semantic-SAM vs. SAM2；輸出已稀疏化為每第 10 個 SSAM 幀。`level_x/report/` 底下仍保留縮小後的代表性圖檔（第一張／中位／最後一張），供 Markdown 報告引用。
 - `report.md`（根目錄）為中文摘要，包含階段耗時表格、主要參數、每個 level 的代表圖表連結；`workflow_summary.json` 保存原始紀錄。
 - Each run writes `manifest.json` with frame selection, thresholds, model paths, timestamps, the SSAM subset (`ssam_frames`, `ssam_freq`), any SAM2 propagation cap in effect，以及篩選/原始資料的設定。
+- `prepare_tracking_run.py` 可以複製既有的 SSAM run（支援 hardlink 或深拷貝）並更新 YAML 的 `experiment.run_dir`，方便用同一份 candidates 重複測試不同的 tracker 參數。
 
 完整輸出目錄示例（略去大型檔案）：
 ```
-outputs/scene_00065_00/2025xxxx_xxxxxx/
+outputs/experiments/multiscan_demo/scene_00065_00/2025xxxx_xxxxxx/
 ├── manifest.json
 ├── workflow_summary.json
 ├── report.md
@@ -89,12 +111,12 @@ Filter & Report Utilities
 - `filter_candidates.py`：重複篩選存放於 `raw/` 的 Semantic-SAM 遮罩，支援 `--levels`、`--min-area`、`--stability-threshold` 與 `--update-manifest`。
   ```bash
   python3 filter_candidates.py \
-    --candidates-root outputs/scene_00065_00/<run> \
+    --candidates-root outputs/experiments/multiscan_demo/scene_00065_00/<run> \
     --min-area 400 --stability-threshold 0.85 --update-manifest
   ```
 - `generate_report.py`：整理 `workflow_summary.json` 與 `manifest.json`，生成 Markdown 報告與代表性圖檔，可調整 `--max-width`。
   ```bash
-  python3 generate_report.py --run-dir outputs/scene_00065_00/<run> --max-width 640
+  python3 generate_report.py --run-dir outputs/experiments/multiscan_demo/scene_00065_00/<run> --max-width 640
   ```
 
 Execution
@@ -143,6 +165,7 @@ Notes & Tips
 - The tracker prefers mask prompts (`add_new_mask`) for fidelity; boxes are a fallback when masks are missing.
 - SAM2 logits thresholding defaults to >0.0. Adjusting to 0.4–0.6 can sharpen edges—add a CLI flag if needed.
 - `selected_frames/` captures the exact frames passed to SAM2, aiding debugging and reproducibility.
+- `logs/workflow_history.csv` 會自動堆疊每次 `run_workflow` 執行摘要，`logs/batch/` 則保存批次報表，可納入後續分析或建置儀表板。
 - Outputs are `.gitignore`d; commit code/configs, or add representative samples selectively.
 
 Implementation Notes
