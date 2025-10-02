@@ -11,7 +11,7 @@ import shutil
 import sys
 import time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -54,6 +54,19 @@ def using_gpu(gpu: Optional[Any]):
             os.environ['CUDA_VISIBLE_DEVICES'] = previous
 
 
+LOCAL_TZ = timezone(timedelta(hours=8))
+
+
+def _now_local_iso() -> str:
+    """Return ISO timestamp in UTC+8 with second precision."""
+    return datetime.now(LOCAL_TZ).isoformat(timespec='seconds')
+
+
+def _now_local_stamp() -> str:
+    """Return folder-friendly timestamp in UTC+8."""
+    return datetime.now(LOCAL_TZ).strftime('%Y%m%d_%H%M%S')
+
+
 class StageRecorder:
     def __init__(self, summary: Dict[str, Any], name: str, gpu: Optional[Any]) -> None:
         self.summary = summary
@@ -65,7 +78,7 @@ class StageRecorder:
 
     def __enter__(self):
         self.start = time.perf_counter()
-        now_iso = datetime.utcnow().isoformat(timespec='seconds')
+        now_iso = _now_local_iso()
         self.summary.setdefault('order', []).append(self.name)
         self.summary.setdefault('stages', {})[self.name] = {
             'started_at': now_iso,
@@ -76,7 +89,7 @@ class StageRecorder:
     def __exit__(self, exc_type, exc, tb):
         end_time = time.perf_counter()
         duration = end_time - (self.start or end_time)
-        now_iso = datetime.utcnow().isoformat(timespec='seconds')
+        now_iso = _now_local_iso()
         stage_entry = self.summary['stages'].setdefault(self.name, {})
         stage_entry['ended_at'] = now_iso
         stage_entry['duration_sec'] = duration
@@ -124,7 +137,7 @@ def export_stage_timings(summary: Dict[str, Any], output_path: Path) -> None:
         )
 
     payload = {
-        'generated_at': datetime.utcnow().isoformat(timespec='seconds'),
+        'generated_at': _now_local_iso(),
         'total_duration_sec': total_duration,
         'total_duration_text': format_duration(total_duration),
         'stages': records,
@@ -353,7 +366,7 @@ def append_run_history(
         return str(levels_val) if levels_val is not None else ''
 
     entry = {
-        'timestamp': summary.get('generated_at') or datetime.utcnow().isoformat(timespec='seconds'),
+        'timestamp': summary.get('generated_at') or _now_local_iso(),
         'scene': experiment.get('scene') or '',
         'experiment_name': experiment.get('name') or '',
         'config_path': summary.get('config_path') or '',
@@ -576,7 +589,7 @@ def _run_scene_workflow(
 
     summary: Dict[str, Any] = {
         'config_path': str(config_path) if config_path else None,
-        'invoked_at': datetime.utcnow().isoformat(timespec='seconds'),
+        'invoked_at': _now_local_iso(),
     }
     update_summary_config(summary, config)
 
@@ -830,7 +843,7 @@ def _run_scene_workflow(
             export_stage_timings(summary, timings_path)
             summary['stages']['report'].setdefault('artifacts', {})['timings'] = str(timings_path)
 
-    summary['generated_at'] = datetime.utcnow().isoformat(timespec='seconds')
+    summary['generated_at'] = _now_local_iso()
     summary['run_dir'] = str(run_dir)
 
     aggregated_payload = None
@@ -892,7 +905,7 @@ def execute_workflow(
             experiment_stamp = (
                 str(run_timestamp)
                 if run_timestamp
-                else datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+                else _now_local_stamp()
             )
             experiment_root = output_root_base / experiment_stamp
         else:
@@ -976,7 +989,7 @@ def execute_workflow(
 
         if aggregate_output:
             experiment_summary = {
-                'generated_at': datetime.utcnow().isoformat(timespec='seconds'),
+                'generated_at': _now_local_iso(),
                 'experiment': {
                     'name': experiment_cfg.get('name'),
                     'timestamp': experiment_stamp,

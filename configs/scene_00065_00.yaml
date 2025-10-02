@@ -2,15 +2,15 @@ experiment:
   name: multiscan_batch
   dataset_root: /media/public_dataset2/multiscan
   scenes:
-  # - scene_00005_00
+  - scene_00005_01
   # - scene_00030_00
-  - scene_00065_00
+  # - scene_00065_00
   # - scene_00075_01
   output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
   levels:
   - 2
   - 4
-  # - 6
+  - 6
   tag: fill_prop35
 stages:
   gpu: 1

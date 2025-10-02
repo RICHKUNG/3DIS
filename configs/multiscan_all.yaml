@@ -8,12 +8,12 @@ experiment:
     - 2
     - 4
     - 6
-  tag: fill_prop35
+  tag: fill_prop30
   aggregate_output: true
   output_layout: scene_level
   output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
 stages:
-  gpu: 1
+  gpu: 0
   ssam:
     enabled: true
     frames:
@@ -31,7 +31,7 @@ stages:
   tracker:
     enabled: true
     prompt_mode: all_mask
-    max_propagate: 35
+    max_propagate: 30
     iou_threshold: 0.6
     downscale_masks: false
     render_viz: false
