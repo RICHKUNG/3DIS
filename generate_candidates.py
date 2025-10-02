@@ -4,135 +4,48 @@ Runs only the Semantic-SAM part to allow using a different environment (e.g., Se
 Outputs match the structure expected by run_pipeline/track_from_candidates.
 """
 
+import argparse
+import datetime
+import json
+import logging
 import os
 import sys
-import json
-import argparse
 import time
-import datetime
-import logging
-import base64
-import re
 from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional, Union
-
-RAW_DIR_NAME = "raw"
-RAW_META_TEMPLATE = "frame_{frame_idx:05d}.json"
-RAW_MASK_TEMPLATE = "frame_{frame_idx:05d}.npz"
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
-DEFAULT_SEMANTIC_SAM_ROOT = "/media/Pluto/richkung/Semantic-SAM"
-if DEFAULT_SEMANTIC_SAM_ROOT not in sys.path:
-    sys.path.append(DEFAULT_SEMANTIC_SAM_ROOT)
+from common_utils import (
+    RAW_DIR_NAME,
+    RAW_MASK_TEMPLATE,
+    RAW_META_TEMPLATE,
+    bbox_from_mask_xyxy,
+    bbox_xyxy_to_xywh,
+    build_subset_video,
+    encode_mask,
+    format_duration,
+    numeric_frame_sort_key,
+    parse_levels,
+    parse_range,
+    setup_logging,
+)
+from pipeline_defaults import (
+    DEFAULT_SEMANTIC_SAM_CKPT as _DEFAULT_SEMANTIC_SAM_CKPT_PATH,
+    DEFAULT_SEMANTIC_SAM_ROOT as _DEFAULT_SEMANTIC_SAM_ROOT,
+    expand_default,
+)
+
+_SEM_ROOT_STR = expand_default(_DEFAULT_SEMANTIC_SAM_ROOT)
+if _SEM_ROOT_STR not in sys.path:
+    sys.path.append(_SEM_ROOT_STR)
 
 from ssam_progressive_adapter import generate_with_progressive, ensure_dir
 
 
 LOGGER = logging.getLogger("my3dis.generate_candidates")
 
-DEFAULT_SEMANTIC_SAM_CKPT = os.path.join(
-    DEFAULT_SEMANTIC_SAM_ROOT,
-    "checkpoints",
-    "swinl_only_sam_many2many.pth",
-)
-
-
-def parse_range(range_str: str):
-    parts = str(range_str).split(':')
-    if len(parts) != 3:
-        raise ValueError(f'Invalid range spec: {range_str!r}')
-    start = int(parts[0]) if parts[0] else 0
-    end = int(parts[1]) if parts[1] else -1
-    step = int(parts[2]) if parts[2] else 1
-    if step <= 0:
-        raise ValueError('step must be positive')
-    return start, end, step
-
-
-def parse_levels(levels_str: str):
-    return [int(x) for x in str(levels_str).split(',') if str(x).strip()]
-
-
-def bbox_from_mask_xyxy(seg: np.ndarray):
-    ys, xs = np.where(seg)
-    if len(xs) == 0:
-        return 0, 0, 0, 0
-    return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
-
-
-def xyxy_to_xywh(b):
-    x1, y1, x2, y2 = b
-    return [int(x1), int(y1), int(max(0, x2 - x1)), int(max(0, y2 - y1))]
-
-
-def encode_mask(mask: np.ndarray) -> Dict[str, Any]:
-    """Serialize a boolean mask into a JSON-friendly packed representation."""
-    bool_mask = np.asarray(mask, dtype=np.bool_, order='C')
-    packed = np.packbits(bool_mask.reshape(-1))
-    return {
-        'shape': [int(dim) for dim in bool_mask.shape],
-        'packed_bits_b64': base64.b64encode(packed.tobytes()).decode('ascii'),
-    }
-
-
-def format_seconds(seconds: float) -> str:
-    seconds = int(round(seconds))
-    minutes, secs = divmod(seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-    return f"{minutes:02d}:{secs:02d}"
-
-
-def numeric_frame_sort_key(fname: str) -> Tuple[float, str]:
-    """Ensure frames iterate in numerical order when filenames mix padding."""
-    stem, _ = os.path.splitext(fname)
-    match = re.search(r'\d+', stem)
-    if match:
-        try:
-            return float(int(match.group())), fname
-        except ValueError:
-            pass
-    return float('inf'), fname
-
-
-def build_subset_video(
-    frames_dir: str,
-    selected: List[str],
-    selected_indices: List[int],
-    out_root: str,
-    folder_name: str = "selected_frames",
-):
-    subset_dir = os.path.join(out_root, folder_name)
-    os.makedirs(subset_dir, exist_ok=True)
-    index_to_subset = {}
-    for local_idx, (abs_idx, fname) in enumerate(zip(selected_indices, selected)):
-        src = os.path.join(frames_dir, fname)
-        dst_name = f"{local_idx:06d}.jpg"
-        dst = os.path.join(subset_dir, dst_name)
-        index_to_subset[abs_idx] = dst_name
-        if os.path.lexists(dst):
-            try:
-                if os.path.samefile(src, dst):
-                    continue
-            except FileNotFoundError:
-                os.unlink(dst)
-            except OSError:
-                os.unlink(dst)
-            else:
-                os.unlink(dst)
-        try:
-            os.symlink(src, dst)
-        except OSError:
-            from shutil import copy2, SameFileError
-
-            try:
-                copy2(src, dst)
-            except SameFileError:
-                # Already linked/copied from a previous run; nothing to do.
-                continue
-    return subset_dir, index_to_subset
+DEFAULT_SEMANTIC_SAM_CKPT = str(_DEFAULT_SEMANTIC_SAM_CKPT_PATH)
 
 
 def persist_raw_frame(
@@ -233,18 +146,15 @@ def persist_raw_frame(
 
 def configure_logging(explicit_level: Optional[int] = None) -> int:
     """Initialize logging once and return the effective level."""
-    if explicit_level is None:
-        log_level_name = os.environ.get("MY3DIS_LOG_LEVEL", "INFO").upper()
-        explicit_level = getattr(logging, log_level_name, logging.INFO)
-
-    root_logger = logging.getLogger()
-    if not root_logger.handlers:
-        logging.basicConfig(level=explicit_level, format="%(message)s")
-    root_logger.setLevel(explicit_level)
-    LOGGER.setLevel(explicit_level)
-    logging.getLogger("utils.model").setLevel(logging.WARNING)
-    logging.getLogger("semantic_sam.utils.model").setLevel(logging.WARNING)
-    return explicit_level
+    level = setup_logging(
+        explicit_level=explicit_level,
+        logger_names_to_quiet=(
+            "utils.model",
+            "semantic_sam.utils.model",
+        ),
+    )
+    LOGGER.setLevel(level)
+    return level
 
 
 def run_generation(
@@ -482,7 +392,7 @@ def run_generation(
                         int(xs.max()),
                         int(ys.max()),
                     )
-                    bbox = [x1, y1, x2 - x1, y2 - y1]
+                    bbox = bbox_xyxy_to_xywh((x1, y1, x2, y2))
                     candidates.append({
                         'frame_idx': ssam_frame_idx,
                         'frame_name': f"gap_{ssam_frame_idx:05d}",
@@ -583,7 +493,7 @@ def run_generation(
     LOGGER.info("Candidates saved at %s", run_root)
     LOGGER.info(
         "Candidate generation finished in %s",
-        format_seconds(time.perf_counter() - start_time),
+        format_duration(time.perf_counter() - start_time),
     )
 
     return run_root, manifest

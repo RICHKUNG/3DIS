@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import sys
@@ -14,24 +13,13 @@ from typing import Dict, Iterable, List, Optional
 
 import numpy as np
 
-
-RAW_DIR_NAME = 'raw'
-RAW_META_TEMPLATE = 'frame_{frame_idx:05d}.json'
-RAW_MASK_TEMPLATE = 'frame_{frame_idx:05d}.npz'
-
-
-def encode_mask(mask: np.ndarray) -> Dict[str, object]:
-    bool_mask = np.asarray(mask, dtype=np.bool_, order='C')
-    packed = np.packbits(bool_mask.reshape(-1))
-    return {
-        'shape': [int(dim) for dim in bool_mask.shape],
-        'packed_bits_b64': base64.b64encode(packed.tobytes()).decode('ascii'),
-    }
-
-
-def ensure_dir(path: str) -> str:
-    os.makedirs(path, exist_ok=True)
-    return path
+from common_utils import (
+    RAW_DIR_NAME,
+    RAW_META_TEMPLATE,
+    RAW_MASK_TEMPLATE,
+    encode_mask,
+    ensure_dir,
+)
 
 
 @dataclass

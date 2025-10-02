@@ -152,7 +152,7 @@ Manual Two-Stage Flow
   ```
 - (Optional) Build per-frame containment hierarchy
   ```bash
-  python My3DIS/build_hierarchy.py \
+  python My3DIS/legacy/build_hierarchy.py \
     --candidates-root "$TS" \
     --levels 2,4,6 \
     --contain-thr 0.98
@@ -184,7 +184,7 @@ Implementation Notes
 - `My3DIS/generate_candidates.py` — Stage 1 wrapper around Semantic-SAM progressive refinement。
 - `My3DIS/track_from_candidates.py` — Stage 2 SAM2 tracker producing masks and visualizations。
 - `My3DIS/run_pipeline.py` — 單一環境的備用流程。
-- `My3DIS/build_hierarchy.py` — Optional mask containment post-processing。
+- `My3DIS/legacy/build_hierarchy.py` — Optional mask containment post-processing。
 - `My3DIS/ssam_progressive_adapter.py` — Adapter utility for Semantic-SAM calls。
 - `My3DIS/Algorithm1_env.yml` — Reference environment spec。
 - `My3DIS/Agent.md` — Project log and status updates (operational details now live here in the README)。

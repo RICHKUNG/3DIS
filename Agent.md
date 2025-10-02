@@ -13,6 +13,8 @@ Status
 - YAML 驅動的 `run_workflow.py` 可依配置自動執行 SSAM → filter → SAM2 → 報告，並在 YAML 中指定 GPU/參數、產出 Markdown 紀錄。
 - `run_workflow_batch.py` + `configs/multiscan/` 已覆蓋 MultiScan 全場景，並自動將執行摘要寫入 `logs/workflow_history.csv` 與批次報表，方便規劃跨場景 sweep。
 - YAML `experiment.scenes` + `experiment.dataset_root` 現在支援單一實驗跑多個場景，輸出集中在 `outputs/experiments/<experiment>/<scene>/...`。
+- `configs/multiscan_all.yaml` 集中定義跨場景 sweep（預設 `scenes: all`），`run_workflow.py` 會自動建立實驗 timestamp 資料夾並整理輸出成 scene/level 目錄、`summary.json`、三張報表圖片與 SAM2 NPZ。
+- `run_workflow.py` 支援 `scene_start`/`scene_end`，可用來鎖定 MultiScan 範圍，例如 `scene_start: scene_00030_00`、`scene_end: scene_00075_01` 會按照資料夾順序依序執行。
 
 Progress Log
 - Added `My3DIS/run_pipeline.py` to glue Semantic-SAM candidate generation with SAM2 tracking.
@@ -33,6 +35,7 @@ Progress Log
 - 2025-09-27: Tracker 支援遮罩縮放開關（YAML `downscale_masks` + `downscale_ratio`），SAM2/SSAM 遮罩可縮至 0.3× 後再封裝，輸出的 `.npz` 以 `_scale{ratio}x` 後綴標示並記錄原始尺寸以供還原。
 - 2025-09-27: 匯出 MultiScan 場景 config (`configs/multiscan/*.yaml`) 與 `multiscan_scene_index.json`，新增 `run_workflow_batch.py` 與 `scripts/prepare_scene_configs.py`，workflow 結束時自動寫入 `logs/workflow_history.csv`／`logs/batch/*.json`。
 - 2025-09-27: `run_workflow.py` 支援 `experiment.scenes` 多場景執行，將 `experiment.output_root` 當作實驗根目錄並在 `/<scene>/` 建立 run；History CSV 新增 `parent_experiment` / `scene_index` 欄位，`run_workflow_batch.py` 會展開每個場景的紀錄。
+- 2025-10-02: 新增 `configs/multiscan_all.yaml`，`run_workflow.py` 自動列舉 MultiScan 全場景、建立 `aggregate_output` timestamp 根目錄，SAM2 階段支援 `render_viz` 關閉，報告輸出整併為每個 `scene/level` 目錄含 `object_segments_Lxx.npz`、`video_segments_Lxx.npz`、三張報表圖片與 `summary.json`。
 
 Next Actions
 1) Create the shared environment from `Algorithm1_env.yml` (optional but recommended).

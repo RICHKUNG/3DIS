@@ -13,6 +13,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from PIL import Image
 
+from common_utils import ensure_dir, format_duration
+
 
 @dataclass
 class StageTiming:
@@ -25,20 +27,6 @@ class StageTiming:
     @property
     def duration_text(self) -> str:
         return format_duration(self.duration_sec)
-
-
-def format_duration(seconds: float) -> str:
-    seconds = max(0.0, float(seconds))
-    minutes, secs = divmod(seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{int(hours):02d}:{int(minutes):02d}:{int(secs):02d}"
-    return f"{int(minutes):02d}:{int(secs):02d}"
-
-
-def ensure_dir(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def load_json(path: Path) -> Optional[dict]:

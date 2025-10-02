@@ -3,25 +3,36 @@ Tracking-only stage: read filtered candidates saved by generate_candidates.py
 and run SAM2 masklet propagation. Designed to run in a SAM2-capable env.
 """
 
+import argparse
+import base64
+import json
+import logging
 import os
 import sys
-import json
-import argparse
 import time
-import logging
-import base64
-import re
-from typing import List, Dict, Any, Tuple, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+import torch
 
-DEFAULT_SAM2_ROOT = "/media/Pluto/richkung/SAM2"
-if DEFAULT_SAM2_ROOT not in sys.path:
-    sys.path.insert(0, DEFAULT_SAM2_ROOT)
+from common_utils import (
+    build_subset_video,
+    ensure_dir,
+    numeric_frame_sort_key,
+    setup_logging,
+)
+from pipeline_defaults import (
+    DEFAULT_SAM2_CFG as _DEFAULT_SAM2_CFG_PATH,
+    DEFAULT_SAM2_CKPT as _DEFAULT_SAM2_CKPT_PATH,
+    DEFAULT_SAM2_ROOT as _DEFAULT_SAM2_ROOT,
+    expand_default,
+)
+
+_SAM2_ROOT_STR = expand_default(_DEFAULT_SAM2_ROOT)
+if _SAM2_ROOT_STR not in sys.path:
+    sys.path.insert(0, _SAM2_ROOT_STR)
 
 from sam2.build_sam import build_sam2_video_predictor
-
-import torch
 
 LOGGER = logging.getLogger("my3dis.track_from_candidates")
 
@@ -72,7 +83,17 @@ def pack_binary_mask(mask: np.ndarray, *, full_resolution_shape: Optional[Tuple[
         PACKED_SHAPE_KEY: tuple(int(dim) for dim in bool_mask.shape),
     }
     if full_resolution_shape is not None:
-        payload[PACKED_ORIG_SHAPE_KEY] = tuple(int(dim) for dim in full_resolution_shape)
+        # Only persist spatial (H, W) when the original mask includes extra dims (e.g. [1, H, W]).
+        shape_arr = np.atleast_1d(full_resolution_shape)
+        shape_list = [int(dim) for dim in shape_arr.tolist()] if shape_arr.size else []
+        if len(shape_list) >= 2:
+            sanitized = (shape_list[-2], shape_list[-1])
+        elif len(shape_list) == 1:
+            sanitized = (shape_list[0], shape_list[0])
+        else:
+            sanitized = tuple()
+        if sanitized:
+            payload[PACKED_ORIG_SHAPE_KEY] = sanitized
     return payload
 
 
@@ -128,8 +149,10 @@ def maybe_downscale_mask(mask: np.ndarray, ratio: float) -> np.ndarray:
     from PIL import Image
 
     img = Image.fromarray(arr.astype(np.uint8) * 255)
-    resized = img.resize((new_w, new_h), resample=Image.NEAREST)
-    return (np.array(resized, dtype=np.uint8) >= 128)
+    resample = getattr(Image, 'BOX', Image.BILINEAR)
+    resized = img.resize((new_w, new_h), resample=resample)
+    arr_float = np.asarray(resized, dtype=np.float32) / 255.0
+    return arr_float >= 0.5
 
 
 def format_scale_suffix(ratio: float) -> str:
@@ -169,8 +192,18 @@ def determine_mask_shape(mask_entry: Any, fallback: Optional[Tuple[int, int]] = 
     if isinstance(mask_entry, dict):
         if PACKED_ORIG_SHAPE_KEY in mask_entry:
             orig = mask_entry[PACKED_ORIG_SHAPE_KEY]
-            if isinstance(orig, (list, tuple)) and len(orig) >= 2:
-                return int(orig[0]), int(orig[1])
+            if isinstance(orig, np.ndarray):
+                orig_list = orig.flatten().tolist()
+            elif isinstance(orig, (list, tuple)):
+                orig_list = list(orig)
+            else:
+                orig_list = [orig]
+            if orig_list:
+                if len(orig_list) >= 2:
+                    return int(orig_list[-2]), int(orig_list[-1])
+                # Fallback: single value means square shape
+                val = int(orig_list[0])
+                return val, val
     if is_packed_mask(mask_entry):
         arr = unpack_binary_mask(mask_entry)
         return arr.shape[-2], arr.shape[-1]
@@ -181,30 +214,9 @@ def determine_mask_shape(mask_entry: Any, fallback: Optional[Tuple[int, int]] = 
     return fallback
 
 
-def numeric_frame_sort_key(fname: str) -> Tuple[float, str]:
-    """Ensure frame iteration respects numeric order in mixed-padded names."""
-    stem, _ = os.path.splitext(fname)
-    match = re.search(r'\d+', stem)
-    if match:
-        try:
-            return float(int(match.group())), fname
-        except ValueError:
-            pass
-    return float('inf'), fname
-
-
-DEFAULT_SAM2_CFG = os.path.join(
-    DEFAULT_SAM2_ROOT,
-    "sam2",
-    "configs",
-    "sam2.1",
-    "sam2.1_hiera_l.yaml",
-)
-DEFAULT_SAM2_CKPT = os.path.join(
-    DEFAULT_SAM2_ROOT,
-    "checkpoints",
-    "sam2.1_hiera_large.pt",
-)
+DEFAULT_SAM2_ROOT = _SAM2_ROOT_STR
+DEFAULT_SAM2_CFG = str(_DEFAULT_SAM2_CFG_PATH)
+DEFAULT_SAM2_CKPT = str(_DEFAULT_SAM2_CKPT_PATH)
 
 def resolve_sam2_config_path(config_arg: str) -> str:
     cfg_path = os.path.expanduser(config_arg)
@@ -216,21 +228,6 @@ def resolve_sam2_config_path(config_arg: str) -> str:
             rel = rel[:-5]
         return rel
     return config_arg
-
-
-def ensure_dir(p: str) -> str:
-    os.makedirs(p, exist_ok=True)
-    return p
-
-
-def format_seconds(seconds: float) -> str:
-    seconds = int(round(seconds))
-    minutes, secs = divmod(seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-    return f"{minutes:02d}:{secs:02d}"
-
 
 def format_duration_precise(seconds: float) -> str:
     seconds = max(0.0, float(seconds))
@@ -337,41 +334,10 @@ def compute_iou(mask1: Any, mask2: Any) -> float:
     return float(inter) / float(union) if union else 0.0
 
 
-def build_subset_video(
-    frames_dir: str,
-    selected: List[str],
-    selected_indices: List[int],
-    out_root: str,
-    folder_name: str = "selected_frames",
-) -> Tuple[str, Dict[int, str]]:
-    subset_dir = os.path.join(out_root, folder_name)
-    os.makedirs(subset_dir, exist_ok=True)
-    index_to_subset: Dict[int, str] = {}
-    for i, (abs_idx, fname) in enumerate(zip(selected_indices, selected)):
-        src = os.path.join(frames_dir, fname)
-        dst_name = f"{i:06d}.jpg"
-        dst = os.path.join(subset_dir, dst_name)
-        index_to_subset[abs_idx] = dst_name
-        if not os.path.exists(dst):
-            try:
-                os.symlink(src, dst)
-            except Exception:
-                from shutil import copy2
-                copy2(src, dst)
-    return subset_dir, index_to_subset
-
-
 def configure_logging(explicit_level: Optional[int] = None) -> int:
-    if explicit_level is None:
-        log_level_name = os.environ.get("MY3DIS_LOG_LEVEL", "INFO").upper()
-        explicit_level = getattr(logging, log_level_name, logging.INFO)
-
-    root_logger = logging.getLogger()
-    if not root_logger.handlers:
-        logging.basicConfig(level=explicit_level, format="%(message)s")
-    root_logger.setLevel(explicit_level)
-    LOGGER.setLevel(explicit_level)
-    return explicit_level
+    level = setup_logging(explicit_level=explicit_level)
+    LOGGER.setLevel(level)
+    return level
 
 
 def load_filtered_candidates(
@@ -931,6 +897,7 @@ def run_tracking(
     long_tail_box_prompt: bool = False,
     all_box_prompt: bool = False,
     mask_scale_ratio: float = 1.0,
+    render_viz: bool = True,
 ) -> str:
     if not sam2_cfg:
         sam2_cfg = DEFAULT_SAM2_CFG
@@ -992,12 +959,13 @@ def run_tracking(
             sam2_max_propagate = None
 
     LOGGER.info(
-        "Configuration: ssam_freq=%d, sam2_max_propagate=%s, ssam_frames=%d, iou_threshold=%.2f, mask_scale_ratio=%.3f",
+        "Configuration: ssam_freq=%d, sam2_max_propagate=%s, ssam_frames=%d, iou_threshold=%.2f, mask_scale_ratio=%.3f, render_viz=%s",
         ssam_freq,
         sam2_max_propagate if sam2_max_propagate is not None else "unlimited",
         len(ssam_frames),
         float(iou_threshold),
         float(mask_scale_ratio),
+        "yes" if render_viz else "no",
     )
 
     long_tail_area_threshold: Optional[int] = None
@@ -1129,17 +1097,18 @@ def run_tracking(
             os.path.basename(level_object_path) if level_object_path else 'n/a',
         )
 
-        viz_dir = os.path.join(out_root, f'level_{level}', 'viz')
-        with level_timer.track('viz.comparison'):
-            save_comparison_proposals(
-                viz_dir=viz_dir,
-                base_frames_dir=data_path,
-                filtered_per_frame=per_frame,
-                video_segments=segs,
-                level=level,
-                frame_numbers=frame_indices,  # 使用實際的幀索引
-                frames_to_save=None,
-            )
+        if render_viz:
+            viz_dir = os.path.join(out_root, f'level_{level}', 'viz')
+            with level_timer.track('viz.comparison'):
+                save_comparison_proposals(
+                    viz_dir=viz_dir,
+                    base_frames_dir=data_path,
+                    filtered_per_frame=per_frame,
+                    video_segments=segs,
+                    level=level,
+                    frame_numbers=frame_indices,  # 使用實際的幀索引
+                    frames_to_save=None,
+                )
 
         level_total = time.perf_counter() - level_start
 
@@ -1205,6 +1174,7 @@ def run_tracking(
         LOGGER.debug("Aggregate timing breakdown → %s", overall_timer.format_breakdown())
 
     manifest['mask_scale_ratio'] = float(mask_scale_ratio)
+    manifest['render_viz'] = bool(render_viz)
     tracking_artifacts: Dict[str, Dict[str, Optional[str]]] = {}
     for lvl, paths in level_artifacts.items():
         video_path = paths.get('video_segments') if paths else None
@@ -1252,6 +1222,8 @@ def main():
                     help='Convert all mask prompts to SAM2 box prompts')
     ap.add_argument('--mask-scale-ratio', type=float, default=1.0,
                     help='Downscale masks before persistence (e.g., 0.3 keeps 30% resolution)')
+    ap.add_argument('--skip-viz', action='store_true',
+                    help='Disable all additional visualization renders to keep outputs minimal')
     args = ap.parse_args()
 
     run_tracking(
@@ -1266,6 +1238,7 @@ def main():
         long_tail_box_prompt=args.long_tail_box_prompt,
         all_box_prompt=args.all_box_prompt,
         mask_scale_ratio=args.mask_scale_ratio,
+        render_viz=not args.skip_viz,
     )
 
 

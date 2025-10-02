@@ -7,20 +7,21 @@ import argparse
 import csv
 import json
 import os
+import shutil
 import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 try:
     import yaml
 except ImportError as exc:  # pragma: no cover - dependency check
     raise SystemExit("PyYAML is required: pip install pyyaml") from exc
 
+from common_utils import RAW_DIR_NAME, format_duration, list_to_csv
 from generate_candidates import (
-    RAW_DIR_NAME,
     DEFAULT_SEMANTIC_SAM_CKPT,
     run_generation as run_candidate_generation,
 )
@@ -35,15 +36,6 @@ def load_yaml(path: Path) -> Dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f'Config file {path} must define a mapping at the top level')
     return data
-
-
-def format_duration(seconds: float) -> str:
-    seconds = max(0.0, float(seconds))
-    minutes, secs = divmod(seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours:
-        return f"{int(hours):02d}:{int(minutes):02d}:{int(secs):02d}"
-    return f"{int(minutes):02d}:{int(secs):02d}"
 
 
 @contextmanager
@@ -159,11 +151,105 @@ def expand_output_path_template(path_value: Any, experiment_cfg: Dict[str, Any])
     return path_str
 
 
-def list_to_csv(values: Optional[List[Any]]) -> str:
-    if not values:
-        return ''
-    return ','.join(str(v) for v in values)
+_ALL_SCENE_TOKENS = {'all', '*', '__all__'}
 
+
+def discover_scene_names(dataset_root: Path) -> List[str]:
+    if not dataset_root.exists():
+        raise SystemExit(f'experiment.dataset_root does not exist: {dataset_root}')
+
+    try:
+        entries = sorted(p.name for p in dataset_root.iterdir() if p.is_dir())
+    except OSError as exc:
+        raise SystemExit(f'failed to list dataset_root={dataset_root}: {exc}') from exc
+
+    preferred = [name for name in entries if name.startswith('scene_')]
+    return preferred or entries
+
+
+def normalize_scene_list(
+    raw_scenes: Any,
+    dataset_root: Path,
+    *,
+    scene_start: Optional[str] = None,
+    scene_end: Optional[str] = None,
+) -> List[str]:
+    discovered_cache: Optional[List[str]] = None
+
+    def ensure_discovered() -> List[str]:
+        nonlocal discovered_cache
+        if discovered_cache is None:
+            discovered_cache = discover_scene_names(dataset_root)
+        return discovered_cache
+
+    if raw_scenes is None:
+        scenes_iterable: List[str] = ensure_discovered()
+    elif isinstance(raw_scenes, str):
+        token = raw_scenes.strip()
+        if token.lower() in _ALL_SCENE_TOKENS:
+            scenes_iterable = ensure_discovered()
+        else:
+            scenes_iterable = [token]
+    elif isinstance(raw_scenes, (list, tuple)):
+        result: List[str] = []
+        seen: Set[str] = set()
+        for entry in raw_scenes:
+            token = str(entry).strip()
+            if not token:
+                continue
+            if token.lower() in _ALL_SCENE_TOKENS:
+                for name in ensure_discovered():
+                    if name not in seen:
+                        result.append(name)
+                        seen.add(name)
+                continue
+            if token not in seen:
+                result.append(token)
+                seen.add(token)
+        scenes_iterable = result
+    else:
+        raise SystemExit('experiment.scenes must be a list, string, or null when provided')
+
+    if not scenes_iterable:
+        raise SystemExit('No scenes resolved for experiment (empty list after processing)')
+
+    missing = [scene for scene in scenes_iterable if not (dataset_root / scene).exists()]
+    if missing:
+        raise SystemExit(
+            'The following scenes were not found under dataset_root '
+            f"{dataset_root}: {', '.join(missing)}"
+        )
+
+    if scene_start is not None or scene_end is not None:
+        ordered = ensure_discovered()
+        order_map = {name: idx for idx, name in enumerate(ordered)}
+
+        if scene_start is not None:
+            start_token = str(scene_start).strip()
+            if start_token not in order_map:
+                raise SystemExit(f'scene_start {scene_start!r} not found under dataset_root {dataset_root}')
+            start_idx = order_map[start_token]
+        else:
+            start_idx = 0
+
+        if scene_end is not None:
+            end_token = str(scene_end).strip()
+            if end_token not in order_map:
+                raise SystemExit(f'scene_end {scene_end!r} not found under dataset_root {dataset_root}')
+            end_idx = order_map[end_token]
+        else:
+            end_idx = len(ordered) - 1
+
+        if end_idx < start_idx:
+            raise SystemExit('scene_end occurs before scene_start; please provide a valid range')
+
+        allowed: Set[str] = set(scenes_iterable)
+        sliced = [name for name in ordered[start_idx : end_idx + 1] if name in allowed]
+        if not sliced:
+            raise SystemExit('Scene range selection produced an empty set; adjust scene_start or scene_end')
+        scenes_iterable = sliced
+
+    return scenes_iterable
 
 def resolve_levels(stage_cfg: Dict[str, Any], manifest: Optional[Dict[str, Any]], fallback: Optional[List[int]]) -> List[int]:
     if 'levels' in stage_cfg and stage_cfg['levels'] is not None:
@@ -314,9 +400,164 @@ def append_run_history(
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             if is_new:
                 writer.writeheader()
-            writer.writerow(entry)
+        writer.writerow(entry)
     except OSError:
         return
+
+
+def _move_file(src: Path, dst: Path) -> Optional[Path]:
+    if not src.exists():
+        return None
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        dst = src.replace(dst)
+    except OSError as exc:
+        raise SystemExit(f'Failed to move {src} → {dst}: {exc}') from exc
+    return dst
+
+
+def _load_json_if_exists(path: Path) -> Optional[Dict[str, Any]]:
+    if not path.exists():
+        return None
+    try:
+        with path.open('r') as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        return None
+
+
+def apply_scene_level_layout(
+    run_dir: Path,
+    summary: Dict[str, Any],
+    manifest: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    manifest = manifest or {}
+    levels_raw = manifest.get('levels') or summary.get('experiment', {}).get('levels')
+    if not levels_raw:
+        return None
+
+    resolved_levels: List[int] = []
+    for lvl in levels_raw:
+        try:
+            resolved_levels.append(int(lvl))
+        except (TypeError, ValueError):
+            continue
+
+    if not resolved_levels:
+        return None
+
+    resolved_levels = sorted(set(resolved_levels))
+    aggregated_levels: Dict[str, Dict[str, Any]] = {}
+
+    tracking_artifacts = manifest.get('tracking_artifacts') or {}
+
+    for lvl in resolved_levels:
+        level_dir = run_dir / f'level_{lvl}'
+        if not level_dir.exists():
+            continue
+
+        level_label = f'L{lvl:02d}'
+        track_dir = level_dir / 'tracking'
+        object_rel: Optional[str] = None
+        video_rel: Optional[str] = None
+
+        if track_dir.exists():
+            object_src = next(sorted(track_dir.glob('object_segments*.npz')), None)
+            if object_src:
+                object_dst = level_dir / f'object_segments_{level_label}.npz'
+                moved = _move_file(object_src, object_dst)
+                if moved:
+                    object_rel = str(moved.relative_to(run_dir))
+
+            video_src = next(sorted(track_dir.glob('video_segments*.npz')), None)
+            if video_src:
+                video_dst = level_dir / f'video_segments_{level_label}.npz'
+                moved = _move_file(video_src, video_dst)
+                if moved:
+                    video_rel = str(moved.relative_to(run_dir))
+
+            # Remove tracking directory if empty after moves
+            try:
+                if track_dir.exists() and not any(track_dir.iterdir()):
+                    track_dir.rmdir()
+            except OSError:
+                pass
+
+        report_dir = level_dir / 'report'
+        report_rel_paths: List[str] = []
+        if report_dir.exists():
+            image_paths = sorted(
+                [p for p in report_dir.iterdir() if p.suffix.lower() in {'.png', '.jpg', '.jpeg'}]
+            )
+            for idx, image in enumerate(image_paths, start=1):
+                dst_name = image.name
+                # Avoid collisions by prefixing with level label when necessary
+                if not dst_name.lower().startswith(f'{level_label.lower()}_'):
+                    dst_name = f'{level_label}_{idx:02d}_{dst_name}'
+                dest = level_dir / dst_name
+                moved = _move_file(image, dest)
+                if moved:
+                    report_rel_paths.append(str(moved.relative_to(run_dir)))
+
+            try:
+                if report_dir.exists() and not any(report_dir.iterdir()):
+                    report_dir.rmdir()
+            except OSError:
+                pass
+
+        aggregated_levels[str(lvl)] = {
+            'object_segments': object_rel,
+            'video_segments': video_rel,
+            'report_images': report_rel_paths,
+        }
+
+        manifest_key = f'level_{lvl}'
+        tracking_artifacts.setdefault(manifest_key, {})
+        if object_rel:
+            tracking_artifacts[manifest_key]['object_segments'] = object_rel
+        if video_rel:
+            tracking_artifacts[manifest_key]['video_segments'] = video_rel
+
+        # Clean up visualization directory when present (optional artifacts)
+        viz_dir = level_dir / 'viz'
+        if viz_dir.exists():
+            try:
+                shutil.rmtree(viz_dir)
+            except OSError:
+                pass
+
+    manifest['tracking_artifacts'] = tracking_artifacts
+    manifest_path = run_dir / 'manifest.json'
+    try:
+        with manifest_path.open('w') as f:
+            json.dump(manifest, f, indent=2)
+    except OSError:
+        pass
+
+    timings_payload = _load_json_if_exists(run_dir / 'stage_timings.json')
+
+    summary_payload = {
+        'generated_at': summary.get('generated_at'),
+        'scene': summary.get('experiment', {}).get('scene'),
+        'experiment': summary.get('experiment'),
+        'config': summary.get('config_snapshot'),
+        'stages': summary.get('stages'),
+        'manifest': manifest,
+        'levels': aggregated_levels,
+        'timings': timings_payload,
+    }
+
+    summary_path = run_dir / 'summary.json'
+    try:
+        with summary_path.open('w') as f:
+            json.dump(summary_payload, f, indent=2)
+    except OSError:
+        pass
+
+    summary.setdefault('artifacts', {})['scene_layout'] = aggregated_levels
+    summary['summary_json'] = str(summary_path)
+
+    return summary_payload
 
 
 def _run_scene_workflow(
@@ -338,6 +579,13 @@ def _run_scene_workflow(
         'invoked_at': datetime.utcnow().isoformat(timespec='seconds'),
     }
     update_summary_config(summary, config)
+
+    output_layout_mode_raw = experiment_cfg.get('output_layout')
+    output_layout_mode = (
+        str(output_layout_mode_raw).strip().lower()
+        if isinstance(output_layout_mode_raw, str)
+        else None
+    )
 
     scene_meta = derive_scene_metadata(data_path)
     experiment_name = (
@@ -362,6 +610,10 @@ def _run_scene_workflow(
         summary['experiment']['scene_index'] = parent_meta.get('index')
         if parent_meta.get('scenes') is not None:
             summary['experiment']['scene_list'] = parent_meta.get('scenes')
+        if parent_meta.get('scene_start') is not None:
+            summary['experiment']['scene_start'] = parent_meta.get('scene_start')
+        if parent_meta.get('scene_end') is not None:
+            summary['experiment']['scene_end'] = parent_meta.get('scene_end')
 
     manifest: Optional[Dict[str, Any]] = None
     run_dir: Optional[Path] = None
@@ -525,6 +777,7 @@ def _run_scene_workflow(
 
         sam2_cfg = tracker_cfg.get('sam2_cfg') or experiment_cfg.get('sam2_cfg')
         sam2_ckpt = tracker_cfg.get('sam2_ckpt') or experiment_cfg.get('sam2_ckpt')
+        render_viz = bool(tracker_cfg.get('render_viz', True))
 
         print('Stage Tracker: SAM2 追蹤與遮罩匯出')
         with StageRecorder(summary, 'tracker', tracker_gpu), using_gpu(tracker_gpu):
@@ -540,6 +793,7 @@ def _run_scene_workflow(
                 long_tail_box_prompt=long_tail_box,
                 all_box_prompt=all_box,
                 mask_scale_ratio=mask_scale_ratio,
+                render_viz=render_viz,
             )
             summary['stages']['tracker'].update(
                 {
@@ -550,6 +804,7 @@ def _run_scene_workflow(
                         'prompt_mode': prompt_mode,
                         'downscale_masks': downscale_enabled,
                         'downscale_ratio': mask_scale_ratio,
+                        'render_viz': render_viz,
                     }
                 }
             )
@@ -578,6 +833,12 @@ def _run_scene_workflow(
     summary['generated_at'] = datetime.utcnow().isoformat(timespec='seconds')
     summary['run_dir'] = str(run_dir)
 
+    aggregated_payload = None
+    if output_layout_mode == 'scene_level':
+        aggregated_payload = apply_scene_level_layout(run_dir, summary, manifest)
+        if aggregated_payload is not None:
+            summary['scene_level_summary'] = aggregated_payload
+
     with (run_dir / 'workflow_summary.json').open('w') as f:
         json.dump(summary, f, indent=2)
 
@@ -602,36 +863,79 @@ def execute_workflow(
         raise SystemExit('`stages` section must be a mapping')
     default_stage_gpu = stages_cfg.get('gpu')
 
-    scenes = experiment_cfg.get('scenes')
-    if scenes:
-        if not isinstance(scenes, (list, tuple)):
-            raise SystemExit('experiment.scenes must be a list when provided')
-        dataset_root_raw = experiment_cfg.get('dataset_root')
+    scenes_cfg = experiment_cfg.get('scenes')
+    scene_start_cfg = experiment_cfg.get('scene_start')
+    scene_end_cfg = experiment_cfg.get('scene_end')
+    scenes_list: Optional[List[str]] = None
+    dataset_root_raw = experiment_cfg.get('dataset_root')
+    if scenes_cfg is not None or scene_start_cfg is not None or scene_end_cfg is not None:
         if not dataset_root_raw:
-            raise SystemExit('experiment.dataset_root is required when experiment.scenes is provided')
+            raise SystemExit('experiment.dataset_root is required when selecting scenes')
         dataset_root = Path(dataset_root_raw).expanduser()
+        scenes_list = normalize_scene_list(
+            scenes_cfg,
+            dataset_root,
+            scene_start=scene_start_cfg,
+            scene_end=scene_end_cfg,
+        )
+    else:
+        dataset_root = Path(dataset_root_raw).expanduser() if dataset_root_raw else None
+
+    if scenes_list:
         output_root_base_raw = override_output or experiment_cfg.get('output_root')
         output_root_base_resolved = expand_output_path_template(output_root_base_raw, experiment_cfg)
         output_root_base = Path(output_root_base_resolved).expanduser()
+
+        aggregate_output = bool(experiment_cfg.get('aggregate_output'))
+        run_timestamp = experiment_cfg.get('run_timestamp')
+        if aggregate_output:
+            experiment_stamp = (
+                str(run_timestamp)
+                if run_timestamp
+                else datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+            )
+            experiment_root = output_root_base / experiment_stamp
+        else:
+            experiment_root = output_root_base
+            experiment_stamp = str(run_timestamp) if run_timestamp else None
+
+        experiment_root.mkdir(parents=True, exist_ok=True)
+
         parent_meta = {
             'name': experiment_cfg.get('name'),
-            'scenes': [str(s) for s in scenes],
-            'experiment_root': str(output_root_base),
+            'scenes': scenes_list,
+            'experiment_root': str(experiment_root),
+            'timestamp': experiment_stamp,
+            'aggregate_output': aggregate_output,
+            'scene_start': scene_start_cfg,
+            'scene_end': scene_end_cfg,
         }
 
         summaries: List[Dict[str, Any]] = []
-        for index, scene_name in enumerate(parent_meta['scenes']):
+        experiment_scene_records: List[Dict[str, Any]] = []
+
+        for index, scene_name in enumerate(scenes_list):
             scene_data_path = dataset_root / scene_name / 'outputs' / 'color'
             if not scene_data_path.exists():
                 raise SystemExit(f'data path not found for scene {scene_name}: {scene_data_path}')
-            scene_output_root = output_root_base / scene_name
+            if aggregate_output:
+                scene_output_root = experiment_root / scene_name
+            else:
+                scene_output_root = output_root_base / scene_name
+            scene_output_root.mkdir(parents=True, exist_ok=True)
+
             scene_experiment_cfg = dict(experiment_cfg)
             scene_experiment_cfg['name'] = experiment_cfg.get('name')
             scene_experiment_cfg['data_path'] = str(scene_data_path)
             scene_experiment_cfg['output_root'] = str(scene_output_root)
+            scene_experiment_cfg['aggregate_output'] = aggregate_output
+            scene_experiment_cfg['run_timestamp'] = experiment_stamp
+            scene_experiment_cfg.pop('scenes', None)
+
             parent_meta_scene = dict(parent_meta)
             parent_meta_scene['index'] = index
             parent_meta_scene['scene'] = scene_name
+
             summary = _run_scene_workflow(
                 config=config,
                 experiment_cfg=scene_experiment_cfg,
@@ -643,6 +947,51 @@ def execute_workflow(
                 parent_meta=parent_meta_scene,
             )
             summaries.append(summary)
+
+            summary_json_path = summary.get('summary_json')
+            summary_json_rel = None
+            if summary_json_path:
+                try:
+                    summary_json_rel = str(Path(summary_json_path).relative_to(experiment_root))
+                except ValueError:
+                    summary_json_rel = summary_json_path
+
+            run_dir_path = summary.get('run_dir')
+            run_dir_rel = None
+            if run_dir_path:
+                try:
+                    run_dir_rel = str(Path(run_dir_path).relative_to(experiment_root))
+                except ValueError:
+                    run_dir_rel = run_dir_path
+
+            scene_record = {
+                'scene': scene_name,
+                'run_dir': run_dir_rel,
+                'summary_json': summary_json_rel,
+                'levels': summary.get('scene_level_summary', {}).get('levels')
+                if summary.get('scene_level_summary')
+                else None,
+            }
+            experiment_scene_records.append(scene_record)
+
+        if aggregate_output:
+            experiment_summary = {
+                'generated_at': datetime.utcnow().isoformat(timespec='seconds'),
+                'experiment': {
+                    'name': experiment_cfg.get('name'),
+                    'timestamp': experiment_stamp,
+                    'scenes': scenes_list,
+                    'output_root': str(experiment_root),
+                },
+                'runs': experiment_scene_records,
+            }
+            experiment_summary_path = experiment_root / 'experiment_summary.json'
+            try:
+                with experiment_summary_path.open('w') as f:
+                    json.dump(experiment_summary, f, indent=2)
+            except OSError:
+                pass
+
         return summaries
 
     data_path_raw = experiment_cfg.get('data_path')

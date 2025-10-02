@@ -6,16 +6,28 @@ format expected by our pipeline (bbox XYWH, segmentation, area, level, etc.).
 Runs under the Semantic-SAM environment.
 """
 
-import os
-import sys
 import contextlib
 import io
 import logging
+import os
+import sys
 import tempfile
-from typing import List, Dict, Any, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 
-DEFAULT_SEMANTIC_SAM_ROOT = "/media/Pluto/richkung/Semantic-SAM"
+from common_utils import (
+    bbox_from_mask_xyxy,
+    bbox_xyxy_to_xywh,
+    ensure_dir,
+)
+from pipeline_defaults import (
+    DEFAULT_SEMANTIC_SAM_ROOT as _DEFAULT_SEMANTIC_SAM_ROOT,
+    expand_default,
+)
+
+_SEM_ROOT_STR = expand_default(_DEFAULT_SEMANTIC_SAM_ROOT)
+DEFAULT_SEMANTIC_SAM_ROOT = _SEM_ROOT_STR
 
 if DEFAULT_SEMANTIC_SAM_ROOT not in sys.path:
     sys.path.append(DEFAULT_SEMANTIC_SAM_ROOT)
@@ -29,23 +41,6 @@ from progressive_refinement import (
 
 
 LOGGER = logging.getLogger("my3dis.ssam_progressive")
-
-
-def ensure_dir(p: str) -> str:
-    os.makedirs(p, exist_ok=True)
-    return p
-
-
-def bbox_from_mask_xyxy(seg: np.ndarray) -> Tuple[int, int, int, int]:
-    ys, xs = np.where(seg)
-    if len(xs) == 0:
-        return 0, 0, 0, 0
-    return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
-
-
-def xyxy_to_xywh(b):
-    x1, y1, x2, y2 = b
-    return [int(x1), int(y1), int(max(0, x2 - x1)), int(max(0, y2 - y1))]
 
 
 def _extract_gap_components(segs: List[np.ndarray], fill_area: int) -> List[np.ndarray]:
@@ -230,7 +225,7 @@ def generate_with_progressive(
                 if area == 0:
                     continue
                 x1, y1, x2, y2 = bbox_from_mask_xyxy(seg_bool)
-                bbox = xyxy_to_xywh((x1, y1, x2, y2))
+                bbox = bbox_xyxy_to_xywh((x1, y1, x2, y2))
                 stability = float(m.get('stability_score', 1.0))
                 frame_cands.append({
                     'frame_idx': f_idx,

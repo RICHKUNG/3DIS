@@ -1,17 +1,17 @@
 experiment:
-  name: multiscan_batch
+  name: multiscan_all
   dataset_root: /media/public_dataset2/multiscan
-  scenes:
-  # - scene_00005_00
-  # - scene_00030_00
-  - scene_00065_00
-  # - scene_00075_01
-  output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
+  scenes: all
+  scene_start: null  # replace with first scene name (inclusive) to limit the run
+  scene_end: null    # replace with last scene name (inclusive) to limit the run
   levels:
-  - 2
-  - 4
-  # - 6
+    - 2
+    - 4
+    - 6
   tag: fill_prop35
+  aggregate_output: true
+  output_layout: scene_level
+  output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
 stages:
   gpu: 1
   ssam:
@@ -19,25 +19,22 @@ stages:
     frames:
       step: 50
     ssam_freq: 2
-    min_area: 0
+    min_area: 1000
     stability_threshold: 1.0
     persist_raw: false
     skip_filtering: false
     add_gaps: true
     fill_area: 10000
-    append_timestamp: true
+    append_timestamp: false
   filter:
-    enabled: True
-    min_area: 1000
-    stability_threshold: 1.0
-    update_manifest: true
+    enabled: false
   tracker:
     enabled: true
     prompt_mode: all_mask
     max_propagate: 35
     iou_threshold: 0.6
-    downscale_masks: true
-    downscale_ratio: 0.3
+    downscale_masks: false
+    render_viz: false
   report:
     enabled: true
     name: report.md
