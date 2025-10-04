@@ -19,3 +19,6 @@ logs/
 
 # Large generated artifacts
 *_superpoint_pixel_locations.json
+
+scene_00065_00_superpoint_pixel_locations.json
+Miniconda3-latest-Linux-x86_64.sh
