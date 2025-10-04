@@ -11,7 +11,7 @@ import shutil
 import sys
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -54,17 +54,14 @@ def using_gpu(gpu: Optional[Any]):
             os.environ['CUDA_VISIBLE_DEVICES'] = previous
 
 
-LOCAL_TZ = timezone(timedelta(hours=8))
-
-
 def _now_local_iso() -> str:
-    """Return ISO timestamp in UTC+8 with second precision."""
-    return datetime.now(LOCAL_TZ).isoformat(timespec='seconds')
+    """Return ISO timestamp using the system local timezone."""
+    return datetime.now().astimezone().isoformat(timespec='seconds')
 
 
 def _now_local_stamp() -> str:
-    """Return folder-friendly timestamp in UTC+8."""
-    return datetime.now(LOCAL_TZ).strftime('%Y%m%d_%H%M%S')
+    """Return folder-friendly timestamp using local time."""
+    return datetime.now().astimezone().strftime('%Y%m%d_%H%M%S')
 
 
 class StageRecorder:
@@ -413,7 +410,7 @@ def append_run_history(
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             if is_new:
                 writer.writeheader()
-        writer.writerow(entry)
+            writer.writerow(entry)
     except OSError:
         return
 
@@ -475,14 +472,16 @@ def apply_scene_level_layout(
         video_rel: Optional[str] = None
 
         if track_dir.exists():
-            object_src = next(sorted(track_dir.glob('object_segments*.npz')), None)
+            object_candidates = sorted(track_dir.glob('object_segments*.npz'))
+            object_src = object_candidates[0] if object_candidates else None
             if object_src:
                 object_dst = level_dir / f'object_segments_{level_label}.npz'
                 moved = _move_file(object_src, object_dst)
                 if moved:
                     object_rel = str(moved.relative_to(run_dir))
 
-            video_src = next(sorted(track_dir.glob('video_segments*.npz')), None)
+            video_candidates = sorted(track_dir.glob('video_segments*.npz'))
+            video_src = video_candidates[0] if video_candidates else None
             if video_src:
                 video_dst = level_dir / f'video_segments_{level_label}.npz'
                 moved = _move_file(video_src, video_dst)

@@ -1,19 +1,28 @@
 experiment:
-  name: multiscan_all
+  name: multiscan_all_1004_test_on_mercury
   dataset_root: /media/public_dataset2/multiscan
-  scenes: all
-  scene_start: null  # replace with first scene name (inclusive) to limit the run
-  scene_end: null    # replace with last scene name (inclusive) to limit the run
+  scenes: null
+  # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
+  # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
+  # scene_start: scene_00048_00  # replace with first scene name (inclusive) to limit the run
+  # scene_end: scene_00077_01    # replace with last scene name (inclusive) to limit the run
+  scene_start: scene_00086_00  # replace with first scene name (inclusive) to limit the run
+  scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
+
+  # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
+  # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
+  # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
+  # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
   levels:
     - 2
     - 4
     - 6
-  tag: fill_prop30
-  aggregate_output: true
+  tag: 246_filt_fill_prop30
+  aggregate_output: false
   output_layout: scene_level
   output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
 stages:
-  gpu: 0
+  gpu: 2
   ssam:
     enabled: true
     frames:
@@ -33,7 +42,8 @@ stages:
     prompt_mode: all_mask
     max_propagate: 30
     iou_threshold: 0.6
-    downscale_masks: false
+    downscale_masks: True
+    downscale_ratio: 0.3
     render_viz: false
   report:
     enabled: true

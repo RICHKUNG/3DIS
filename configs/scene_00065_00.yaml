@@ -2,16 +2,16 @@ experiment:
   name: multiscan_batch
   dataset_root: /media/public_dataset2/multiscan
   scenes:
-  - scene_00005_01
+  # - scene_00005_01
   # - scene_00030_00
-  # - scene_00065_00
+  - scene_00065_00
   # - scene_00075_01
   output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
   levels:
   - 2
   - 4
   - 6
-  tag: fill_prop35
+  tag: fill_prop10
 stages:
   gpu: 1
   ssam:
@@ -34,7 +34,7 @@ stages:
   tracker:
     enabled: true
     prompt_mode: all_mask
-    max_propagate: 35
+    max_propagate: 10
     iou_threshold: 0.6
     downscale_masks: true
     downscale_ratio: 0.3

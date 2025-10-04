@@ -752,9 +752,21 @@ def save_comparison_proposals(
     if frames_to_save is not None:
         frames_to_render = [f for f in frames_to_save if f in set(frame_numbers)]
 
-    # 只輸出每 10 個 SSAM 幀的比較圖，避免產生過多檔案
+    # 僅輸出起始、中間、結尾三幀，提供快速檢視
     if frames_to_render:
-        frames_to_render = [f for idx, f in enumerate(frames_to_render) if idx % 10 == 0]
+        total = len(frames_to_render)
+        candidate_indices = [0, total // 2, total - 1]
+        seen = set()
+        ordered_frames = []
+        for idx in candidate_indices:
+            if idx < 0 or idx >= total:
+                continue
+            frame_id = frames_to_render[idx]
+            if frame_id in seen:
+                continue
+            ordered_frames.append(frame_id)
+            seen.add(frame_id)
+        frames_to_render = ordered_frames
 
     rng = np.random.default_rng(0)
     sam_color_map: Dict[int, Tuple[int, int, int]] = {}
