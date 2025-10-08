@@ -28,7 +28,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
     watch_parser = subparsers.add_parser("watch", help="Watch memory.events for OOM changes")
     watch_parser.add_argument("--paths", nargs="*", type=Path, default=None)
-    watch_parser.add_argument("--poll", type=float, default=5.0, help="Polling interval in seconds")
+    watch_parser.add_argument("--poll", type=float, default=2.0, help="Polling interval in seconds")
     watch_parser.add_argument("--log", type=Path, default=Path("logs/oom_monitor.log"))
 
     return parser.parse_args(argv)

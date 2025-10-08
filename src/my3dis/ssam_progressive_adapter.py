@@ -12,7 +12,7 @@ import logging
 import os
 import sys
 import tempfile
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
@@ -120,11 +120,14 @@ def generate_with_progressive(
     persist_outputs: bool = False,
     enable_gap_fill: bool = True,
     mask_scale_ratio: float = 1.0,
-) -> Dict[int, List[List[Dict[str, Any]]]]:
-    """Generate per-level candidates using progressive_refinement.
+) -> Iterable[Tuple[int, str, Dict[int, List[Dict[str, Any]]]]]:
+    """Yield per-level candidates per frame using progressive_refinement.
 
-    Returns: dict level -> list over frames -> list of candidates dicts
-    Each candidate: {'frame_idx', 'frame_name', 'bbox'(XYWH), 'area', 'stability_score'(1.0), 'level', 'segmentation'}
+    Yields:
+        Tuple[int, str, Dict[int, List[Dict[str, Any]]]]: (frame_index, frame_name, {level: [candidate_dicts]})
+
+    Each candidate dict contains: {'frame_idx', 'frame_name', 'bbox'(XYWH), 'area', 'stability_score'(1.0),
+    'level', 'segmentation', 'mask_scale_ratio'}.
     """
     # Workdir for Semantic-SAM so relative configs resolve
     try:
@@ -149,8 +152,6 @@ def generate_with_progressive(
     # When persist_outputs is False we rely on temporary directories so no artifacts remain on disk.
     if save_root is not None and persist_outputs:
         save_root = ensure_dir(save_root)
-
-    per_level: Dict[int, List[List[Dict[str, Any]]]] = {L: [] for L in levels}
 
     verbose = os.environ.get("MY3DIS_VERBOSE_PROGRESSIVE") == "1"
 
@@ -222,6 +223,7 @@ def generate_with_progressive(
                     base_level,
                 )
 
+        frame_payload: Dict[int, List[Dict[str, Any]]] = {}
         for L in levels:
             masks = list(results['levels'].get(L, {}).get('masks', []))
             if L == base_level and additional_gap_masks:
@@ -264,6 +266,6 @@ def generate_with_progressive(
                         full_resolution_shape=orig_shape,
                     ),
                 })
-            per_level[L].append(frame_cands)
+            frame_payload[L] = frame_cands
 
-    return per_level
+        yield f_idx, fname, frame_payload

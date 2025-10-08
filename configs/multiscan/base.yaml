@@ -4,14 +4,16 @@ experiment:
   scenes: null
   # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
   # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
+  scene_start: scene_00048_00  # replace with first scene name (inclusive) to limit the run
+  scene_end: scene_00077_01    # replace with last scene name (inclusive) to limit the run
+  # scene_start: scene_00086_00  # replace with first scene name (inclusive) to limit the run
+  # scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
+
+  # scene_start: scene_00006_01  # replace with first scene name (inclusive) to limit the run
+  # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
   # scene_start: scene_00048_00  # replace with first scene name (inclusive) to limit the run
   # scene_end: scene_00077_01    # replace with last scene name (inclusive) to limit the run
-  scene_start: scene_00086_00  # replace with first scene name (inclusive) to limit the run
-  scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
-
-  # scene_start: scene_00006_00  # replace with first scene name (inclusive) to limit the run
-  # # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
-  # # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
+  # scene_start: scene_00086_01  # replace with first scene name (inclusive) to limit the run
   # scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
   levels:
     - 2
@@ -22,7 +24,7 @@ experiment:
   output_layout: scene_level
   output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
 stages:
-  gpu: 1
+  gpu: 0
   ssam:
     enabled: true
     frames:

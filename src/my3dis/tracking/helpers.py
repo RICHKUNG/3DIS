@@ -77,7 +77,11 @@ def resize_mask_to_shape(mask: np.ndarray, target_shape: Tuple[int, int]) -> np.
     """Resize boolean mask to target (H, W) using nearest neighbour."""
     if mask is None:
         return None
-    arr = np.asarray(mask, dtype=np.bool_)
+    if is_packed_mask(mask):
+        arr = unpack_binary_mask(mask)
+    else:
+        arr = np.asarray(mask)
+    arr = np.asarray(arr, dtype=np.bool_)
     if arr.ndim > 2:
         arr = np.squeeze(arr)
     target_h, target_w = target_shape

@@ -37,7 +37,7 @@ DEFAULT_SEMANTIC_SAM_ROOT = os.environ.get(
 )
 
 if DEFAULT_SEMANTIC_SAM_ROOT and DEFAULT_SEMANTIC_SAM_ROOT not in sys.path:
-    sys.path.append(DEFAULT_SEMANTIC_SAM_ROOT)
+    sys.path.insert(0, DEFAULT_SEMANTIC_SAM_ROOT)
 
 from semantic_sam import (
     prepare_image,

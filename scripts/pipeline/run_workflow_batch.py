@@ -95,7 +95,7 @@ def main() -> int:
     parser.add_argument(
         '--oom-watch-poll',
         type=float,
-        default=5.0,
+        default=2.0,
         help='Polling interval in seconds for the background OOM watcher',
     )
     parser.add_argument(

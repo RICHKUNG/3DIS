@@ -2,14 +2,30 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
+import logging
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from .errors import WorkflowConfigError
+from .errors import WorkflowConfigError, WorkflowRuntimeError
 from .scene_workflow import run_scene_workflow
 from .scenes import expand_output_path_template, normalize_scene_list
 from .utils import now_local_iso, now_local_stamp
+
+LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _SceneJob:
+    index: int
+    scene: str
+    kwargs: Dict[str, Any]
+
+
+def _run_scene_job(job: _SceneJob) -> Dict[str, Any]:
+    return run_scene_workflow(**job.kwargs)
 
 
 def execute_workflow(
@@ -72,9 +88,18 @@ def execute_workflow(
             'scene_end': scene_end_cfg,
         }
 
-        summaries: List[Dict[str, Any]] = []
-        experiment_scene_records: List[Dict[str, Any]] = []
+        parallel_cfg = experiment_cfg.get('parallel_scenes')
+        try:
+            parallel_scenes = int(parallel_cfg) if parallel_cfg is not None else 1
+        except (TypeError, ValueError):
+            LOGGER.warning(
+                "Invalid experiment.parallel_scenes=%r, falling back to sequential execution",
+                parallel_cfg,
+            )
+            parallel_scenes = 1
+        parallel_scenes = max(1, parallel_scenes)
 
+        jobs: List[_SceneJob] = []
         for index, scene_name in enumerate(scenes_list):
             if dataset_root is None:
                 raise WorkflowConfigError('dataset_root must be provided when scenes are enumerated')
@@ -99,17 +124,60 @@ def execute_workflow(
             parent_meta_scene['index'] = index
             parent_meta_scene['scene'] = scene_name
 
-            summary = run_scene_workflow(
-                config=config,
-                experiment_cfg=scene_experiment_cfg,
-                stages_cfg=stages_cfg,
-                default_stage_gpu=default_stage_gpu,
-                data_path=str(scene_data_path),
-                output_root=str(scene_output_root),
-                config_path=config_path,
-                parent_meta=parent_meta_scene,
+            job_kwargs = {
+                'config': config,
+                'experiment_cfg': scene_experiment_cfg,
+                'stages_cfg': stages_cfg,
+                'default_stage_gpu': default_stage_gpu,
+                'data_path': str(scene_data_path),
+                'output_root': str(scene_output_root),
+                'config_path': config_path,
+                'parent_meta': parent_meta_scene,
+            }
+            jobs.append(_SceneJob(index=index, scene=scene_name, kwargs=job_kwargs))
+
+        summaries_ordered: List[Optional[Dict[str, Any]]] = [None] * len(jobs)
+        scene_errors: List[Tuple[_SceneJob, BaseException]] = []
+
+        if parallel_scenes > 1 and len(jobs) > 1:
+            LOGGER.info(
+                "Executing %d scenes with up to %d parallel workers",
+                len(jobs),
+                parallel_scenes,
             )
-            summaries.append(summary)
+            with concurrent.futures.ProcessPoolExecutor(max_workers=parallel_scenes) as executor:
+                future_map = {executor.submit(_run_scene_job, job): job for job in jobs}
+                for future in concurrent.futures.as_completed(future_map):
+                    job = future_map[future]
+                    try:
+                        summary = future.result()
+                    except BaseException as exc:  # pragma: no cover - propagate detailed logs
+                        LOGGER.error("Scene %s failed during execution", job.scene, exc_info=True)
+                        scene_errors.append((job, exc))
+                    else:
+                        summaries_ordered[job.index] = summary
+        else:
+            for job in jobs:
+                try:
+                    summaries_ordered[job.index] = _run_scene_job(job)
+                except BaseException as exc:
+                    LOGGER.error("Scene %s failed during execution", job.scene, exc_info=True)
+                    raise
+
+        if scene_errors:
+            failed_names = ', '.join(job.scene for job, _ in scene_errors)
+            primary_exc = scene_errors[0][1]
+            raise WorkflowRuntimeError(
+                f'One or more scene workflows failed: {failed_names}'
+            ) from primary_exc
+
+        summaries: List[Dict[str, Any]] = [summary for summary in summaries_ordered if summary is not None]
+        experiment_scene_records: List[Dict[str, Any]] = []
+
+        for job in jobs:
+            summary = summaries_ordered[job.index]
+            if summary is None:
+                continue
 
             summary_json_path = summary.get('summary_json')
             summary_json_rel = None
@@ -128,7 +196,7 @@ def execute_workflow(
                     run_dir_rel = run_dir_path
 
             scene_record = {
-                'scene': scene_name,
+                'scene': job.scene,
                 'run_dir': run_dir_rel,
                 'summary_json': summary_json_rel,
                 'levels': summary.get('scene_level_summary', {}).get('levels')
@@ -152,8 +220,13 @@ def execute_workflow(
             try:
                 with experiment_summary_path.open('w') as handle:
                     json.dump(experiment_summary, handle, indent=2)
-            except OSError:
-                pass
+            except OSError as exc:
+                LOGGER.warning(
+                    "Failed to write experiment summary to %s: %s",
+                    experiment_summary_path,
+                    exc,
+                    exc_info=True,
+                )
 
         return summaries
 

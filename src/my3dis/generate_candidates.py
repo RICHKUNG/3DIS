@@ -40,6 +40,7 @@ from my3dis.common_utils import (
     encode_mask,
     format_duration,
     is_packed_mask,
+    downscale_binary_mask,
     numeric_frame_sort_key,
     pack_binary_mask,
     parse_levels,
@@ -96,6 +97,58 @@ def _mask_to_bool(entry: Any) -> Optional[np.ndarray]:
     if isinstance(entry, np.ndarray):
         return np.asarray(entry, dtype=np.bool_)
     return unpack_binary_mask(entry)
+
+
+def _coerce_union_shape(
+    mask: np.ndarray,
+    target_shape: Tuple[int, int],
+) -> Optional[np.ndarray]:
+    """Attempt to coerce a mask to ``target_shape`` for boolean union."""
+
+    arr = np.asarray(mask, dtype=np.bool_)
+    if arr.shape == target_shape:
+        return arr
+
+    if arr.ndim != 2:
+        return None
+
+    target_h, target_w = target_shape
+    src_h, src_w = arr.shape
+
+    if min(target_h, target_w, src_h, src_w) <= 0:
+        return None
+
+    ratio_h = target_h / src_h
+    ratio_w = target_w / src_w
+
+    # Only downscale when ratios are approximately equal and < 1
+    if (
+        ratio_h > 0.0
+        and ratio_w > 0.0
+        and ratio_h <= 1.0 + 1e-6
+        and ratio_w <= 1.0 + 1e-6
+        and abs(ratio_h - ratio_w) <= 0.02
+    ):
+        ratio = min(1.0, max(ratio_h, ratio_w))
+        try:
+            resized = downscale_binary_mask(arr, ratio)
+        except ValueError:
+            return None
+
+        if resized.shape != target_shape:
+            resized_h, resized_w = resized.shape
+            trimmed = resized[:target_h, :target_w]
+            if trimmed.shape == target_shape:
+                return np.asarray(trimmed, dtype=np.bool_)
+            padded = np.zeros(target_shape, dtype=bool)
+            padded[: min(resized_h, target_h), : min(resized_w, target_w)] = resized[
+                : min(resized_h, target_h), : min(resized_w, target_w)
+            ]
+            return padded
+
+        return np.asarray(resized, dtype=np.bool_)
+
+    return None
 
 
 def persist_raw_frame(
@@ -449,8 +502,8 @@ def run_generation(
     manifest_path = os.path.join(run_root, 'manifest.json')
     LOGGER.info("Selected %d SSAM frames cached at %s", len(ssam_frames), subset_dir)
 
-    # 只對選定的幀進行 Semantic-SAM 分割
-    per_level = generate_with_progressive(
+    # 只對選定的幀進行 Semantic-SAM 分割，逐幀處理以避免一次佔用全部記憶體
+    progressive_iter = generate_with_progressive(
         frames_dir=frames_dir,
         selected_frames=ssam_frames,
         sam_ckpt_path=sam_ckpt,
@@ -461,34 +514,40 @@ def run_generation(
         mask_scale_ratio=mask_scale_ratio,
     )
 
-    level_stats: List[Dict[str, Any]] = []
+    level_infos: List[Dict[str, Any]] = []
     for level_idx, level in enumerate(level_list):
         level_root = ensure_dir(os.path.join(run_root, f'level_{level}'))
         cand_dir = ensure_dir(os.path.join(level_root, 'candidates'))
         filt_dir = ensure_dir(os.path.join(level_root, 'filtered'))
         ensure_dir(os.path.join(level_root, 'viz'))
+        info: Dict[str, Any] = {
+            'level': level,
+            'index': level_idx,
+            'level_root': level_root,
+            'cand_dir': cand_dir,
+            'filt_dir': filt_dir,
+            'raw_items': [],
+            'filtered_frames': [] if not skip_filtering else None,
+            'raw_total': 0,
+            'filtered_total': 0,
+            'frame_count': 0,
+        }
+        level_infos.append(info)
 
-        # 只讓第一個 level 執行 gap 填補（add_gaps=True 時）
-        level_add_gaps = bool(add_gaps) and level_idx == 0
+    for rel_idx, fname, level_payload in progressive_iter:
+        ssam_frame_idx = int(ssam_absolute_indices[rel_idx])
+        frame_name = ssam_frames[rel_idx]
 
-        raw_items: List[Dict[str, Any]] = []
-        filtered_json: List[Dict[str, Any]] = [] if not skip_filtering else []
-        per_frame_list = per_level[level]
+        for info in level_infos:
+            level = info['level']
+            level_add_gaps = bool(add_gaps) and info['index'] == 0
+            candidates_src = level_payload.get(level, [])
+            if candidates_src is None:
+                candidates = []
+            else:
+                candidates = list(candidates_src)
 
-        raw_candidate_total = 0
-        filtered_total = 0
-
-        for f_idx, lst in enumerate(per_frame_list):
-            if lst is None:
-                per_frame_list[f_idx] = None
-                continue
-
-            candidates = list(lst)
-            if isinstance(lst, list):
-                lst.clear()
-
-            ssam_frame_idx = int(ssam_absolute_indices[f_idx])
-            frame_name = ssam_frames[f_idx]
+            info['frame_count'] += 1
 
             if level_add_gaps and candidates:
                 first_seg_entry = candidates[0].get('segmentation')
@@ -508,6 +567,17 @@ def run_generation(
                         seg_arr = _mask_to_bool(m.get('segmentation'))
                         if seg_arr is None:
                             continue
+                        if seg_arr.shape != union.shape:
+                            coerced = _coerce_union_shape(seg_arr, union.shape)
+                            if coerced is None:
+                                LOGGER.warning(
+                                    "Gap-fill union skipped mask for frame %s due to shape %s (expected %s)",
+                                    frame_name,
+                                    tuple(seg_arr.shape),
+                                    union.shape,
+                                )
+                                continue
+                            seg_arr = coerced
                         union |= seg_arr
                     gap = ~union
                     gap_area = int(gap.sum())
@@ -555,18 +625,18 @@ def run_generation(
                 m['frame_idx'] = ssam_frame_idx
                 m.setdefault('frame_name', frame_name)
 
-            raw_candidate_total += len(candidates)
+            info['raw_total'] += len(candidates)
 
             if persist_raw:
                 persist_raw_frame(
-                    level_root=level_root,
+                    level_root=info['level_root'],
                     frame_idx=ssam_frame_idx,
                     frame_name=frame_name,
                     candidates=candidates,
                 )
 
             for m in candidates:
-                raw_items.append({
+                info['raw_items'].append({
                     k: (v.tolist() if hasattr(v, 'tolist') else v)
                     for k, v in m.items()
                     if k != 'segmentation'
@@ -574,7 +644,6 @@ def run_generation(
 
             if skip_filtering:
                 candidates.clear()
-                per_frame_list[f_idx] = None
                 continue
 
             meta_list: List[Dict[str, Any]] = []
@@ -595,32 +664,43 @@ def run_generation(
                 meta_list.append(meta)
                 filtered_local_index += 1
 
-            filtered_json.append(
-                {
-                    'frame_idx': ssam_frame_idx,
-                    'frame_name': frame_name,
-                    'count': len(meta_list),
-                    'items': meta_list,
-                }
-            )
-            filtered_total += len(meta_list)
+            info['filtered_total'] += len(meta_list)
+            if info['filtered_frames'] is not None:
+                info['filtered_frames'].append(
+                    {
+                        'frame_idx': ssam_frame_idx,
+                        'frame_name': frame_name,
+                        'count': len(meta_list),
+                        'items': meta_list,
+                    }
+                )
 
             candidates.clear()
-            per_frame_list[f_idx] = None
+
+        for cand_list in level_payload.values():
+            if isinstance(cand_list, list):
+                cand_list.clear()
+        level_payload.clear()
+
+    level_stats: List[Dict[str, Any]] = []
+    for info in level_infos:
+        level = info['level']
+        cand_dir = info['cand_dir']
+        filt_dir = info['filt_dir']
 
         with open(os.path.join(cand_dir, 'candidates.json'), 'w') as f:
-            json.dump({'items': raw_items}, f, indent=2)
+            json.dump({'items': info['raw_items']}, f, indent=2)
 
-        if not skip_filtering:
+        if not skip_filtering and info['filtered_frames'] is not None:
             with open(os.path.join(filt_dir, 'filtered.json'), 'w') as f:
-                json.dump({'frames': filtered_json}, f, indent=2)
+                json.dump({'frames': info['filtered_frames']}, f, indent=2)
 
         level_stats.append(
             {
                 'level': level,
-                'frame_count': len(per_frame_list),
-                'raw_candidates': raw_candidate_total,
-                'filtered_masks': filtered_total,
+                'frame_count': info['frame_count'],
+                'raw_candidates': info['raw_total'],
+                'filtered_masks': info['filtered_total'],
                 'filtering_applied': not skip_filtering,
             }
         )

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional
 
 MEMORY_EVENTS_FILENAME = "memory.events"
+MEMORY_OOM_CONTROL_FILENAME = "memory.oom_control"
 OOM_FIELDS = {"oom", "oom_kill"}
 
 
@@ -63,18 +64,29 @@ class MemoryEventsReader:
 
 def detect_user_memory_event_files(user_id: Optional[int] = None) -> List[Path]:
     uid = user_id if user_id is not None else _safe_getuid()
-    base = Path("/sys/fs/cgroup")
+
+    base_candidates = [
+        Path("/sys/fs/cgroup"),
+        Path("/sys/fs/cgroup/unified"),
+        Path("/sys/fs/cgroup/systemd"),
+        Path("/sys/fs/cgroup/memory"),
+    ]
+
     candidates: List[Path] = []
-    user_slice = base / "user.slice" / f"user-{uid}.slice"
-    if user_slice.is_dir():
-        candidates.extend(_iter_memory_event_files(user_slice))
-    legacy_path = base / f"user.slice/user-{uid}.slice"
-    if legacy_path.is_dir() and legacy_path != user_slice:
-        candidates.extend(_iter_memory_event_files(legacy_path))
-    # systemd-run --user --scope places scopes in user.slice
-    scopes_glob = base.glob(f"user.slice/user-{uid}.slice/*.scope")
-    for scope in scopes_glob:
-        candidates.extend(_iter_memory_event_files(scope))
+    for base in base_candidates:
+        user_root = base / "user.slice" / f"user-{uid}.slice"
+        if user_root.is_dir():
+            candidates.extend(_iter_memory_event_files(user_root))
+
+        legacy_root = base / f"user.slice/user-{uid}.slice"
+        if legacy_root.is_dir() and legacy_root != user_root:
+            candidates.extend(_iter_memory_event_files(legacy_root))
+
+        scope_parent = base / "user.slice" / f"user-{uid}.slice"
+        if scope_parent.is_dir():
+            for scope in scope_parent.glob("*.scope"):
+                candidates.extend(_iter_memory_event_files(scope))
+
     seen = set()
     unique: List[Path] = []
     for path in sorted(candidates):
@@ -85,8 +97,11 @@ def detect_user_memory_event_files(user_id: Optional[int] = None) -> List[Path]:
     return unique
 
 
+TARGET_EVENT_FILENAMES = {MEMORY_EVENTS_FILENAME, MEMORY_OOM_CONTROL_FILENAME}
+
+
 def _iter_memory_event_files(root: Path) -> Iterator[Path]:
-    if root.is_file() and root.name == MEMORY_EVENTS_FILENAME:
+    if root.is_file() and root.name in TARGET_EVENT_FILENAMES:
         yield root
         return
     if not root.is_dir():
@@ -94,7 +109,7 @@ def _iter_memory_event_files(root: Path) -> Iterator[Path]:
     for child in root.iterdir():
         if child.is_dir():
             yield from _iter_memory_event_files(child)
-        elif child.name == MEMORY_EVENTS_FILENAME:
+        elif child.name in TARGET_EVENT_FILENAMES:
             yield child
 
 

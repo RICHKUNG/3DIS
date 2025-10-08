@@ -14,7 +14,7 @@ from .memory_events import MemoryEventsReader, OOMEvent, detect_user_memory_even
 def watch_memory_events(
     paths: Iterable[Path] | None,
     *,
-    poll_interval: float = 5.0,
+    poll_interval: float = 2.0,
     log_path: Path = Path("logs/oom_monitor.log"),
     stop_event: Optional[threading.Event] = None,
     announce: bool = True,
@@ -76,7 +76,7 @@ def _emit_console(event: OOMEvent) -> None:
 def memory_watch_context(
     paths: Iterable[Path] | None = None,
     *,
-    poll_interval: float = 5.0,
+    poll_interval: float = 2.0,
     log_path: Path = Path("logs/oom_monitor.log"),
 ):
     resolved_paths = list(paths) if paths else detect_user_memory_event_files()

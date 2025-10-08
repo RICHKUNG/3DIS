@@ -52,15 +52,13 @@ from my3dis.tracking import (
     TimingAggregator,
     bbox_scalar_fit,
     bbox_transform_xywh_to_xyxy,
-    compute_iou,
-    determine_mask_shape,
     format_duration_precise,
     infer_relative_scale,
-    reorganize_segments_by_object as _reorganize_segments_by_object,
+    reorganize_segments_by_object,
     resize_mask_to_shape,
-    save_comparison_proposals as _save_comparison_proposals,
-    save_object_segments_npz as _save_object_segments_npz,
-    save_video_segments_npz as _save_video_segments_npz,
+    save_comparison_proposals,
+    save_object_segments_npz,
+    save_video_segments_npz,
 )
 
 LOGGER = logging.getLogger("my3dis.track_from_candidates")
@@ -328,56 +326,6 @@ def _propagate_frame_predictions(
     return segs
 
 
-def save_video_segments_npz(
-    segments: Dict[int, Dict[int, Any]],
-    path: str,
-    *,
-    mask_scale_ratio: float = 1.0,
-) -> str:
-    return _save_video_segments_npz(
-        segments=segments,
-        path=path,
-        mask_scale_ratio=mask_scale_ratio,
-    )
-
-
-def reorganize_segments_by_object(segments: Dict[int, Dict[int, Any]]) -> Dict[int, Dict[int, Any]]:
-    return _reorganize_segments_by_object(segments)
-
-
-def save_object_segments_npz(
-    segments: Dict[int, Dict[int, Any]],
-    path: str,
-    *,
-    mask_scale_ratio: float = 1.0,
-) -> str:
-    return _save_object_segments_npz(
-        segments=segments,
-        path=path,
-        mask_scale_ratio=mask_scale_ratio,
-    )
-
-
-def save_comparison_proposals(
-    viz_dir: str,
-    base_frames_dir: str,
-    filtered_per_frame: List[List[Dict[str, Any]]],
-    video_segments: Dict[int, Dict[int, Any]],
-    level: int,
-    frame_numbers: Optional[List[int]] = None,
-    frames_to_save: Optional[List[int]] = None,
-) -> None:
-    _save_comparison_proposals(
-        viz_dir=viz_dir,
-        base_frames_dir=base_frames_dir,
-        filtered_per_frame=filtered_per_frame,
-        video_segments=video_segments,
-        level=level,
-        frame_numbers=frame_numbers,
-        frames_to_save=frames_to_save,
-    )
-
-
 DEFAULT_SAM2_ROOT = _SAM2_ROOT_STR
 DEFAULT_SAM2_CFG = str(_DEFAULT_SAM2_CFG_PATH)
 DEFAULT_SAM2_CKPT = str(_DEFAULT_SAM2_CKPT_PATH)
@@ -401,17 +349,22 @@ def load_filtered_candidates(
     level_root: str,
     *,
     mask_scale_ratio: float = 1.0,
-) -> Tuple[List[List[Dict[str, Any]]], List[int]]:
-    """加載篩選後的候選項，返回候選項列表和對應的幀索引"""
+) -> Tuple[List[List[Dict[str, Any]]], List[int], List[str]]:
+    """加載篩選後的候選項，返回候選項列表、幀索引與對應檔名"""
     filt_dir = os.path.join(level_root, 'filtered')
     with open(os.path.join(filt_dir, 'filtered.json'), 'r') as f:
         meta = json.load(f)
     frames_meta = meta.get('frames', [])
     per_frame = []
     frame_indices = []
+    frame_names: List[str] = []
     
     for fm in frames_meta:
         fidx = fm['frame_idx']
+        fname = fm.get('frame_name')
+        if fname is None:
+            fname = f"{int(fidx):05d}.png"
+        frame_names.append(str(fname))
         items = fm['items']
         seg_path = os.path.join(filt_dir, f'seg_frame_{fidx:05d}.npy')
         seg_stack = None
@@ -449,7 +402,7 @@ def load_filtered_candidates(
         per_frame.append(lst)
         frame_indices.append(fidx)
     
-    return per_frame, frame_indices
+    return per_frame, frame_indices, frame_names
 
 
 def sam2_tracking(
@@ -505,6 +458,16 @@ def sam2_tracking(
                     max_propagate,
                 )
                 max_propagate = None
+
+        if small_object_area_threshold is not None:
+            try:
+                small_object_area_threshold = int(small_object_area_threshold)
+            except (TypeError, ValueError):
+                LOGGER.warning(
+                    "Invalid small_object_area_threshold=%r; disabling long-tail box mode",
+                    small_object_area_threshold,
+                )
+                small_object_area_threshold = None
 
         obj_count = 1
         try:
@@ -720,9 +683,15 @@ def run_tracking(
         track_dir = ensure_dir(os.path.join(out_root, f'level_{level}', 'tracking'))
         
         # 加載候選項和對應的幀索引
-        per_frame, frame_indices = load_filtered_candidates(
+        per_frame, frame_indices, frame_names = load_filtered_candidates(
             level_root, mask_scale_ratio=mask_scale_ratio
         )
+        frame_name_lookup = {
+            int(idx): name for idx, name in zip(frame_indices, frame_names)
+        }
+        if frame_index_to_name:
+            for idx, name in frame_index_to_name.items():
+                frame_name_lookup.setdefault(int(idx), str(name))
         
         LOGGER.info(f"Level {level}: Processing {len(per_frame)} frames with SAM2 tracking...")
         level_timer = TimingAggregator()
@@ -780,6 +749,9 @@ def run_tracking(
                     video_segments=segs,
                     level=level,
                     frame_numbers=frame_indices,  # 使用實際的幀索引
+                    frame_name_lookup=frame_name_lookup,
+                    subset_dir=subset_dir,
+                    subset_map=subset_map,
                     frames_to_save=None,
                 )
 

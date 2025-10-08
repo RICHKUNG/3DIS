@@ -4,6 +4,20 @@
 
 set -euo pipefail
 
+SCRIPT_PID=$$
+
+timestamp_now() {
+  date '+%Y-%m-%d %H:%M:%S%z'
+}
+
+log_info() {
+  printf '[%s][pid=%d] %s\n' "$(timestamp_now)" "$SCRIPT_PID" "$*"
+}
+
+log_error() {
+  printf '[%s][pid=%d] %s\n' "$(timestamp_now)" "$SCRIPT_PID" "$*" >&2
+}
+
 DEFAULT_SEMANTIC_SAM_CKPT="/media/Pluto/richkung/Semantic-SAM/checkpoints/swinl_only_sam_many2many.pth"
 DEFAULT_SAM2_CFG="/media/Pluto/richkung/SAM2/sam2/configs/sam2.1/sam2.1_hiera_l.yaml"
 DEFAULT_SAM2_CKPT="/media/Pluto/richkung/SAM2/checkpoints/sam2.1_hiera_large.pt"
@@ -65,6 +79,43 @@ Examples:
 USAGE
 }
 
+record_pid_log_mapping() {
+  local stdout_target resolved_target descriptor
+  stdout_target=$(readlink "/proc/${SCRIPT_PID}/fd/1" 2>/dev/null || true)
+  if [[ -n "$stdout_target" ]]; then
+    if [[ "$stdout_target" == pipe:* ]]; then
+      descriptor="$stdout_target"
+    else
+      resolved_target=$(readlink -f "/proc/${SCRIPT_PID}/fd/1" 2>/dev/null || true)
+      if [[ -n "$resolved_target" ]]; then
+        descriptor="$resolved_target"
+      else
+        descriptor="$stdout_target"
+      fi
+    fi
+  fi
+  if [[ -z "$descriptor" ]]; then
+    descriptor="unknown"
+  fi
+
+  local map_dir map_file ts
+  map_dir="$SCRIPT_DIR/logs"
+  map_file="$map_dir/run_pid_map.tsv"
+  mkdir -p "$map_dir"
+
+  ts=$(timestamp_now)
+  local cmdline
+  if [[ ${#ORIGINAL_ARGS[@]:-0} -gt 0 ]]; then
+    printf -v cmdline '%q ' "$0" "${ORIGINAL_ARGS[@]}"
+    cmdline=${cmdline%% }
+  else
+    printf -v cmdline '%q' "$0"
+  fi
+
+  printf '%s\t%d\t%s\t%s\n' "$ts" "$SCRIPT_PID" "$descriptor" "$cmdline" >> "$map_file"
+  log_info "PID map recorded at $map_file (stdout → $descriptor)"
+}
+
 DATA_PATH="$DEFAULT_DATA_PATH"
 OUTPUT_ROOT="$DEFAULT_OUTPUT_ROOT"
 SAM_CKPT="$DEFAULT_SEMANTIC_SAM_CKPT"
@@ -86,6 +137,8 @@ NO_TIMESTAMP=0
 DRY_RUN=0
 PRE_MANIFEST_FILE=""
 
+ORIGINAL_ARGS=("$@")
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --sam-ckpt) SAM_CKPT="$2"; shift 2;;
@@ -106,7 +159,7 @@ while [[ $# -gt 0 ]]; do
     --no-timestamp) NO_TIMESTAMP=1; shift;;
     --dry-run) DRY_RUN=1; shift;;
     -h|--help) usage; exit 0;;
-    *) echo "Unknown option: $1" >&2; usage; exit 1;;
+    *) log_error "Unknown option: $1"; usage; exit 1;;
   esac
 done
 
@@ -115,7 +168,7 @@ GEN_SCRIPT="$SCRIPT_DIR/generate_candidates.py"
 TRACK_SCRIPT="$SCRIPT_DIR/track_from_candidates.py"
 
 if [[ ! -f "$GEN_SCRIPT" || ! -f "$TRACK_SCRIPT" ]]; then
-  echo "Error: expected scripts not found under $SCRIPT_DIR" >&2
+  log_error "Error: expected scripts not found under $SCRIPT_DIR"
   exit 1
 fi
 
@@ -125,6 +178,8 @@ OUTPUT_ROOT_ABS=$($PYTHON_ABS -c 'import os,sys; print(os.path.abspath(sys.argv[
 DATA_PATH_ABS=$($PYTHON_ABS -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$DATA_PATH")
 
 mkdir -p "$OUTPUT_ROOT_ABS"
+
+record_pid_log_mapping
 
 stage1_cmd=(conda run --live-stream -n "$SEM_ENV" python -u "$GEN_SCRIPT" \
   --data-path "$DATA_PATH_ABS" \
@@ -186,32 +241,35 @@ run_stage() {
   shift || true
 
   if [[ $# -eq 0 ]]; then
-    echo "No command payload provided for $label" >&2
+    log_error "No command payload provided for $label"
     return 1
   fi
 
   if [[ $DRY_RUN -eq 1 ]]; then
-    echo "[dry-run] $label"
-    printf '  %q' "$@"
-    printf '\n'
+    log_info "[dry-run] $label"
+    local payload=""
+    if [[ $# -gt 0 ]]; then
+      printf -v payload '  %q' "$@"
+      log_info "$payload"
+    fi
     return 0
   fi
 
-  echo "→ $label"
+  log_info "→ $label"
   local start_ts
   start_ts=$(date +%s)
   if "$@"; then
     local end_ts friendly
     end_ts=$(date +%s)
     friendly=$(format_duration $((end_ts - start_ts)))
-    echo "  completed in $friendly"
+    log_info "  completed in $friendly"
     STAGE_SUMMARY+=("$label: $friendly")
   else
     local status=$?
     local end_ts friendly
     end_ts=$(date +%s)
     friendly=$(format_duration $((end_ts - start_ts)))
-    echo "  failed after $friendly" >&2
+    log_error "  failed after $friendly"
     return "$status"
   fi
 }
@@ -338,7 +396,7 @@ PY
 )
 
   if [[ -z ${manifest_path:-} ]]; then
-    echo "Could not find manifest.json under $OUTPUT_ROOT_ABS after Stage 1" >&2
+    log_error "Could not find manifest.json under $OUTPUT_ROOT_ABS after Stage 1"
     exit 1
   fi
 
@@ -362,26 +420,27 @@ PY
   RUN_DIR=${run_dir_from_manifest:-}
 
   if [[ -z ${RUN_DIR:-} || ! -d "$RUN_DIR" ]]; then
-    echo "manifest.json at $manifest_path does not specify a valid output_root" >&2
+    log_error "manifest.json at $manifest_path does not specify a valid output_root"
     exit 1
   fi
 fi
 
-echo "Outputs located at: $RUN_DIR"
+log_info "Outputs located at: $RUN_DIR"
 
 stage2_cmd=(${stage2_cmd_base[@]} --candidates-root "$RUN_DIR" --output "$RUN_DIR")
 
-echo
+log_info ""
 run_stage "Stage 2: SAM2 tracking" "${stage2_cmd[@]}"
 
 if [[ $DRY_RUN -ne 1 ]]; then
-  echo
-  echo "Timing summary:"
+  log_info ""
+  log_info "Timing summary:"
   for item in "${STAGE_SUMMARY[@]}"; do
-    echo "  - $item"
+    log_info "  - $item"
   done
   total_elapsed=$(format_duration $(( $(date +%s) - SCRIPT_START_TS )))
-  echo "  - Total: $total_elapsed"
+  log_info "  - Total: $total_elapsed"
 fi
 
-echo "\nDone. Final artifacts under: $RUN_DIR"
+log_info ""
+log_info "Done. Final artifacts under: $RUN_DIR"

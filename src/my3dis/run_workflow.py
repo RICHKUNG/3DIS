@@ -14,7 +14,11 @@ if __package__ is None or __package__ == '':
         _sys.path.insert(0, str(_project_root))
 
 import argparse
+import csv
 import json
+import logging
+import os
+import shlex
 import sys
 import time
 import traceback
@@ -51,6 +55,7 @@ from my3dis.workflow import (
     update_summary_config,
     using_gpu,
 )
+from my3dis.common_utils import setup_logging
 
 # 與舊版介面相容的別名
 _now_local_iso = now_local_iso
@@ -91,8 +96,71 @@ __all__ = [
     'main',
 ]
 
+LOGGER = logging.getLogger("my3dis.run_workflow")
+
+
+def _configure_entry_logging() -> None:
+    """Ensure root logging includes timestamp and pid for entrypoint logs."""
+    level = setup_logging()
+    formatter = logging.Formatter(
+        "%(asctime)s [pid=%(process)d] %(levelname)s %(message)s"
+    )
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers:
+        handler.setFormatter(formatter)
+    LOGGER.setLevel(level)
+
+
+def _stdout_descriptor() -> str:
+    """Return a human-readable description of current stdout target."""
+    fd_path = f"/proc/{os.getpid()}/fd/1"
+    try:
+        target = os.readlink(fd_path)
+    except OSError:
+        return "unknown"
+    if target.startswith(("pipe:", "socket:")):
+        return target
+    try:
+        resolved = os.path.realpath(fd_path)
+    except OSError:
+        resolved = ""
+    return resolved or target
+
+
+def _record_pid_map(config_path: Path) -> None:
+    """Append current run metadata to logs/run_pid_map.csv for troubleshooting."""
+    logs_dir = Path("logs")
+    try:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        LOGGER.warning("Unable to create logs directory %s: %s", logs_dir, exc)
+        return
+
+    map_path = logs_dir / "run_pid_map.csv"
+    try:
+        new_file = not map_path.exists()
+        with map_path.open("a", encoding="utf-8", newline="") as fh:
+            writer = csv.writer(fh)
+            if new_file:
+                writer.writerow(
+                    ["timestamp", "pid", "stdout_target", "command", "config"]
+                )
+            writer.writerow(
+                [
+                    now_local_iso(),
+                    os.getpid(),
+                    _stdout_descriptor(),
+                    shlex.join(sys.argv),
+                    str(config_path),
+                ]
+            )
+    except OSError as exc:
+        LOGGER.warning("Unable to append PID map entry to %s: %s", map_path, exc)
+
 
 def main() -> int:
+    _configure_entry_logging()
+
     parser = argparse.ArgumentParser(description='Run workflow defined by a YAML config')
     parser.add_argument('--config', required=True, help='Path to YAML workflow config')
     parser.add_argument('--override-output', help='Override output root directory')
@@ -109,7 +177,7 @@ def main() -> int:
     parser.add_argument(
         '--oom-watch-poll',
         type=float,
-        default=5.0,
+        default=2.0,
         help='Polling interval in seconds for the background OOM watcher',
     )
     parser.add_argument(
@@ -121,9 +189,18 @@ def main() -> int:
     args = parser.parse_args()
 
     config_path = Path(args.config).expanduser().resolve()
+    _record_pid_map(config_path)
+    LOGGER.info(
+        "Workflow start config=%s stdout=%s pid=%d command=%s",
+        config_path,
+        _stdout_descriptor(),
+        os.getpid(),
+        shlex.join(sys.argv),
+    )
     try:
         config = load_yaml(config_path)
     except WorkflowError as exc:
+        LOGGER.error("Workflow configuration error for %s: %s", config_path, exc)
         print(f'Workflow configuration error: {exc}', file=sys.stderr)
         return 1
 
@@ -195,6 +272,7 @@ def main() -> int:
         )
         _log_completion_event('failure', config_path, message)
         if isinstance(exc, WorkflowError):
+            LOGGER.error("Workflow error: %s", exc)
             print(f'Workflow error: {exc}', file=sys.stderr)
             return 1
         raise

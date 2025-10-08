@@ -71,6 +71,9 @@ def save_comparison_proposals(
     level: int,
     frame_numbers: Optional[List[int]] = None,
     frames_to_save: Optional[List[int]] = None,
+    frame_name_lookup: Optional[Dict[int, str]] = None,
+    subset_dir: Optional[str] = None,
+    subset_map: Optional[Dict[int, str]] = None,
 ) -> None:
     """輸出 SAM2 與 SSAM 的遮罩對照圖。"""
     from PIL import Image, ImageDraw
@@ -79,6 +82,7 @@ def save_comparison_proposals(
 
     if frame_numbers is None:
         frame_numbers = list(range(len(filtered_per_frame)))
+    frame_numbers = [int(fn) for fn in frame_numbers]
     frame_number_to_local = {fn: idx for idx, fn in enumerate(frame_numbers)}
 
     frames_to_render = sorted(frame_numbers)
@@ -102,6 +106,50 @@ def save_comparison_proposals(
 
     rng = np.random.default_rng(0)
     sam_color_map: Dict[int, Tuple[int, int, int]] = {}
+
+    subset_lookup: Dict[int, str] = {}
+    if subset_map:
+        try:
+            subset_lookup = {int(k): str(v) for k, v in subset_map.items()}
+        except Exception:
+            subset_lookup = {}
+
+    def resolve_frame_path(frame_idx: int) -> Optional[str]:
+        """Find the best effort frame path across naming conventions."""
+        candidates: List[str] = []
+        seen: set[str] = set()
+
+        if frame_name_lookup:
+            name = frame_name_lookup.get(frame_idx)
+            if name:
+                name = str(name)
+                candidates.append(os.path.join(base_frames_dir, name))
+                if subset_dir:
+                    candidates.append(os.path.join(subset_dir, name))
+
+        subset_name = subset_lookup.get(frame_idx)
+        if subset_name and subset_dir:
+            candidates.append(os.path.join(subset_dir, subset_name))
+
+        # Backward compatibility fallbacks (zero-padded / plain indices)
+        base_names = [
+            f"{frame_idx:05d}.png",
+            f"{frame_idx}.png",
+            f"{frame_idx:05d}.jpg",
+            f"{frame_idx}.jpg",
+        ]
+        for name in base_names:
+            candidates.append(os.path.join(base_frames_dir, name))
+            if subset_dir:
+                candidates.append(os.path.join(subset_dir, name))
+
+        for path in candidates:
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            if os.path.exists(path):
+                return path
+        return None
 
     def build_instance_map_img(target_size: Tuple[int, int], masks: List[np.ndarray]) -> Image.Image:
         H, W = target_size
@@ -168,21 +216,14 @@ def save_comparison_proposals(
                 if isinstance(first_mask, np.ndarray):
                     H, W = first_mask.shape[:2]
 
-        if H is None or W is None:
-            frame_path = os.path.join(base_frames_dir, f'{f_idx:05d}.png')
-            if os.path.exists(frame_path):
-                with Image.open(frame_path) as frame_img:
-                    H, W = frame_img.size[1], frame_img.size[0]
-
-        if H is None or W is None:
-            continue
-
-        frame_path = os.path.join(base_frames_dir, f'{f_idx:05d}.png')
-        if not os.path.exists(frame_path):
+        frame_path = resolve_frame_path(f_idx)
+        if frame_path is None:
             continue
 
         with Image.open(frame_path) as base_img:
             base_rgb = base_img.convert('RGB')
+        if H is None or W is None:
+            H, W = base_rgb.height, base_rgb.width
 
         sam_masks = [item.get('segmentation') for item in filtered_per_frame[local_idx]]
         sam_instance = build_instance_map_img((H, W), sam_masks)
