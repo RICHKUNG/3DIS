@@ -30,7 +30,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     watch_parser.add_argument("--paths", nargs="*", type=Path, default=None)
     watch_parser.add_argument("--poll", type=float, default=5.0, help="Polling interval in seconds")
     watch_parser.add_argument("--log", type=Path, default=Path("logs/oom_monitor.log"))
-    watch_parser.add_argument("--email", default=None, help="Email address for notifications")
 
     return parser.parse_args(argv)
 
@@ -45,7 +44,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .watcher import watch_memory_events
 
         paths = _resolve_paths(args.paths)
-        watch_memory_events(paths, poll_interval=args.poll, log_path=args.log, email=args.email)
+        watch_memory_events(paths, poll_interval=args.poll, log_path=args.log)
         return 0
     return 1
 

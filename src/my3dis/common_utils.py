@@ -41,11 +41,6 @@ def format_duration(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
-def format_seconds(seconds: float) -> str:
-    """Render duration using hours when needed, otherwise mm:ss."""
-    return format_duration(seconds)
-
-
 def encode_mask(mask: np.ndarray) -> dict[str, object]:
     """Serialize boolean mask into JSON-friendly packed bits payload."""
     bool_mask = np.asarray(mask, dtype=np.bool_, order="C")
@@ -206,11 +201,6 @@ def bbox_from_mask_xyxy(mask: np.ndarray) -> Tuple[int, int, int, int]:
 def bbox_xyxy_to_xywh(bounds: Sequence[int]) -> List[int]:
     x1, y1, x2, y2 = bounds
     return [int(x1), int(y1), int(max(0, x2 - x1)), int(max(0, y2 - y1))]
-
-
-def bbox_xywh_to_xyxy(bounds: Sequence[int]) -> List[int]:
-    x, y, w, h = bounds
-    return [int(x), int(y), int(x + w), int(y + h)]
 
 
 def build_subset_video(

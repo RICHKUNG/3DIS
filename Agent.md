@@ -38,7 +38,7 @@ Progress Log
 - 2025-10-02: 新增 `configs/multiscan/base.yaml`，`src/my3dis/run_workflow.py` 自動列舉 MultiScan 全場景、建立 `aggregate_output` timestamp 根目錄，SAM2 階段支援 `render_viz` 關閉，報告輸出整併為每個 `scene/level` 目錄含 `object_segments_Lxx.npz`、`video_segments_Lxx.npz`、三張報表圖片與 `summary.json`。
 - 2025-10-08: Added `--dry-run` flag to `src/my3dis/run_workflow.py`, documented the `PYTHONPATH` export requirement in README, and verified with `PYTHONPATH=src conda run -n My3DIS python -m my3dis.run_workflow --config configs/scenes/scene_00065_00.yaml --dry-run`, which now prints the parsed config without executing stages.
 - 2025-10-07: 清理 `configs/multiscan_all.yaml` 合併衝突並改為 `persist_raw=true` / `skip_filtering=true`，同時重新啟用 filter stage（沿用 `min_area=1000`, `stability_threshold=1.0`）以將 SSAM 遮罩改為磁碟暫存，避免 OOM。
-- 2025-10-07: 導入 `oom_monitor/` 工具集，`src/my3dis/run_workflow.py` 與 `scripts/pipeline/run_workflow_batch.py` 預設掛載 cgroup `memory.events` watcher，將 OOM 指標寫入 `logs/oom_monitor.log` 並支援 email 通知（`--no-oom-watch` 可停用，`--oom-watch-*` 旗標可調整行為）。
+- 2025-10-07: 導入 `oom_monitor/` 工具集，`src/my3dis/run_workflow.py` 與 `scripts/pipeline/run_workflow_batch.py` 預設掛載 cgroup `memory.events` watcher，將 OOM 指標寫入 `logs/oom_monitor.log`（`--no-oom-watch` 可停用，`--oom-watch-*` 旗標可調整行為）。
 
 Next Actions
 1) Create the shared environment from `archive/env/Algorithm1_env.yml` (optional but recommended).

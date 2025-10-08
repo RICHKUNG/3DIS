@@ -22,7 +22,7 @@ import time
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from oom_monitor import memory_watch_context
 
@@ -104,22 +104,15 @@ def main() -> int:
         default=Path('logs/oom_monitor.log'),
         help='Log file used to store OOM watcher events',
     )
-    parser.add_argument(
-        '--oom-email',
-        default='kunghsiangyu@gapp.nthu.edu.tw',
-        help='Email for OOM notifications (requires SMTP environment configuration)',
-    )
 
     args = parser.parse_args()
 
     monitor_enabled = not args.no_oom_watch
     oom_log_path = Path(args.oom_log).expanduser()
-    oom_email = args.oom_email or None
     monitor_context = (
         memory_watch_context(
             poll_interval=float(max(0.5, args.oom_watch_poll)),
             log_path=oom_log_path,
-            email=oom_email,
         )
         if monitor_enabled
         else nullcontext([])
@@ -140,8 +133,6 @@ def main() -> int:
                     ),
                     file=sys.stderr,
                 )
-                if oom_email:
-                    print(f'OOM notifications will target {oom_email}.', file=sys.stderr)
 
         config_paths: List[Path]
         if args.configs:
@@ -260,9 +251,6 @@ def main() -> int:
                         'parent_experiment': experiment.get('parent_experiment'),
                     }
                     batch_records.append(record)
-
-        if record.get('status') != 'completed' and args.stop_on_error:
-            break
 
     log_dir = Path(args.batch_log_dir).expanduser().resolve()
     log_dir.mkdir(parents=True, exist_ok=True)

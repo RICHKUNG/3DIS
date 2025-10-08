@@ -1,5 +1,5 @@
 experiment:
-  name: multiscan_all_1007
+  name: all_1008
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
@@ -22,7 +22,7 @@ experiment:
   output_layout: scene_level
   output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
 stages:
-  gpu: 2
+  gpu: 1
   ssam:
     enabled: true
     frames:
@@ -48,7 +48,7 @@ stages:
     iou_threshold: 0.6
     downscale_masks: true
     downscale_ratio: 0.3
-    render_viz: false
+    render_viz: true
   report:
     enabled: true
     name: report.md

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Dict, Iterable, Optional
 
 from .memory_events import MemoryEventsReader, OOMEvent, detect_user_memory_event_files
-from .notifier import EmailNotifier, create_notifier
 
 
 def watch_memory_events(
@@ -17,7 +16,6 @@ def watch_memory_events(
     *,
     poll_interval: float = 5.0,
     log_path: Path = Path("logs/oom_monitor.log"),
-    email: Optional[str] = None,
     stop_event: Optional[threading.Event] = None,
     announce: bool = True,
 ) -> None:
@@ -27,7 +25,6 @@ def watch_memory_events(
         return
     readers = [MemoryEventsReader(path) for path in resolved_paths]
     previous: Dict[Path, Dict[str, int]] = {reader.path: reader.read() for reader in readers}
-    notifier = create_notifier(email)
     if announce:
         print("Watching for OOM events. Press Ctrl+C to stop.")
     interrupted = False
@@ -42,8 +39,6 @@ def watch_memory_events(
                     for event in events:
                         _log_event(event, log_path)
                         _emit_console(event)
-                        if notifier and notifier.enabled:
-                            _send_notification(notifier, event)
                 previous[reader.path] = current
             if stop_event and stop_event.is_set():
                 break
@@ -77,29 +72,12 @@ def _emit_console(event: OOMEvent) -> None:
     )
 
 
-def _send_notification(notifier: EmailNotifier, event: OOMEvent) -> None:
-    subject = "OOM detected"
-    body = (
-        "An out-of-memory event was detected.\n"
-        f"Path: {event.path}\n"
-        f"Field: {event.field}\n"
-        f"Previous: {event.previous}\n"
-        f"Current: {event.current}\n"
-        f"Delta: {event.delta}\n"
-    )
-    try:
-        notifier.send(subject, body)
-    except Exception as exc:  # pragma: no cover
-        print(f"Failed to send notification: {exc}", file=sys.stderr)
-
-
 @contextmanager
 def memory_watch_context(
     paths: Iterable[Path] | None = None,
     *,
     poll_interval: float = 5.0,
     log_path: Path = Path("logs/oom_monitor.log"),
-    email: Optional[str] = None,
 ):
     resolved_paths = list(paths) if paths else detect_user_memory_event_files()
     if not resolved_paths:
@@ -112,7 +90,6 @@ def memory_watch_context(
         kwargs={
             "poll_interval": poll_interval,
             "log_path": log_path,
-            "email": email,
             "stop_event": stop_event,
             "announce": False,
         },
