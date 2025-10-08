@@ -24,10 +24,7 @@ from my3dis.common_utils import (
     pack_binary_mask,
     unpack_binary_mask,
 )
-from my3dis.pipeline_defaults import (
-    DEFAULT_SEMANTIC_SAM_ROOT as _DEFAULT_SEMANTIC_SAM_ROOT,
-    expand_default,
-)
+from my3dis.pipeline_defaults import DEFAULT_SEMANTIC_SAM_ROOT as _DEFAULT_SEMANTIC_SAM_ROOT, expand_default
 
 _SEM_ROOT_STR = expand_default(_DEFAULT_SEMANTIC_SAM_ROOT)
 DEFAULT_SEMANTIC_SAM_ROOT = _SEM_ROOT_STR
@@ -44,6 +41,42 @@ from my3dis.progressive_refinement import (
 
 
 LOGGER = logging.getLogger("my3dis.ssam_progressive")
+
+
+@contextlib.contextmanager
+def _semantic_sam_workdir():
+    """Temporarily switch to the Semantic-SAM root while preserving the caller's CWD."""
+
+    if not DEFAULT_SEMANTIC_SAM_ROOT:
+        yield
+        return
+
+    previous_cwd = os.getcwd()
+    changed = False
+
+    try:
+        os.chdir(DEFAULT_SEMANTIC_SAM_ROOT)
+        changed = True
+    except FileNotFoundError:
+        LOGGER.warning(
+            "Semantic-SAM root %s is missing; continuing without changing the working directory",
+            DEFAULT_SEMANTIC_SAM_ROOT,
+        )
+    except OSError as exc:
+        LOGGER.warning(
+            "Unable to change working directory to Semantic-SAM root %s: %s",
+            DEFAULT_SEMANTIC_SAM_ROOT,
+            exc,
+        )
+
+    try:
+        yield
+    finally:
+        if changed:
+            try:
+                os.chdir(previous_cwd)
+            except OSError as exc:
+                LOGGER.warning("Failed to restore working directory to %s: %s", previous_cwd, exc)
 
 
 def _extract_gap_components(segs: List[np.ndarray], fill_area: int) -> List[np.ndarray]:
@@ -129,13 +162,8 @@ def generate_with_progressive(
     Each candidate dict contains: {'frame_idx', 'frame_name', 'bbox'(XYWH), 'area', 'stability_score'(1.0),
     'level', 'segmentation', 'mask_scale_ratio'}.
     """
-    # Workdir for Semantic-SAM so relative configs resolve
-    try:
-        os.chdir(DEFAULT_SEMANTIC_SAM_ROOT)
-    except Exception:
-        pass
-
-    semantic_sam = build_semantic_sam(model_type="L", ckpt=sam_ckpt_path)
+    with _semantic_sam_workdir():
+        semantic_sam = build_semantic_sam(model_type="L", ckpt=sam_ckpt_path)
 
     try:
         mask_scale_ratio = float(mask_scale_ratio)
@@ -161,19 +189,8 @@ def generate_with_progressive(
         image_path = os.path.join(frames_dir, fname)
 
         def run_progressive(output_dirs: Dict[str, str]):
-            if verbose:
-                return progressive_refinement_masks(
-                    semantic_sam,
-                    image_path,
-                    level_sequence=levels,
-                    output_dirs=output_dirs,
-                    min_area=min_area,
-                    max_masks_per_level=2000,
-                    save_viz=False,
-                )
-            buf_out, buf_err = io.StringIO(), io.StringIO()
-            try:
-                with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+            def _invoke_progressive():
+                with _semantic_sam_workdir():
                     return progressive_refinement_masks(
                         semantic_sam,
                         image_path,
@@ -183,6 +200,14 @@ def generate_with_progressive(
                         max_masks_per_level=2000,
                         save_viz=False,
                     )
+
+            if verbose:
+                return _invoke_progressive()
+
+            buf_out, buf_err = io.StringIO(), io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buf_out), contextlib.redirect_stderr(buf_err):
+                    return _invoke_progressive()
             except Exception:
                 # Preserve captured logs to aid debugging before re-raising
                 print(buf_out.getvalue(), file=sys.stderr, end="")

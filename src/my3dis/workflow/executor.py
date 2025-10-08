@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -28,6 +29,13 @@ def _run_scene_job(job: _SceneJob) -> Dict[str, Any]:
     return run_scene_workflow(**job.kwargs)
 
 
+def _resolve_path_override(env_var: str, configured: Optional[str]) -> Optional[str]:
+    """Return the configured path, allowing the environment to override it."""
+
+    override = os.environ.get(env_var)
+    return override if override else configured
+
+
 def execute_workflow(
     config: Dict[str, Any],
     *,
@@ -48,7 +56,7 @@ def execute_workflow(
     scene_start_cfg = experiment_cfg.get('scene_start')
     scene_end_cfg = experiment_cfg.get('scene_end')
     scenes_list: Optional[List[str]] = None
-    dataset_root_raw = experiment_cfg.get('dataset_root')
+    dataset_root_raw = _resolve_path_override('MY3DIS_DATASET_ROOT', experiment_cfg.get('dataset_root'))
     if scenes_cfg is not None or scene_start_cfg is not None or scene_end_cfg is not None:
         if not dataset_root_raw:
             raise WorkflowConfigError('experiment.dataset_root is required when selecting scenes')
@@ -63,7 +71,10 @@ def execute_workflow(
         dataset_root = Path(dataset_root_raw).expanduser() if dataset_root_raw else None
 
     if scenes_list:
-        output_root_base_raw = override_output or experiment_cfg.get('output_root')
+        output_root_base_raw = override_output or _resolve_path_override(
+            'MY3DIS_OUTPUT_ROOT',
+            experiment_cfg.get('output_root'),
+        )
         output_root_base_resolved = expand_output_path_template(output_root_base_raw, experiment_cfg)
         output_root_base = Path(output_root_base_resolved).expanduser()
 

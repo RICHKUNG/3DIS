@@ -14,10 +14,11 @@ from .helpers import (
     scaled_npz_path,
 )
 from .outputs import (
-    reorganize_segments_by_object,
+    build_object_segments_archive,
+    build_video_segments_archive,
+    decode_packed_mask_from_json,
+    encode_packed_mask_for_json,
     save_comparison_proposals,
-    save_object_segments_npz,
-    save_video_segments_npz,
 )
 
 __all__ = [
@@ -32,8 +33,9 @@ __all__ = [
     'infer_relative_scale',
     'resize_mask_to_shape',
     'scaled_npz_path',
-    'reorganize_segments_by_object',
+    'encode_packed_mask_for_json',
+    'decode_packed_mask_from_json',
+    'build_video_segments_archive',
+    'build_object_segments_archive',
     'save_comparison_proposals',
-    'save_object_segments_npz',
-    'save_video_segments_npz',
 ]

@@ -1,19 +1,19 @@
 experiment:
-  name: all_1008
+  name: all_1009
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
   # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
-  scene_start: scene_00048_00  # replace with first scene name (inclusive) to limit the run
-  scene_end: scene_00077_01    # replace with last scene name (inclusive) to limit the run
+  # scene_start: scene_00048_00  # replace with first scene name (inclusive) to limit the run
+  # scene_end: scene_00077_01    # replace with last scene name (inclusive) to limit the run
   # scene_start: scene_00086_00  # replace with first scene name (inclusive) to limit the run
   # scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
 
-  # scene_start: scene_00006_01  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
+  scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
+  scene_end: scene_00055_01    # replace with last scene name (inclusive) to limit the run
   # scene_start: scene_00048_00  # replace with first scene name (inclusive) to limit the run
   # scene_end: scene_00077_01    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00086_01  # replace with first scene name (inclusive) to limit the run
+  # scene_start: scene_00058_00  # replace with first scene name (inclusive) to limit the run
   # scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
   levels:
     - 2

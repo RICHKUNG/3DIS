@@ -1,72 +1,166 @@
-"""追蹤結果輸出相關函式。"""
+"""追蹤結果輸出與視覺化輔助。"""
 
 from __future__ import annotations
 
+import base64
+import json
 import os
-from typing import Any, Dict, List, Optional, Tuple
+import zipfile
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
-from my3dis.common_utils import ensure_dir
+from my3dis.common_utils import (
+    PACKED_MASK_B64_KEY,
+    PACKED_MASK_KEY,
+    PACKED_ORIG_SHAPE_KEY,
+    PACKED_SHAPE_KEY,
+    ensure_dir,
+    unpack_binary_mask,
+)
 
 from .helpers import format_scale_suffix, resize_mask_to_shape, scaled_npz_path
 
 __all__ = [
-    'save_video_segments_npz',
-    'reorganize_segments_by_object',
-    'save_object_segments_npz',
+    'encode_packed_mask_for_json',
+    'decode_packed_mask_from_json',
+    'build_video_segments_archive',
+    'build_object_segments_archive',
     'save_comparison_proposals',
 ]
 
 
-def save_video_segments_npz(
-    segments: Dict[int, Dict[int, Any]],
+def encode_packed_mask_for_json(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a JSON-serialisable copy of a packed mask payload."""
+
+    encoded: Dict[str, Any] = {}
+    for key, value in payload.items():
+        if key == PACKED_MASK_KEY:
+            arr = np.asarray(value, dtype=np.uint8)
+            encoded[PACKED_MASK_B64_KEY] = base64.b64encode(arr.tobytes()).decode('ascii')
+        elif isinstance(value, np.ndarray):
+            encoded[key] = value.tolist()
+        elif isinstance(value, (np.integer, np.floating)):
+            encoded[key] = value.item()
+        else:
+            encoded[key] = value
+    if PACKED_MASK_KEY in encoded:
+        encoded.pop(PACKED_MASK_KEY, None)
+    return encoded
+
+
+def decode_packed_mask_from_json(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert a JSON-friendly packed mask back to numpy-compatible form."""
+
+    decoded: Dict[str, Any] = {}
+    for key, value in payload.items():
+        if key == PACKED_MASK_B64_KEY:
+            decoded[PACKED_MASK_KEY] = np.frombuffer(
+                base64.b64decode(value.encode('ascii')),
+                dtype=np.uint8,
+            )
+        elif key in (PACKED_SHAPE_KEY, PACKED_ORIG_SHAPE_KEY) and isinstance(value, list):
+            decoded[key] = tuple(int(v) for v in value)
+        else:
+            decoded[key] = value
+    decoded.pop(PACKED_MASK_B64_KEY, None)
+    return decoded
+
+
+def _ensure_frames_dir(path: str) -> str:
+    root_path = Path(path)
+    root_path.parent.mkdir(parents=True, exist_ok=True)
+    return str(root_path)
+
+
+def _frame_entry_name(frame_idx: int) -> str:
+    return f"frames/frame_{int(frame_idx):06d}.json"
+
+
+def build_video_segments_archive(
+    frames: Iterable[Dict[str, Any]],
     path: str,
     *,
     mask_scale_ratio: float = 1.0,
-) -> str:
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, Dict[str, Any]]:
+    """Persist frame-major SAM2 results into a manifest-backed archive."""
+
     actual_path = scaled_npz_path(path, mask_scale_ratio)
-    packed = {
-        str(frame_idx): {str(obj_id): mask for obj_id, mask in frame_data.items()}
-        for frame_idx, frame_data in segments.items()
-    }
-    np.savez_compressed(actual_path, data=packed)
-    return actual_path
+    _ensure_frames_dir(actual_path)
+
+    manifest_frames: List[Dict[str, Any]] = []
+    meta = dict(metadata or {})
+    meta['mask_scale_ratio'] = float(mask_scale_ratio)
+
+    with zipfile.ZipFile(actual_path, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
+        for frame in frames:
+            frame_idx = int(frame['frame_index'])
+            entry_name = _frame_entry_name(frame_idx)
+            if 'objects' not in frame:
+                frame['objects'] = {}
+            manifest_frames.append(
+                {
+                    'frame_index': frame_idx,
+                    'frame_name': frame.get('frame_name'),
+                    'entry': entry_name,
+                    'objects': sorted(frame['objects'].keys()),
+                }
+            )
+            zf.writestr(entry_name, json.dumps(frame, ensure_ascii=False).encode('utf-8'))
+
+        manifest = {
+            'meta': meta,
+            'frames': manifest_frames,
+        }
+        zf.writestr('manifest.json', json.dumps(manifest, ensure_ascii=False).encode('utf-8'))
+
+    return actual_path, manifest
 
 
-def reorganize_segments_by_object(segments: Dict[int, Dict[int, Any]]) -> Dict[int, Dict[int, Any]]:
-    """Re-index frame-major predictions into an object-major structure."""
-    per_object: Dict[int, Dict[int, Any]] = {}
-    for frame_idx, frame_data in segments.items():
-        for obj_id_raw, mask in frame_data.items():
-            obj_id = int(obj_id_raw)
-            frame_id = int(frame_idx)
-            if obj_id not in per_object:
-                per_object[obj_id] = {}
-            per_object[obj_id][frame_id] = mask
-    return per_object
-
-
-def save_object_segments_npz(
-    segments: Dict[int, Dict[int, Any]],
+def build_object_segments_archive(
+    object_manifest: Dict[int, Dict[int, str]],
     path: str,
     *,
     mask_scale_ratio: float = 1.0,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Persist object-major mask stacks mirroring the frame-major archive."""
+    """Persist an object→frame reference manifest mirroring the video archive."""
+
     actual_path = scaled_npz_path(path, mask_scale_ratio)
-    packed = {
-        str(obj_id): {str(frame_idx): mask for frame_idx, mask in frames.items()}
-        for obj_id, frames in segments.items()
+    _ensure_frames_dir(actual_path)
+
+    meta = dict(metadata or {})
+    meta['mask_scale_ratio'] = float(mask_scale_ratio)
+
+    serialisable_objects: Dict[str, List[Dict[str, Any]]] = {}
+    for obj_id, frame_map in object_manifest.items():
+        entries: List[Dict[str, Any]] = []
+        for frame_idx, entry_name in sorted(frame_map.items()):
+            entries.append(
+                {
+                    'frame_index': int(frame_idx),
+                    'frame_entry': entry_name,
+                }
+            )
+        serialisable_objects[str(obj_id)] = entries
+
+    payload = {
+        'meta': meta,
+        'objects': serialisable_objects,
     }
-    np.savez_compressed(actual_path, data=packed)
+
+    with zipfile.ZipFile(actual_path, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr('manifest.json', json.dumps(payload, ensure_ascii=False).encode('utf-8'))
+
     return actual_path
 
 
 def save_comparison_proposals(
     viz_dir: str,
     base_frames_dir: str,
-    filtered_per_frame: List[List[Dict[str, Any]]],
+    filtered_per_frame: List[Optional[List[Dict[str, Any]]]],
     video_segments: Dict[int, Dict[int, Any]],
     level: int,
     frame_numbers: Optional[List[int]] = None,
@@ -81,13 +175,13 @@ def save_comparison_proposals(
     out_dir = ensure_dir(os.path.join(viz_dir, 'compare'))
 
     if frame_numbers is None:
-        frame_numbers = list(range(len(filtered_per_frame)))
+        frame_numbers = [idx for idx in range(len(filtered_per_frame))]
     frame_numbers = [int(fn) for fn in frame_numbers]
     frame_number_to_local = {fn: idx for idx, fn in enumerate(frame_numbers)}
 
     frames_to_render = sorted(frame_numbers)
     if frames_to_save is not None:
-        frames_to_render = [f for f in frames_to_save if f in set(frame_numbers)]
+        frames_to_render = [f for f in frames_to_save if f in frame_number_to_local]
 
     if frames_to_render:
         total = len(frames_to_render)
@@ -131,7 +225,6 @@ def save_comparison_proposals(
         if subset_name and subset_dir:
             candidates.append(os.path.join(subset_dir, subset_name))
 
-        # Backward compatibility fallbacks (zero-padded / plain indices)
         base_names = [
             f"{frame_idx:05d}.png",
             f"{frame_idx}.png",
@@ -203,51 +296,63 @@ def save_comparison_proposals(
         if local_idx is None or local_idx >= len(filtered_per_frame):
             continue
 
+        filtered_candidates = filtered_per_frame[local_idx] or []
+
         H = W = None
-        if filtered_per_frame[local_idx]:
-            seg0 = filtered_per_frame[local_idx][0].get('segmentation')
+        if filtered_candidates:
+            seg0 = filtered_candidates[0].get('segmentation')
             if isinstance(seg0, np.ndarray):
                 H, W = seg0.shape[:2]
 
+        sam_frame = video_segments.get(f_idx) or {}
         if H is None or W is None:
-            sam_frame = video_segments.get(f_idx)
             if sam_frame:
                 first_mask = next(iter(sam_frame.values()))
                 if isinstance(first_mask, np.ndarray):
                     H, W = first_mask.shape[:2]
 
         frame_path = resolve_frame_path(f_idx)
-        if frame_path is None:
+        if frame_path is None or H is None or W is None:
             continue
 
-        with Image.open(frame_path) as base_img:
-            base_rgb = base_img.convert('RGB')
-        if H is None or W is None:
-            H, W = base_rgb.height, base_rgb.width
+        frame_img = Image.open(frame_path).convert('RGB')
+        frame_img = frame_img.resize((W, H), resample=Image.BILINEAR)
 
-        sam_masks = [item.get('segmentation') for item in filtered_per_frame[local_idx]]
-        sam_instance = build_instance_map_img((H, W), sam_masks)
+        filtered_masks = [
+            resize_mask_to_shape(item.get('segmentation'), (H, W))
+            for item in filtered_candidates
+            if item.get('segmentation') is not None
+        ]
+        filtered_masks = [m for m in filtered_masks if m is not None]
+        filtered_img = build_instance_map_img((H, W), filtered_masks)
 
-        sam2_masks = {
-            obj_id: resize_mask_to_shape(mask, (H, W))
-            for obj_id, mask in video_segments.get(f_idx, {}).items()
-        }
-        sam2_instance = build_sam_instance_map_img((H, W), sam2_masks)
+        sam_masks: Dict[int, np.ndarray] = {}
+        for obj_id, payload in sam_frame.items():
+            mask = payload
+            if isinstance(payload, dict):
+                mask = unpack_binary_mask(payload)
+            arr = resize_mask_to_shape(mask, (H, W))
+            if arr is None:
+                continue
+            sam_masks[int(obj_id)] = np.asarray(arr, dtype=np.bool_)
 
-        gap = 20
-        width = base_rgb.width + sam_instance.width + sam2_instance.width + gap * 2
-        height = max(base_rgb.height, sam_instance.height, sam2_instance.height)
+        sam_img = build_sam_instance_map_img((H, W), sam_masks)
 
-        canvas = Image.new('RGB', (width, height), color=(0, 0, 0))
-        canvas.paste(base_rgb, (0, 0))
-        canvas.paste(sam_instance, (base_rgb.width + gap, 0))
-        canvas.paste(sam2_instance, (base_rgb.width + sam_instance.width + gap * 2, 0))
+        canvas_w = frame_img.width * 3
+        canvas_h = frame_img.height
+        canvas = Image.new('RGB', (canvas_w, canvas_h), color=(0, 0, 0))
+        canvas.paste(frame_img, (0, 0))
+        canvas.paste(filtered_img, (frame_img.width, 0))
+        canvas.paste(sam_img, (frame_img.width * 2, 0))
 
         draw = ImageDraw.Draw(canvas)
-        draw.text((10, 10), f'Level {level} Frame {f_idx}', fill=(255, 255, 255))
+        draw.text((10, 10), f"Frame {f_idx}", fill=(255, 255, 255))
+        draw.text((frame_img.width + 10, 10), "SSAM filtered", fill=(255, 255, 255))
+        draw.text((frame_img.width * 2 + 10, 10), "SAM2 propagated", fill=(255, 255, 255))
 
-        canvas.save(os.path.join(out_dir, f'compare_L{level:02d}_F{f_idx:05d}.png'))
+        out_name = os.path.join(out_dir, f"L{level}_{f_idx:05d}.png")
+        canvas.save(out_name)
         rendered_count += 1
 
     if rendered_count == 0:
-        print('No comparison proposals rendered.')
+        return

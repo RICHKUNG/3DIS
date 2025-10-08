@@ -17,10 +17,14 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import sys
+import tempfile
 import time
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from pathlib import Path
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union
 
 import numpy as np
 import torch
@@ -52,13 +56,13 @@ from my3dis.tracking import (
     TimingAggregator,
     bbox_scalar_fit,
     bbox_transform_xywh_to_xyxy,
+    build_object_segments_archive,
+    build_video_segments_archive,
+    encode_packed_mask_for_json,
     format_duration_precise,
     infer_relative_scale,
-    reorganize_segments_by_object,
     resize_mask_to_shape,
     save_comparison_proposals,
-    save_object_segments_npz,
-    save_video_segments_npz,
 )
 
 LOGGER = logging.getLogger("my3dis.track_from_candidates")
@@ -73,6 +77,260 @@ class PromptCandidate:
     seg_for_iou: Optional[np.ndarray]
     area: Optional[int]
     bbox_xywh: Optional[Tuple[float, float, float, float]]
+
+
+@dataclass
+class FrameCandidateBatch:
+    """Container for a single frame's filtered SSAM candidates."""
+
+    local_index: int
+    frame_index: int
+    frame_name: str
+    candidates: List[Dict[str, Any]]
+
+
+@dataclass
+class TrackingArtifacts:
+    """In-memory aggregates returned by the SAM2 tracking stage."""
+
+    object_refs: Dict[int, Dict[int, str]]
+    preview_segments: Dict[int, Dict[int, Any]]
+    frames_with_predictions: Set[int]
+    objects_seen: Set[int]
+
+
+@dataclass
+class _DedupEntry:
+    target_shape: Tuple[int, int]
+    masks: List[np.ndarray]
+
+
+class DedupStore:
+    """Downscaled per-frame mask stacks used for IoU-based deduplication."""
+
+    def __init__(self, *, max_dim: int = 256) -> None:
+        self._max_dim = max(1, int(max_dim))
+        self._frames: Dict[int, _DedupEntry] = {}
+
+    def _compute_target_shape(self, shape: Tuple[int, int]) -> Tuple[int, int]:
+        h, w = shape
+        longest = max(h, w)
+        if longest <= self._max_dim:
+            return h, w
+        ratio = self._max_dim / float(longest)
+        new_h = max(1, int(round(h * ratio)))
+        new_w = max(1, int(round(w * ratio)))
+        return new_h, new_w
+
+    def _ensure_entry(self, frame_idx: int, mask_shape: Tuple[int, int]) -> _DedupEntry:
+        entry = self._frames.get(frame_idx)
+        if entry is not None:
+            return entry
+        target_shape = self._compute_target_shape(mask_shape)
+        entry = _DedupEntry(target_shape=target_shape, masks=[])
+        self._frames[frame_idx] = entry
+        return entry
+
+    @staticmethod
+    def _resize(mask: np.ndarray, target_shape: Tuple[int, int]) -> np.ndarray:
+        if mask.shape == target_shape:
+            return mask.astype(np.bool_)
+        return resize_mask_to_shape(mask, target_shape).astype(np.bool_)
+
+    def _max_iou(self, entry: _DedupEntry, candidate: np.ndarray) -> float:
+        if not entry.masks:
+            return 0.0
+        cand = self._resize(candidate, entry.target_shape)
+        if not entry.masks:
+            return 0.0
+        ious: List[float] = []
+        for existing in entry.masks:
+            inter = np.logical_and(existing, cand).sum()
+            union = np.logical_or(existing, cand).sum()
+            if union == 0:
+                continue
+            ious.append(float(inter) / float(union))
+        return max(ious) if ious else 0.0
+
+    def has_overlap(self, frame_idx: int, mask: np.ndarray, threshold: float) -> bool:
+        entry = self._frames.get(frame_idx)
+        if entry is None or not entry.masks:
+            return False
+        return self._max_iou(entry, mask) > float(threshold)
+
+    def add_mask(self, frame_idx: int, mask: np.ndarray) -> None:
+        arr = np.asarray(mask, dtype=np.bool_)
+        entry = self._ensure_entry(frame_idx, arr.shape)
+        entry.masks.append(self._resize(arr, entry.target_shape))
+
+    def add_packed(self, frame_idx: int, payloads: Dict[int, Any]) -> None:
+        if not payloads:
+            return
+        for packed in payloads.values():
+            arr = unpack_binary_mask(packed)
+            arr = np.asarray(arr, dtype=np.bool_)
+            self.add_mask(frame_idx, arr)
+
+    def filter_candidates(
+        self,
+        frame_idx: int,
+        candidates: List[PromptCandidate],
+        threshold: float,
+    ) -> List[PromptCandidate]:
+        accepted: List[PromptCandidate] = []
+        for cand in candidates:
+            seg = cand.seg_for_iou
+            if seg is not None and self.has_overlap(frame_idx, seg, threshold):
+                continue
+            accepted.append(cand)
+            if seg is not None:
+                self.add_mask(frame_idx, seg)
+        return accepted
+
+
+def _frame_entry_name(frame_idx: int) -> str:
+    return f"frames/frame_{int(frame_idx):06d}.json"
+
+
+class FrameResultStore:
+    """Disk-backed storage for frame-major SAM2 propagation results."""
+
+    def __init__(self, *, prefix: str = "sam2_frames_") -> None:
+        self._root = Path(tempfile.mkdtemp(prefix=prefix))
+        self._index: Dict[int, Path] = {}
+
+    def update(self, frame_idx: int, frame_name: Optional[str], frame_data: Dict[int, Any]) -> str:
+        entry_name = _frame_entry_name(frame_idx)
+        path = self._root / f"{frame_idx:06d}.json"
+        if path.exists():
+            with path.open('r', encoding='utf-8') as fh:
+                existing = json.load(fh)
+        else:
+            existing = {'frame_index': int(frame_idx), 'frame_name': frame_name, 'objects': {}}
+
+        serialised = {
+            str(obj_id): encode_packed_mask_for_json(payload)
+            for obj_id, payload in frame_data.items()
+        }
+        existing['frame_name'] = frame_name
+        existing.setdefault('objects', {})
+        existing['objects'].update(serialised)
+
+        with path.open('w', encoding='utf-8') as fh:
+            json.dump(existing, fh, ensure_ascii=False)
+
+        self._index[frame_idx] = path
+        return entry_name
+
+    def iter_frames(self) -> Iterator[Dict[str, Any]]:
+        for frame_idx in sorted(self._index.keys()):
+            path = self._index[frame_idx]
+            with path.open('r', encoding='utf-8') as fh:
+                yield json.load(fh)
+
+    def cleanup(self) -> None:
+        shutil.rmtree(self._root, ignore_errors=True)
+
+
+def _load_filtered_manifest(level_root: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    filt_dir = os.path.join(level_root, 'filtered')
+    manifest_path = os.path.join(filt_dir, 'filtered.json')
+    with open(manifest_path, 'r', encoding='utf-8') as fh:
+        meta = json.load(fh)
+    frames_meta = meta.get('frames', [])
+    return meta, frames_meta
+
+
+def _load_frame_candidates(
+    filt_dir: str,
+    frame_meta: Dict[str, Any],
+    *,
+    mask_scale_ratio: float,
+) -> List[Dict[str, Any]]:
+    fidx = int(frame_meta['frame_idx'])
+    seg_path = os.path.join(filt_dir, f'seg_frame_{fidx:05d}.npy')
+    seg_stack = np.load(seg_path, mmap_mode='r') if os.path.exists(seg_path) else None
+    try:
+        items_meta = frame_meta.get('items', [])
+        loaded: List[Dict[str, Any]] = []
+        for j, it in enumerate(items_meta):
+            d = dict(it)
+            mask_payload = d.pop('mask', None)
+            seg = None
+            ratio_hint = None
+            if mask_payload is not None:
+                seg = unpack_binary_mask(mask_payload)
+                ratio_hint = infer_relative_scale(mask_payload)
+            elif seg_stack is not None and j < seg_stack.shape[0]:
+                seg = seg_stack[j]
+
+            seg_scaled = None
+            if seg is not None:
+                seg = np.asarray(seg, dtype=np.bool_)
+                if mask_scale_ratio < 1.0:
+                    eps = 1e-6
+                    effective_ratio = ratio_hint or 1.0
+                    if effective_ratio <= mask_scale_ratio + eps:
+                        seg_scaled = seg
+                    else:
+                        relative_ratio = mask_scale_ratio / effective_ratio if effective_ratio else 0.0
+                        if 0.0 < relative_ratio < 1.0 - eps:
+                            seg_scaled = downscale_binary_mask(seg, relative_ratio)
+                        else:
+                            seg_scaled = seg
+            d['segmentation'] = seg
+            if mask_scale_ratio < 1.0:
+                d['segmentation_scaled'] = seg_scaled if seg_scaled is not None else seg
+            loaded.append(d)
+        return loaded
+    finally:
+        if seg_stack is not None:
+            del seg_stack
+
+
+def iter_filtered_candidate_batches(
+    level_root: str,
+    frames_meta: List[Dict[str, Any]],
+    *,
+    mask_scale_ratio: float,
+) -> Iterator[FrameCandidateBatch]:
+    filt_dir = os.path.join(level_root, 'filtered')
+    for local_idx, frame_meta in enumerate(frames_meta):
+        fidx = int(frame_meta['frame_idx'])
+        fname = frame_meta.get('frame_name')
+        if fname is None:
+            fname = f"{int(fidx):05d}.png"
+        candidates = _load_frame_candidates(filt_dir, frame_meta, mask_scale_ratio=mask_scale_ratio)
+        yield FrameCandidateBatch(
+            local_index=local_idx,
+            frame_index=fidx,
+            frame_name=str(fname),
+            candidates=candidates,
+        )
+
+
+def load_filtered_frame_by_index(
+    level_root: str,
+    frames_meta: List[Dict[str, Any]],
+    *,
+    local_index: int,
+    mask_scale_ratio: float,
+) -> Optional[List[Dict[str, Any]]]:
+    if local_index < 0 or local_index >= len(frames_meta):
+        return None
+    filt_dir = os.path.join(level_root, 'filtered')
+    return _load_frame_candidates(
+        filt_dir,
+        frames_meta[local_index],
+        mask_scale_ratio=mask_scale_ratio,
+    )
+
+
+def _select_preview_indices(total_frames: int) -> List[int]:
+    if total_frames <= 0:
+        return []
+    candidates = {0, total_frames // 2, total_frames - 1}
+    return sorted(idx for idx in candidates if 0 <= idx < total_frames)
 
 
 def _coerce_mask_bool(mask: Any) -> Optional[np.ndarray]:
@@ -126,73 +384,14 @@ def _prepare_prompt_candidates(frame_masks: List[Dict[str, Any]]) -> List[Prompt
     return prepared
 
 
-def _build_existing_mask_stack(frame_masks: Dict[int, Any]) -> Optional[np.ndarray]:
-    if not frame_masks:
-        return None
-    masks: List[np.ndarray] = []
-    target_shape: Optional[Tuple[int, int]] = None
-    for packed in frame_masks.values():
-        arr = unpack_binary_mask(packed)
-        arr = np.asarray(arr, dtype=np.bool_)
-        if arr.ndim > 2:
-            arr = np.squeeze(arr)
-        if arr.ndim != 2:
-            continue
-        if target_shape is None:
-            target_shape = arr.shape
-        elif arr.shape != target_shape:
-            arr = resize_mask_to_shape(arr, target_shape)
-        masks.append(arr)
-    if not masks:
-        return None
-    return np.stack(masks, axis=0)
-
-
-def _max_iou_with_stack(existing_stack: np.ndarray, candidate: np.ndarray) -> float:
-    if existing_stack.size == 0:
-        return 0.0
-    target_shape = existing_stack.shape[1:]
-    if candidate.shape != target_shape:
-        candidate = resize_mask_to_shape(candidate, target_shape)
-    cand = candidate.astype(np.bool_)
-    stack = existing_stack.astype(np.bool_)
-    inter = np.logical_and(stack, cand).sum(axis=(1, 2))
-    union = np.logical_or(stack, cand).sum(axis=(1, 2))
-    valid = union > 0
-    if not np.any(valid):
-        return 0.0
-    ious = inter[valid] / union[valid]
-    return float(ious.max()) if ious.size else 0.0
-
-
 def _filter_new_candidates(
     candidates: List[PromptCandidate],
-    existing_masks: Dict[int, Any],
+    *,
+    frame_idx: int,
+    dedup_store: DedupStore,
     iou_threshold: float,
 ) -> List[PromptCandidate]:
-    existing_stack = _build_existing_mask_stack(existing_masks)
-    if existing_stack is not None:
-        stack = existing_stack.copy()
-    else:
-        stack = None
-
-    accepted: List[PromptCandidate] = []
-    for cand in candidates:
-        seg_for_iou = cand.seg_for_iou
-        if seg_for_iou is not None and stack is not None:
-            overlap = _max_iou_with_stack(stack, seg_for_iou)
-            if overlap > iou_threshold:
-                continue
-        accepted.append(cand)
-        if cand.seg_for_iou is not None:
-            seg_bool = cand.seg_for_iou.astype(np.bool_)
-            if stack is None:
-                stack = seg_bool[None, ...]
-            else:
-                if seg_bool.shape != stack.shape[1:]:
-                    seg_bool = resize_mask_to_shape(seg_bool, stack.shape[1:])
-                stack = np.concatenate([stack, seg_bool[None, ...]], axis=0)
-    return accepted
+    return dedup_store.filter_candidates(frame_idx, candidates, iou_threshold)
 
 
 def _should_use_box_prompt(
@@ -345,78 +544,23 @@ def configure_logging(explicit_level: Optional[int] = None) -> int:
     return level
 
 
-def load_filtered_candidates(
-    level_root: str,
-    *,
-    mask_scale_ratio: float = 1.0,
-) -> Tuple[List[List[Dict[str, Any]]], List[int], List[str]]:
-    """加載篩選後的候選項，返回候選項列表、幀索引與對應檔名"""
-    filt_dir = os.path.join(level_root, 'filtered')
-    with open(os.path.join(filt_dir, 'filtered.json'), 'r') as f:
-        meta = json.load(f)
-    frames_meta = meta.get('frames', [])
-    per_frame = []
-    frame_indices = []
-    frame_names: List[str] = []
-    
-    for fm in frames_meta:
-        fidx = fm['frame_idx']
-        fname = fm.get('frame_name')
-        if fname is None:
-            fname = f"{int(fidx):05d}.png"
-        frame_names.append(str(fname))
-        items = fm['items']
-        seg_path = os.path.join(filt_dir, f'seg_frame_{fidx:05d}.npy')
-        seg_stack = None
-        if os.path.exists(seg_path):
-            seg_stack = np.load(seg_path, mmap_mode='r')
-        lst = []
-        for j, it in enumerate(items):
-            d = dict(it)
-            mask_payload = d.pop('mask', None)
-            seg = None
-            ratio_hint = None
-            if mask_payload is not None:
-                seg = unpack_binary_mask(mask_payload)
-                ratio_hint = infer_relative_scale(mask_payload)
-            elif seg_stack is not None and j < seg_stack.shape[0]:
-                seg = seg_stack[j]
-            seg_scaled = None
-            if seg is not None:
-                seg = np.asarray(seg, dtype=np.bool_)
-                if mask_scale_ratio < 1.0:
-                    eps = 1e-6
-                    effective_ratio = ratio_hint or 1.0
-                    if effective_ratio <= mask_scale_ratio + eps:
-                        seg_scaled = seg
-                    else:
-                        relative_ratio = mask_scale_ratio / effective_ratio if effective_ratio else 0.0
-                        if 0.0 < relative_ratio < 1.0 - eps:
-                            seg_scaled = downscale_binary_mask(seg, relative_ratio)
-                        else:
-                            seg_scaled = seg
-            d['segmentation'] = seg
-            if mask_scale_ratio < 1.0:
-                d['segmentation_scaled'] = seg_scaled if seg_scaled is not None else seg
-            lst.append(d)
-        per_frame.append(lst)
-        frame_indices.append(fidx)
-    
-    return per_frame, frame_indices, frame_names
-
-
 def sam2_tracking(
     frames_dir: str,
     predictor,
-    mask_candidates: List[List[Dict[str, Any]]],
+    candidate_batches: Iterable[FrameCandidateBatch],
+    *,
     frame_numbers: List[int],
+    frame_name_lookup: Dict[int, str],
     iou_threshold: float = 0.6,
     max_propagate: Optional[int] = None,
     use_box_for_small: bool = False,
     use_box_for_all: bool = False,
     small_object_area_threshold: Optional[int] = None,
     mask_scale_ratio: float = 1.0,
-) -> Dict[int, Dict[int, Any]]:
+    preview_targets: Optional[Set[int]] = None,
+    dedup_store: Optional[DedupStore] = None,
+    result_store: Optional[FrameResultStore] = None,
+) -> TrackingArtifacts:
     os.environ['TQDM_DISABLE'] = '1'
     try:  # pragma: no cover - optional dependency
         import tqdm
@@ -425,29 +569,22 @@ def sam2_tracking(
     except ImportError:  # pragma: no cover - tqdm not installed
         pass
 
+    preview_targets = set(preview_targets or [])
+    dedup_store = dedup_store or DedupStore()
+    result_store = result_store or FrameResultStore()
+
+    object_refs: Dict[int, Dict[int, str]] = defaultdict(dict)
+    preview_segments: Dict[int, Dict[int, Any]] = {}
+    frames_with_predictions: Set[int] = set()
+    objects_seen: Set[int] = set()
+
     with torch.inference_mode(), torch.autocast("cuda"):
-        final_video_segments: Dict[int, Dict[int, Any]] = {}
         state = predictor.init_state(video_path=frames_dir)
-
-        first_seg = None
-        for frame_masks in mask_candidates:
-            for item in frame_masks:
-                candidate_seg = item.get('segmentation')
-                if isinstance(candidate_seg, np.ndarray):
-                    first_seg = candidate_seg
-                    break
-            if first_seg is not None:
-                break
-        if first_seg is None:
-            raise RuntimeError('No segmentation masks available to derive resolution')
-
-        h0, w0 = first_seg.shape[:2]
-        sx = state['video_width'] / max(1, w0)
-        sy = state['video_height'] / max(1, h0)
+        sx: Optional[float] = None
+        sy: Optional[float] = None
 
         local_to_abs = {i: frame_numbers[i] for i in range(len(frame_numbers))}
-        total_frames = len(frame_numbers)
-        progress = ProgressPrinter(total_frames)
+        progress = ProgressPrinter(len(frame_numbers))
 
         if max_propagate is not None:
             try:
@@ -471,18 +608,30 @@ def sam2_tracking(
 
         obj_count = 1
         try:
-            for frame_idx, raw_candidates in enumerate(mask_candidates):
+            for batch in candidate_batches:
+                frame_idx = batch.local_index
+                abs_idx = local_to_abs.get(frame_idx, batch.frame_index)
                 predictor.reset_state(state)
-                abs_idx = local_to_abs.get(frame_idx)
                 progress.update(frame_idx, abs_idx)
                 if abs_idx is None:
                     continue
 
-                prepared_candidates = _prepare_prompt_candidates(raw_candidates)
-                existing_masks = final_video_segments.get(abs_idx, {})
+                if sx is None or sy is None:
+                    for item in batch.candidates:
+                        candidate_seg = item.get('segmentation')
+                        if isinstance(candidate_seg, np.ndarray):
+                            h0, w0 = candidate_seg.shape[:2]
+                            sx = state['video_width'] / max(1, w0)
+                            sy = state['video_height'] / max(1, h0)
+                            break
+                    if sx is None or sy is None:
+                        continue
+
+                prepared_candidates = _prepare_prompt_candidates(batch.candidates)
                 filtered_candidates = _filter_new_candidates(
                     prepared_candidates,
-                    existing_masks,
+                    frame_idx=abs_idx,
+                    dedup_store=dedup_store,
                     iou_threshold=iou_threshold,
                 )
                 if not filtered_candidates:
@@ -506,17 +655,39 @@ def sam2_tracking(
                     state,
                     frame_idx,
                     local_to_abs=local_to_abs,
-                    total_frames=total_frames,
+                    total_frames=len(frame_numbers),
                     max_propagate=max_propagate,
                     mask_scale_ratio=mask_scale_ratio,
                 )
 
                 for abs_out_idx, frame_data in frame_segments.items():
-                    final_video_segments.setdefault(abs_out_idx, {}).update(frame_data)
+                    if not frame_data:
+                        continue
+                    frames_with_predictions.add(abs_out_idx)
+                    dedup_store.add_packed(abs_out_idx, frame_data)
+                    frame_name = frame_name_lookup.get(abs_out_idx)
+                    entry_name = result_store.update(abs_out_idx, frame_name, frame_data)
+                    for obj_id_raw, payload in frame_data.items():
+                        obj_id = int(obj_id_raw)
+                        object_refs[obj_id][abs_out_idx] = entry_name
+                        objects_seen.add(obj_id)
+                    if abs_out_idx in preview_targets and abs_out_idx not in preview_segments:
+                        preview_segments[abs_out_idx] = {
+                            int(obj_id): dict(payload)
+                            for obj_id, payload in frame_data.items()
+                        }
         finally:
             progress.close()
 
-    return final_video_segments
+    if sx is None or sy is None:
+        raise RuntimeError('No segmentation masks available to derive resolution')
+
+    return TrackingArtifacts(
+        object_refs=dict(object_refs),
+        preview_segments=preview_segments,
+        frames_with_predictions=frames_with_predictions,
+        objects_seen=objects_seen,
+    )
 
 
 def run_tracking(
@@ -682,51 +853,78 @@ def run_tracking(
         level_root = os.path.join(candidates_root, f'level_{level}')
         track_dir = ensure_dir(os.path.join(out_root, f'level_{level}', 'tracking'))
         
-        # 加載候選項和對應的幀索引
-        per_frame, frame_indices, frame_names = load_filtered_candidates(
-            level_root, mask_scale_ratio=mask_scale_ratio
-        )
-        frame_name_lookup = {
-            int(idx): name for idx, name in zip(frame_indices, frame_names)
-        }
+        _, frames_meta = _load_filtered_manifest(level_root)
+        frame_numbers = [int(fm['frame_idx']) for fm in frames_meta]
+        frame_name_lookup: Dict[int, str] = {}
+        for fm in frames_meta:
+            fidx = int(fm['frame_idx'])
+            fname = fm.get('frame_name')
+            if fname is None:
+                fname = f"{fidx:05d}.png"
+            frame_name_lookup[fidx] = str(fname)
         if frame_index_to_name:
             for idx, name in frame_index_to_name.items():
                 frame_name_lookup.setdefault(int(idx), str(name))
-        
-        LOGGER.info(f"Level {level}: Processing {len(per_frame)} frames with SAM2 tracking...")
+
+        LOGGER.info(f"Level {level}: Processing {len(frame_numbers)} frames with SAM2 tracking...")
         level_timer = TimingAggregator()
 
+        preview_local_indices = _select_preview_indices(len(frame_numbers))
+        preview_targets = {
+            frame_numbers[idx] for idx in preview_local_indices if 0 <= idx < len(frame_numbers)
+        }
+
+        candidate_iter = iter_filtered_candidate_batches(
+            level_root,
+            frames_meta,
+            mask_scale_ratio=mask_scale_ratio,
+        )
+
+        dedup_store = DedupStore()
+        frame_store = FrameResultStore(prefix=f"sam2_frames_L{level}_")
+
         with level_timer.track('track.sam2'):
-            segs = sam2_tracking(
+            tracking_output = sam2_tracking(
                 subset_dir,
                 predictor,
-                per_frame,
-                frame_numbers=frame_indices,  # 使用實際的幀索引
+                candidate_iter,
+                frame_numbers=frame_numbers,
+                frame_name_lookup=frame_name_lookup,
                 iou_threshold=iou_threshold,
                 max_propagate=sam2_max_propagate,
                 use_box_for_small=(long_tail_box_prompt and not all_box_prompt),
                 use_box_for_all=all_box_prompt,
                 small_object_area_threshold=long_tail_area_threshold,
                 mask_scale_ratio=mask_scale_ratio,
+                preview_targets=preview_targets,
+                dedup_store=dedup_store,
+                result_store=frame_store,
             )
 
         level_video_path = None
         level_object_path = None
 
-        with level_timer.track('persist.video_segments'):
-            level_video_path = save_video_segments_npz(
-                segs,
-                os.path.join(track_dir, 'video_segments.npz'),
-                mask_scale_ratio=mask_scale_ratio,
-            )
+        try:
+            with level_timer.track('persist.video_segments'):
+                level_video_path, _video_manifest = build_video_segments_archive(
+                    frame_store.iter_frames(),
+                    os.path.join(track_dir, 'video_segments.npz'),
+                    mask_scale_ratio=mask_scale_ratio,
+                    metadata={'level': level},
+                )
 
-        with level_timer.track('persist.object_npz'):
-            obj_segments = reorganize_segments_by_object(segs)
-            level_object_path = save_object_segments_npz(
-                obj_segments,
-                os.path.join(track_dir, 'object_segments.npz'),
-                mask_scale_ratio=mask_scale_ratio,
-            )
+            with level_timer.track('persist.object_manifest'):
+                level_object_path = build_object_segments_archive(
+                    tracking_output.object_refs,
+                    os.path.join(track_dir, 'object_segments.npz'),
+                    mask_scale_ratio=mask_scale_ratio,
+                    metadata={
+                        'level': level,
+                        'linked_video': os.path.basename(level_video_path) if level_video_path else None,
+                    },
+                )
+        finally:
+            frame_store.cleanup()
 
         level_artifacts[level] = {
             'video_segments': level_video_path,
@@ -739,20 +937,36 @@ def run_tracking(
             os.path.basename(level_object_path) if level_object_path else 'n/a',
         )
 
+        filtered_preview: List[Optional[List[Dict[str, Any]]]] = [None] * len(frame_numbers)
+        for local_idx in preview_local_indices:
+            candidates_for_viz = load_filtered_frame_by_index(
+                level_root,
+                frames_meta,
+                local_index=local_idx,
+                mask_scale_ratio=mask_scale_ratio,
+            )
+            if candidates_for_viz is not None:
+                filtered_preview[local_idx] = candidates_for_viz
+
         if render_viz:
             viz_dir = os.path.join(out_root, f'level_{level}', 'viz')
             with level_timer.track('viz.comparison'):
+                frames_to_save = [
+                    frame_numbers[idx]
+                    for idx in preview_local_indices
+                    if 0 <= idx < len(frame_numbers)
+                ]
                 save_comparison_proposals(
                     viz_dir=viz_dir,
                     base_frames_dir=data_path,
-                    filtered_per_frame=per_frame,
-                    video_segments=segs,
+                    filtered_per_frame=filtered_preview,
+                    video_segments=tracking_output.preview_segments,
                     level=level,
-                    frame_numbers=frame_indices,  # 使用實際的幀索引
+                    frame_numbers=frame_numbers,
                     frame_name_lookup=frame_name_lookup,
                     subset_dir=subset_dir,
                     subset_map=subset_map,
-                    frames_to_save=None,
+                    frames_to_save=frames_to_save,
                 )
 
         level_total = time.perf_counter() - level_start
@@ -761,20 +975,22 @@ def run_tracking(
         persist_time = level_timer.total_prefix('persist.')
         viz_time = level_timer.total_prefix('viz.')
         render_time = viz_time
+        objects_count = len(tracking_output.objects_seen)
+        frames_count = len(tracking_output.frames_with_predictions)
 
         LOGGER.info(
             "Level %d finished (%d objects / %d frames) → %s",
             level,
-            len(obj_segments),
-            len(segs),
+            objects_count,
+            frames_count,
             level_timer.format_breakdown(),
         )
 
         level_stats.append(
             (
                 level,
-                len(obj_segments),
-                len(segs),
+                objects_count,
+                frames_count,
                 track_time,
                 persist_time,
                 viz_time,

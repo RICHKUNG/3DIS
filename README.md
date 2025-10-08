@@ -22,6 +22,10 @@ Environment
   - Semantic-SAM SwinL → /media/Pluto/richkung/Semantic-SAM/checkpoints/swinl_only_sam_many2many.pth
   - SAM2 config → /media/Pluto/richkung/SAM2/sam2/configs/sam2.1/sam2.1_hiera_l.yaml
   - SAM2 weights → /media/Pluto/richkung/SAM2/checkpoints/sam2.1_hiera_large.pt
+- Environment overrides: export `MY3DIS_SEMANTIC_SAM_ROOT`, `MY3DIS_SEMANTIC_SAM_CKPT`, `MY3DIS_SAM2_ROOT`,
+  `MY3DIS_SAM2_CFG`, `MY3DIS_SAM2_CKPT`, `MY3DIS_DATASET_ROOT`, `MY3DIS_DATA_PATH`, or `MY3DIS_OUTPUT_ROOT`
+  to redirect repositories, checkpoints, dataset roots, and output folders without editing YAML; CLI overrides
+  keep the highest precedence where available.
 - Conda envs: `Semantic-SAM` (Detectron2 0.6 + Torch 1.13) and `SAM2` (Torch 2.x). The single-script pipeline still requires a unified environment, but the recommended flow swaps between these two envs.
 - Environment manifests live in `env/` (current exports) while frozen snapshots remain in `archive/env/`.
 - Legacy notebooks and auxiliary scripts now sit under `archive/experiments/` for reference.
@@ -33,7 +37,7 @@ Data & Selection
 - Selected frames are symlinked or copied into `selected_frames/` inside each run directory for traceability.
 - Example metadata (e.g., `scene_00065_00_superpoint_pixel_locations.json`) now lives in `data/examples/` for quick reference without polluting outputs.
 - `configs/index/multiscan_scene_index.json` 彙整所有場景、影格總數與對應的 YAML 路徑，方便挑選與查詢。
-- Multi-scene YAML 指定 `experiment.dataset_root`（如 `/media/public_dataset2/multiscan`）與 `experiment.scenes` 名稱列表，系統會自動解析 `outputs/color` 子資料夾並於 `experiment.output_root/<scene>/` 建立執行結果。
+- Multi-scene YAML 指定 `experiment.dataset_root`（如 `/media/public_dataset2/multiscan`）與 `experiment.scenes` 名稱列表，系統會自動解析 `outputs/color` 子資料夾並於 `experiment.output_root/<scene>/` 建立執行結果；若需要快速切換資料磁碟，可先匯出 `MY3DIS_DATASET_ROOT` / `MY3DIS_OUTPUT_ROOT` 以覆寫設定值。
 
 Pipeline Overview
 1) Frame selection: collect frames per the slice range and create a subset directory.
@@ -86,7 +90,7 @@ Workflow Orchestrators
 - Level folder layout: `candidates/`, `raw/`（若有啟用持久化）、`filtered/`, `tracking/`, `viz/`, `report/`。
 - `candidates/candidates.json` keeps raw proposal metadata；若啟用 `persist_raw=True`，`raw/frame_XXXXX.json` + `raw/frame_XXXXX.npz` 會保存完整遮罩堆疊，供 `src/my3dis/filter_candidates.py` 重跑。
 - `filtered/filtered.json` embeds filtered masks (packed bits + shape) directly in JSON，若重新套用篩選則會覆寫此檔案並更新 manifest。
-- `tracking/video_segments*.npz`（frame-major）與 `tracking/object_segments*.npz`（object-major）存放 SAM2 傳播結果，檔名後綴 `_scale{ratio}x` 代表遮罩已縮減解析度並附帶原始尺寸資訊，仍採 packed mask 形式方便載入。
+- `tracking/video_segments*.npz` 以 manifest 方式封裝（`manifest.json` + `frames/frame_XXXXX.json`），每個 frame 檔案包含經過 base64 編碼的 packed mask；`tracking/object_segments*.npz` 轉為 object → frame 的參考表，避免重複寫入遮罩資料，讀取時可透過 `frame_entry` 反查 `video_segments` 中的對應 JSON。
 - `viz/compare/` holds contrast panels for Semantic-SAM vs. SAM2；輸出已稀疏化為每第 10 個 SSAM 幀。`level_x/report/` 底下仍保留縮小後的代表性圖檔（第一張／中位／最後一張），供 Markdown 報告引用。
 - `report.md`（根目錄）為中文摘要，包含階段耗時表格、主要參數、每個 level 的代表圖表連結；`workflow_summary.json` 保存原始紀錄。
 - Each run writes `manifest.json` with frame selection, thresholds, model paths, timestamps, the SSAM subset (`ssam_frames`, `ssam_freq`), any SAM2 propagation cap in effect，以及篩選/原始資料的設定。
