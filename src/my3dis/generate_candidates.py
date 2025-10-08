@@ -3,6 +3,16 @@ Generate per-level Semantic-SAM mask candidates for selected frames.
 Runs only the Semantic-SAM part to allow using a different environment (e.g., Semantic-SAM env).
 Outputs match the structure expected by run_pipeline/track_from_candidates.
 """
+if __package__ is None or __package__ == '':
+    import sys
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parents[2]
+    src_path = project_root / 'src'
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+
+
 
 import argparse
 import datetime
@@ -16,7 +26,11 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
-from common_utils import (
+from my3dis.common_utils import (
+    PACKED_MASK_B64_KEY,
+    PACKED_MASK_KEY,
+    PACKED_ORIG_SHAPE_KEY,
+    PACKED_SHAPE_KEY,
     RAW_DIR_NAME,
     RAW_MASK_TEMPLATE,
     RAW_META_TEMPLATE,
@@ -25,12 +39,15 @@ from common_utils import (
     build_subset_video,
     encode_mask,
     format_duration,
+    is_packed_mask,
     numeric_frame_sort_key,
+    pack_binary_mask,
     parse_levels,
     parse_range,
     setup_logging,
+    unpack_binary_mask,
 )
-from pipeline_defaults import (
+from my3dis.pipeline_defaults import (
     DEFAULT_SEMANTIC_SAM_CKPT as _DEFAULT_SEMANTIC_SAM_CKPT_PATH,
     DEFAULT_SEMANTIC_SAM_ROOT as _DEFAULT_SEMANTIC_SAM_ROOT,
     expand_default,
@@ -40,12 +57,45 @@ _SEM_ROOT_STR = expand_default(_DEFAULT_SEMANTIC_SAM_ROOT)
 if _SEM_ROOT_STR not in sys.path:
     sys.path.append(_SEM_ROOT_STR)
 
-from ssam_progressive_adapter import generate_with_progressive, ensure_dir
+from my3dis.ssam_progressive_adapter import generate_with_progressive, ensure_dir
 
 
 LOGGER = logging.getLogger("my3dis.generate_candidates")
 
 DEFAULT_SEMANTIC_SAM_CKPT = str(_DEFAULT_SEMANTIC_SAM_CKPT_PATH)
+
+
+def _coerce_packed_mask(entry: Any) -> Optional[Dict[str, Any]]:
+    if entry is None:
+        return None
+
+    if is_packed_mask(entry) and PACKED_MASK_KEY in entry:
+        payload = dict(entry)
+        payload[PACKED_MASK_KEY] = np.ascontiguousarray(
+            np.asarray(payload[PACKED_MASK_KEY], dtype=np.uint8)
+        )
+        shape_entry = payload.get(PACKED_SHAPE_KEY)
+        if isinstance(shape_entry, np.ndarray):
+            payload[PACKED_SHAPE_KEY] = tuple(int(v) for v in shape_entry.tolist())
+        elif isinstance(shape_entry, list):
+            payload[PACKED_SHAPE_KEY] = tuple(int(v) for v in shape_entry)
+        elif isinstance(shape_entry, tuple):
+            payload[PACKED_SHAPE_KEY] = tuple(int(v) for v in shape_entry)
+        elif shape_entry is not None:
+            payload[PACKED_SHAPE_KEY] = (int(shape_entry),)
+        payload.pop(PACKED_MASK_B64_KEY, None)
+        return payload
+
+    mask_bool = unpack_binary_mask(entry)
+    return pack_binary_mask(mask_bool, full_resolution_shape=mask_bool.shape)
+
+
+def _mask_to_bool(entry: Any) -> Optional[np.ndarray]:
+    if entry is None:
+        return None
+    if isinstance(entry, np.ndarray):
+        return np.asarray(entry, dtype=np.bool_)
+    return unpack_binary_mask(entry)
 
 
 def persist_raw_frame(
@@ -67,54 +117,81 @@ def persist_raw_frame(
     mask_path = os.path.join(raw_dir, RAW_MASK_TEMPLATE.format(frame_idx=frame_idx))
 
     metadata_items: List[Dict[str, Any]] = []
-    mask_arrays: List[Optional[np.ndarray]] = []
+    packed_arrays: List[Optional[np.ndarray]] = []
     has_mask_flags: List[bool] = []
 
-    mask_shape = None
+    mask_shape: Optional[Tuple[int, int]] = None
+    packed_len: Optional[int] = None
     pending_zero_fill: List[int] = []
 
-    for local_idx, cand in enumerate(candidates):
+    for cand in candidates:
         c_meta = {
             k: (v.tolist() if hasattr(v, "tolist") else v)
             for k, v in cand.items()
             if k != 'segmentation'
         }
-        c_meta['raw_index'] = local_idx
+        c_meta['raw_index'] = len(metadata_items)
         c_meta.setdefault('frame_idx', frame_idx)
         c_meta.setdefault('frame_name', frame_name)
         metadata_items.append(c_meta)
 
-        seg = cand.get('segmentation')
-        if seg is None:
+        seg_entry = cand.get('segmentation')
+
+        array_slot = len(packed_arrays)
+        packed_arrays.append(None)
+
+        if seg_entry is None:
             has_mask_flags.append(False)
-            if mask_shape is None:
-                mask_arrays.append(None)
-                pending_zero_fill.append(local_idx)
-            else:
-                mask_arrays.append(np.zeros(mask_shape, dtype=np.bool_))
+            pending_zero_fill.append(array_slot)
             continue
 
-        seg_arr = np.asarray(seg, dtype=np.bool_)
+        packed_payload = _coerce_packed_mask(seg_entry)
+        if packed_payload is None:
+            has_mask_flags.append(False)
+            pending_zero_fill.append(array_slot)
+            cand['segmentation'] = None
+            continue
+
+        cand['segmentation'] = packed_payload
+        seg_shape = tuple(int(v) for v in packed_payload[PACKED_SHAPE_KEY])
+        seg_bits = np.ascontiguousarray(
+            np.asarray(packed_payload[PACKED_MASK_KEY], dtype=np.uint8)
+        )
+
         if mask_shape is None:
-            mask_shape = seg_arr.shape
+            mask_shape = seg_shape
+            packed_len = seg_bits.size
+            zero_template = np.zeros(packed_len, dtype=np.uint8)
             for idx in pending_zero_fill:
-                mask_arrays[idx] = np.zeros(mask_shape, dtype=np.bool_)
+                packed_arrays[idx] = zero_template.copy()
             pending_zero_fill.clear()
-        elif seg_arr.shape != mask_shape:
-            # 如果尺寸不一致，將其重新調整至第一個遮罩的尺寸
-            from PIL import Image
+        elif seg_shape != mask_shape:
+            seg_bool = unpack_binary_mask(packed_payload)
+            if seg_bool.shape != mask_shape:
+                from PIL import Image
 
-            ref_h, ref_w = mask_shape
-            seg_img = Image.fromarray((seg_arr.astype(np.uint8) * 255))
-            seg_img = seg_img.resize((ref_w, ref_h), resample=Image.NEAREST)
-            seg_arr = np.array(seg_img) > 127
+                ref_h, ref_w = mask_shape
+                seg_img = Image.fromarray((seg_bool.astype(np.uint8) * 255))
+                seg_img = seg_img.resize((ref_w, ref_h), resample=Image.NEAREST)
+                seg_bool = np.array(seg_img) > 127
 
-        mask_arrays.append(seg_arr.astype(np.bool_))
+            packed_payload = pack_binary_mask(seg_bool, full_resolution_shape=seg_bool.shape)
+            cand['segmentation'] = packed_payload
+            seg_bits = np.ascontiguousarray(
+                np.asarray(packed_payload[PACKED_MASK_KEY], dtype=np.uint8)
+            )
+
+        if packed_len is None:
+            packed_len = seg_bits.size
+
+        packed_arrays[array_slot] = seg_bits.copy()
         has_mask_flags.append(True)
 
-    if mask_shape is not None and pending_zero_fill:
+    if mask_shape is not None and packed_len is not None:
+        zero_template = np.zeros(packed_len, dtype=np.uint8)
         for idx in pending_zero_fill:
-            mask_arrays[idx] = np.zeros(mask_shape, dtype=np.bool_)
+            packed_arrays[idx] = zero_template.copy()
+        pending_zero_fill.clear()
 
     # 撰寫 JSON metadata
     frame_record = {
@@ -127,14 +204,19 @@ def persist_raw_frame(
         json.dump(frame_record, f, indent=2)
 
     stored_masks = 0
-    if mask_shape is not None:
-        mask_stack = np.stack(mask_arrays, axis=0) if mask_arrays else np.zeros((0, *mask_shape), dtype=np.bool_)
+    if mask_shape is not None and packed_len is not None:
+        packed_matrix = (
+            np.stack(packed_arrays, axis=0)
+            if packed_arrays
+            else np.zeros((0, packed_len), dtype=np.uint8)
+        )
         np.savez_compressed(
             mask_path,
-            masks=mask_stack.astype(np.bool_),
+            packed_masks=packed_matrix,
+            mask_shape=np.asarray(mask_shape, dtype=np.int32),
             has_mask=np.asarray(has_mask_flags, dtype=np.bool_),
         )
-        stored_masks = mask_stack.shape[0]
+        stored_masks = packed_matrix.shape[0]
     elif os.path.exists(mask_path):
         os.remove(mask_path)
 
@@ -175,6 +257,8 @@ def run_generation(
     experiment_tag: str = None,
     persist_raw: bool = False,
     skip_filtering: bool = False,
+    downscale_masks: bool = False,
+    mask_scale_ratio: float = 1.0,
 ) -> Tuple[str, Dict[str, Any]]:
     """Generate candidates and persist them in the standard layout.
 
@@ -202,6 +286,18 @@ def run_generation(
     except (TypeError, ValueError):
         LOGGER.warning("Invalid ssam_freq=%r; defaulting to 1", ssam_freq)
         ssam_freq = 1
+
+    try:
+        mask_scale_ratio = float(mask_scale_ratio)
+    except (TypeError, ValueError):
+        LOGGER.warning("Invalid mask_scale_ratio=%r; defaulting to 1.0", mask_scale_ratio)
+        mask_scale_ratio = 1.0
+    if not downscale_masks:
+        mask_scale_ratio = 1.0
+    elif mask_scale_ratio <= 0.0 or mask_scale_ratio > 1.0:
+        raise ValueError('mask_scale_ratio must be within (0, 1] when downscale_masks is true')
+    if mask_scale_ratio < 1.0:
+        LOGGER.info("Downscaling SSAM masks by ratio %.3f before persistence", mask_scale_ratio)
 
     all_frames = sorted(
         [f for f in os.listdir(frames_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))],
@@ -253,6 +349,10 @@ def run_generation(
 
         if add_gaps:
             parts.append("gaps")
+
+        if downscale_masks and mask_scale_ratio < 1.0:
+            ratio_str = f"{mask_scale_ratio:.3f}".rstrip('0').rstrip('.')
+            parts.append(f"scale{ratio_str}x")
 
         # 如果有自定義標籤，加到最後
         if experiment_tag:
@@ -318,6 +418,11 @@ def run_generation(
             'fill_area': fill_area,
             'add_gaps': bool(add_gaps),
         },
+        'mask_scale_ratio': mask_scale_ratio,
+        'mask_downscale': {
+            'enabled': bool(downscale_masks) and mask_scale_ratio < 1.0,
+            'ratio': mask_scale_ratio,
+        },
         'filtering': {
             'applied': not skip_filtering,
             'min_area': None if skip_filtering else min_area,
@@ -353,6 +458,7 @@ def run_generation(
         min_area=min_area,
         fill_area=fill_area,
         enable_gap_fill=bool(add_gaps),
+        mask_scale_ratio=mask_scale_ratio,
     )
 
     level_stats: List[Dict[str, Any]] = []
@@ -373,18 +479,39 @@ def run_generation(
         filtered_total = 0
 
         for f_idx, lst in enumerate(per_frame_list):
+            if lst is None:
+                per_frame_list[f_idx] = None
+                continue
+
             candidates = list(lst)
+            if isinstance(lst, list):
+                lst.clear()
+
             ssam_frame_idx = int(ssam_absolute_indices[f_idx])
             frame_name = ssam_frames[f_idx]
 
             if level_add_gaps and candidates:
-                H, W = candidates[0]['segmentation'].shape
-                union = np.zeros((H, W), dtype=bool)
-                for m in candidates:
-                    union |= m['segmentation']
-                gap = ~union
-                gap_area = int(gap.sum())
-                if gap_area >= fill_area:
+                first_seg_entry = candidates[0].get('segmentation')
+                first_mask = _mask_to_bool(first_seg_entry)
+                gap = None
+                gap_area = 0
+                ratio_hint = float(candidates[0].get('mask_scale_ratio', mask_scale_ratio))
+                ratio_hint = max(0.0, min(1.0, ratio_hint)) or 1.0
+                ratio_sq = ratio_hint * ratio_hint
+                scaled_fill_area = fill_area
+                if ratio_hint < 1.0:
+                    scaled_fill_area = max(1, int(round(fill_area * ratio_sq)))
+                if first_mask is not None:
+                    H, W = first_mask.shape
+                    union = np.zeros((H, W), dtype=bool)
+                    for m in candidates:
+                        seg_arr = _mask_to_bool(m.get('segmentation'))
+                        if seg_arr is None:
+                            continue
+                        union |= seg_arr
+                    gap = ~union
+                    gap_area = int(gap.sum())
+                if gap is not None and gap_area >= scaled_fill_area:
                     ys, xs = np.where(gap)
                     x1, y1, x2, y2 = (
                         int(xs.min()),
@@ -393,14 +520,35 @@ def run_generation(
                         int(ys.max()),
                     )
                     bbox = bbox_xyxy_to_xywh((x1, y1, x2, y2))
+                    approx_area = gap_area
+                    if ratio_hint < 1.0 and ratio_sq > 0:
+                        approx_area = int(round(gap_area / ratio_sq))
+                    full_shape = None
+                    if isinstance(first_seg_entry, dict) and PACKED_ORIG_SHAPE_KEY in first_seg_entry:
+                        orig_shape = first_seg_entry[PACKED_ORIG_SHAPE_KEY]
+                        if isinstance(orig_shape, np.ndarray):
+                            full_shape = tuple(int(v) for v in orig_shape.flatten().tolist())
+                        elif isinstance(orig_shape, (list, tuple)):
+                            full_shape = tuple(int(v) for v in orig_shape)
+                        elif orig_shape is not None:
+                            full_shape = (int(orig_shape), int(orig_shape))
+                    if full_shape is None:
+                        if ratio_hint < 1.0:
+                            full_shape = (
+                                max(1, int(round(H / ratio_hint))),
+                                max(1, int(round(W / ratio_hint))),
+                            )
+                        else:
+                            full_shape = (int(H), int(W))
                     candidates.append({
                         'frame_idx': ssam_frame_idx,
                         'frame_name': f"gap_{ssam_frame_idx:05d}",
                         'bbox': bbox,
-                        'area': gap_area,
+                        'area': approx_area,
                         'stability_score': 1.0,
                         'level': level,
-                        'segmentation': gap,
+                        'mask_scale_ratio': ratio_hint,
+                        'segmentation': pack_binary_mask(gap, full_resolution_shape=full_shape),
                     })
 
             for m in candidates:
@@ -425,9 +573,11 @@ def run_generation(
                 })
 
             if skip_filtering:
+                candidates.clear()
+                per_frame_list[f_idx] = None
                 continue
 
-            meta_list = []
+            meta_list: List[Dict[str, Any]] = []
             filtered_local_index = 0
             for m in candidates:
                 stability = float(m.get('stability_score', 1.0))
@@ -435,7 +585,7 @@ def run_generation(
                 if area < min_area or stability < stability_threshold:
                     continue
 
-                seg_data = m.get('segmentation')
+                seg_data = _mask_to_bool(m.get('segmentation'))
                 if seg_data is None:
                     continue
 
@@ -454,6 +604,9 @@ def run_generation(
                 }
             )
             filtered_total += len(meta_list)
+
+            candidates.clear()
+            per_frame_list[f_idx] = None
 
         with open(os.path.join(cand_dir, 'candidates.json'), 'w') as f:
             json.dump({'items': raw_items}, f, indent=2)
@@ -523,6 +676,10 @@ def main():
                     help='Store raw mask stacks for re-filtering later (default: disabled)')
     ap.add_argument('--skip-filtering', action='store_true',
                     help='Skip immediate filtering so it can be done as a separate stage')
+    ap.add_argument('--downscale-masks', action='store_true',
+                    help='Downscale SSAM masks before persistence')
+    ap.add_argument('--mask-scale-ratio', type=float, default=1.0,
+                    help='Scale ratio applied when --downscale-masks is provided (0 < r ≤ 1)')
     args = ap.parse_args()
 
     run_generation(
@@ -541,6 +698,8 @@ def main():
         experiment_tag=args.experiment_tag,
         persist_raw=args.persist_raw,
         skip_filtering=args.skip_filtering,
+        downscale_masks=args.downscale_masks,
+        mask_scale_ratio=args.mask_scale_ratio,
     )
 
 

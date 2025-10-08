@@ -1,5 +1,5 @@
 experiment:
-  name: multiscan_all_1004_test_on_mercury
+  name: multiscan_all_1007
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
@@ -9,15 +9,15 @@ experiment:
   scene_start: scene_00086_00  # replace with first scene name (inclusive) to limit the run
   scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
 
-  # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
+  # scene_start: scene_00006_00  # replace with first scene name (inclusive) to limit the run
+  # # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
+  # # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
+  # scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
   levels:
     - 2
     - 4
     - 6
-  tag: 246_filt_fill_prop30
+  tag: 246_filter_fill_prop30
   aggregate_output: false
   output_layout: scene_level
   output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
@@ -30,19 +30,23 @@ stages:
     ssam_freq: 2
     min_area: 1000
     stability_threshold: 1.0
-    persist_raw: false
-    skip_filtering: false
+    persist_raw: true
+    skip_filtering: true
     add_gaps: true
     fill_area: 10000
     append_timestamp: false
+    downscale_masks: true
+    downscale_ratio: 0.3
   filter:
-    enabled: false
+    enabled: true
+    min_area: 1000
+    stability_threshold: 1.0
   tracker:
     enabled: true
     prompt_mode: all_mask
     max_propagate: 30
     iou_threshold: 0.6
-    downscale_masks: True
+    downscale_masks: true
     downscale_ratio: 0.3
     render_viz: false
   report:

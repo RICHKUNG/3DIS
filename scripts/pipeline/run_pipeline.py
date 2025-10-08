@@ -1,14 +1,26 @@
 #!/usr/bin/env python3
 """End-to-end pipeline: Semantic-SAM candidate generation → SAM2 tracking."""
-
 from __future__ import annotations
+
+from pathlib import Path
+
+if __package__ is None or __package__ == '':
+    import sys
+
+    project_root = Path(__file__).resolve().parents[2]
+    src_path = project_root / 'src'
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+
+
+
 
 import argparse
 import json
 from typing import Any, Dict, List
 
-from common_utils import format_duration, parse_levels
-from pipeline_defaults import (
+from my3dis.common_utils import format_duration, parse_levels
+from my3dis.pipeline_defaults import (
     DEFAULT_DATA_PATH,
     DEFAULT_OUTPUT_ROOT,
     DEFAULT_SEMANTIC_SAM_CKPT,
@@ -16,7 +28,7 @@ from pipeline_defaults import (
     DEFAULT_SAM2_CKPT,
     expand_default,
 )
-from run_workflow import execute_workflow
+from my3dis.run_workflow import execute_workflow
 
 
 def _build_config(args: argparse.Namespace) -> Dict[str, Any]:

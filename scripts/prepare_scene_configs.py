@@ -69,7 +69,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description='Prepare YAML configs for MultiScan scenes')
     parser.add_argument('--dataset-root', default='/media/public_dataset2/multiscan', help='MultiScan dataset root')
     parser.add_argument('--project-root', default='.', help='Project root that contains the outputs directory')
-    parser.add_argument('--output-dir', default='configs/multiscan', help='Directory to write generated YAML files')
+    parser.add_argument('--output-dir', default='configs/scenes', help='Directory to write generated YAML files (per-scene)')
     parser.add_argument('--output-base', help='Base directory for experiment outputs (default: <project-root>/outputs)')
     parser.add_argument('--scenes', nargs='*', help='Subset of scenes to generate (defaults to all)')
     parser.add_argument('--dry-run', action='store_true', help='Preview generated configs without writing files')
@@ -97,7 +97,7 @@ def main() -> int:
     parser.add_argument('--report-max-width', type=int, default=640, help='Max width for report previews')
     parser.add_argument('--tag', default='multiscan', help='Default experiment tag stored in configs')
     parser.add_argument('--levels', default='2,4,6', help='Comma-separated levels for experiment.defaults')
-    parser.add_argument('--summary-path', default='configs/multiscan_scene_index.json', help='Path to write summary JSON')
+    parser.add_argument('--summary-path', default='configs/index/multiscan_scene_index.json', help='Path to write summary JSON')
 
     parser.set_defaults(downscale_masks=True)
 

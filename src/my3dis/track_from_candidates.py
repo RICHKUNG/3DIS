@@ -2,9 +2,18 @@
 Tracking-only stage: read filtered candidates saved by generate_candidates.py
 and run SAM2 masklet propagation. Designed to run in a SAM2-capable env.
 """
+if __package__ is None or __package__ == '':
+    import sys
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parents[2]
+    src_path = project_root / 'src'
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+
+
 
 import argparse
-import base64
 import json
 import logging
 import os
@@ -15,13 +24,20 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import torch
 
-from common_utils import (
+from my3dis.common_utils import (
+    PACKED_MASK_KEY,
+    PACKED_ORIG_SHAPE_KEY,
+    PACKED_SHAPE_KEY,
     build_subset_video,
+    downscale_binary_mask,
     ensure_dir,
+    is_packed_mask,
     numeric_frame_sort_key,
+    pack_binary_mask,
     setup_logging,
+    unpack_binary_mask,
 )
-from pipeline_defaults import (
+from my3dis.pipeline_defaults import (
     DEFAULT_SAM2_CFG as _DEFAULT_SAM2_CFG_PATH,
     DEFAULT_SAM2_CKPT as _DEFAULT_SAM2_CKPT_PATH,
     DEFAULT_SAM2_ROOT as _DEFAULT_SAM2_ROOT,
@@ -65,96 +81,6 @@ class _ProgressPrinter:
             sys.stdout.write('\n')
             sys.stdout.flush()
         self._closed = True
-
-
-# Masks are stored packed-bytes to keep peak RAM usage manageable while
-# still allowing downstream code to transparently request dense arrays.
-PACKED_MASK_KEY = "packed_bits"
-PACKED_MASK_B64_KEY = "packed_bits_b64"
-PACKED_SHAPE_KEY = "shape"
-PACKED_ORIG_SHAPE_KEY = "full_resolution_shape"
-
-
-def pack_binary_mask(mask: np.ndarray, *, full_resolution_shape: Optional[Tuple[int, int]] = None) -> Dict[str, Any]:
-    bool_mask = np.asarray(mask, dtype=np.bool_, order="C")
-    packed = np.packbits(bool_mask.ravel())
-    payload = {
-        PACKED_MASK_KEY: packed,
-        PACKED_SHAPE_KEY: tuple(int(dim) for dim in bool_mask.shape),
-    }
-    if full_resolution_shape is not None:
-        # Only persist spatial (H, W) when the original mask includes extra dims (e.g. [1, H, W]).
-        shape_arr = np.atleast_1d(full_resolution_shape)
-        shape_list = [int(dim) for dim in shape_arr.tolist()] if shape_arr.size else []
-        if len(shape_list) >= 2:
-            sanitized = (shape_list[-2], shape_list[-1])
-        elif len(shape_list) == 1:
-            sanitized = (shape_list[0], shape_list[0])
-        else:
-            sanitized = tuple()
-        if sanitized:
-            payload[PACKED_ORIG_SHAPE_KEY] = sanitized
-    return payload
-
-
-def is_packed_mask(entry: Any) -> bool:
-    if not isinstance(entry, dict):
-        return False
-    if PACKED_SHAPE_KEY not in entry:
-        return False
-    return PACKED_MASK_KEY in entry or PACKED_MASK_B64_KEY in entry
-
-
-def unpack_binary_mask(entry: Any) -> np.ndarray:
-    if is_packed_mask(entry):
-        shape = entry[PACKED_SHAPE_KEY]
-        if isinstance(shape, np.ndarray):
-            shape = tuple(int(v) for v in shape.tolist())
-        elif isinstance(shape, list):
-            shape = tuple(int(v) for v in shape)
-        total = int(np.prod(shape))
-        if PACKED_MASK_B64_KEY in entry:
-            packed_bytes = base64.b64decode(entry[PACKED_MASK_B64_KEY])
-            packed_arr = np.frombuffer(packed_bytes, dtype=np.uint8)
-        else:
-            packed_arr = np.asarray(entry[PACKED_MASK_KEY], dtype=np.uint8)
-        unpacked = np.unpackbits(packed_arr, count=total)
-        return unpacked.reshape(shape).astype(np.bool_)
-    array = np.asarray(entry)
-    if array.dtype != np.bool_:
-        array = array.astype(np.bool_)
-    return array
-
-
-def maybe_downscale_mask(mask: np.ndarray, ratio: float) -> np.ndarray:
-    """Resize binary mask using nearest neighbour while keeping boolean dtype."""
-    if mask is None:
-        return None
-    try:
-        ratio_val = float(ratio)
-    except (TypeError, ValueError):
-        ratio_val = 1.0
-    if not (0.0 < ratio_val < 1.0):
-        return np.asarray(mask, dtype=np.bool_)
-    arr = np.asarray(mask, dtype=np.bool_)
-    if arr.ndim > 2:
-        arr = np.squeeze(arr)
-    if arr.ndim != 2:
-        raise ValueError(f"Unsupported mask dimensionality for downscale: {arr.shape}")
-    h, w = arr.shape
-    new_h = max(1, int(round(h * ratio_val)))
-    new_w = max(1, int(round(w * ratio_val)))
-    if new_h == h and new_w == w:
-        return arr
-    from PIL import Image
-
-    img = Image.fromarray(arr.astype(np.uint8) * 255)
-    resample = getattr(Image, 'BOX', Image.BILINEAR)
-    resized = img.resize((new_w, new_h), resample=resample)
-    arr_float = np.asarray(resized, dtype=np.float32) / 255.0
-    return arr_float >= 0.5
-
-
 def format_scale_suffix(ratio: float) -> str:
     clean = f"{float(ratio):.3f}".rstrip('0').rstrip('.')
     return clean or "1"
@@ -185,6 +111,38 @@ def resize_mask_to_shape(mask: np.ndarray, target_shape: Tuple[int, int]) -> np.
     img = Image.fromarray(arr.astype(np.uint8) * 255)
     resized = img.resize((target_w, target_h), resample=Image.NEAREST)
     return (np.array(resized, dtype=np.uint8) >= 128)
+
+
+def infer_relative_scale(mask_entry: Any) -> Optional[float]:
+    """Return stored packed-to-original resolution ratio if available."""
+    if not isinstance(mask_entry, dict):
+        return None
+    packed_shape = mask_entry.get(PACKED_SHAPE_KEY)
+    orig_shape = mask_entry.get(PACKED_ORIG_SHAPE_KEY)
+    if packed_shape is None or orig_shape is None:
+        return None
+
+    if isinstance(packed_shape, np.ndarray):
+        packed = [int(v) for v in packed_shape.flatten().tolist()]
+    elif isinstance(packed_shape, (list, tuple)):
+        packed = [int(v) for v in packed_shape]
+    else:
+        packed = [int(packed_shape)]
+
+    if isinstance(orig_shape, np.ndarray):
+        original = [int(v) for v in orig_shape.flatten().tolist()]
+    elif isinstance(orig_shape, (list, tuple)):
+        original = [int(v) for v in orig_shape]
+    else:
+        original = [int(orig_shape)]
+
+    if len(packed) >= 2 and len(original) >= 2:
+        h_ratio = packed[-2] / original[-2] if original[-2] else None
+        w_ratio = packed[-1] / original[-1] if original[-1] else None
+        ratios = [r for r in (h_ratio, w_ratio) if r is not None]
+        if ratios:
+            return float(sum(ratios) / len(ratios))
+    return None
 
 
 def determine_mask_shape(mask_entry: Any, fallback: Optional[Tuple[int, int]] = None) -> Optional[Tuple[int, int]]:
@@ -359,24 +317,35 @@ def load_filtered_candidates(
         seg_path = os.path.join(filt_dir, f'seg_frame_{fidx:05d}.npy')
         seg_stack = None
         if os.path.exists(seg_path):
-            seg_stack = np.load(seg_path)
+            seg_stack = np.load(seg_path, mmap_mode='r')
         lst = []
         for j, it in enumerate(items):
             d = dict(it)
             mask_payload = d.pop('mask', None)
             seg = None
+            ratio_hint = None
             if mask_payload is not None:
                 seg = unpack_binary_mask(mask_payload)
+                ratio_hint = infer_relative_scale(mask_payload)
             elif seg_stack is not None and j < seg_stack.shape[0]:
                 seg = seg_stack[j]
             seg_scaled = None
             if seg is not None:
                 seg = np.asarray(seg, dtype=np.bool_)
                 if mask_scale_ratio < 1.0:
-                    seg_scaled = maybe_downscale_mask(seg, mask_scale_ratio)
+                    eps = 1e-6
+                    effective_ratio = ratio_hint or 1.0
+                    if effective_ratio <= mask_scale_ratio + eps:
+                        seg_scaled = seg
+                    else:
+                        relative_ratio = mask_scale_ratio / effective_ratio if effective_ratio else 0.0
+                        if 0.0 < relative_ratio < 1.0 - eps:
+                            seg_scaled = downscale_binary_mask(seg, relative_ratio)
+                        else:
+                            seg_scaled = seg
             d['segmentation'] = seg
-            if seg_scaled is not None:
-                d['segmentation_scaled'] = seg_scaled
+            if mask_scale_ratio < 1.0:
+                d['segmentation_scaled'] = seg_scaled if seg_scaled is not None else seg
             lst.append(d)
         per_frame.append(lst)
         frame_indices.append(fidx)
@@ -524,7 +493,7 @@ def sam2_tracking(
                             mask_arr = (out_mask_logits[i] > 0.0).cpu().numpy()
                             orig_shape = mask_arr.shape
                             if mask_scale_ratio < 1.0:
-                                mask_arr = maybe_downscale_mask(mask_arr, mask_scale_ratio)
+                                mask_arr = downscale_binary_mask(mask_arr, mask_scale_ratio)
                                 full_shape = orig_shape
                             else:
                                 full_shape = None

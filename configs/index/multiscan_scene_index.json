@@ -1,7 +1,7 @@
 {
   "generated_at": "2025-09-27T11:38:36",
   "dataset_root": "/media/public_dataset2/multiscan",
-  "output_dir": "/media/Pluto/richkung/My3DIS/configs/multiscan",
+  "output_dir": "/media/Pluto/richkung/My3DIS/configs/scenes",
   "output_base": "/media/Pluto/richkung/My3DIS/outputs",
   "levels": [
     2,
@@ -52,7 +52,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00005_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00005_00",
       "frames": 9773,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00005_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00005_00.yaml",
       "action": "written"
     },
     {
@@ -60,7 +60,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00005_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00005_01",
       "frames": 8496,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00005_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00005_01.yaml",
       "action": "written"
     },
     {
@@ -68,7 +68,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00006_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00006_00",
       "frames": 14972,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00006_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00006_00.yaml",
       "action": "written"
     },
     {
@@ -76,7 +76,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00006_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00006_01",
       "frames": 13905,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00006_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00006_01.yaml",
       "action": "written"
     },
     {
@@ -84,7 +84,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00018_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00018_00",
       "frames": 7447,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00018_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00018_00.yaml",
       "action": "written"
     },
     {
@@ -92,7 +92,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00018_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00018_01",
       "frames": 9394,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00018_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00018_01.yaml",
       "action": "written"
     },
     {
@@ -100,7 +100,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00019_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00019_00",
       "frames": 17267,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00019_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00019_00.yaml",
       "action": "written"
     },
     {
@@ -108,7 +108,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00019_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00019_01",
       "frames": 18032,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00019_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00019_01.yaml",
       "action": "written"
     },
     {
@@ -116,7 +116,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00022_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00022_00",
       "frames": 23299,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00022_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00022_00.yaml",
       "action": "written"
     },
     {
@@ -124,7 +124,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00022_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00022_01",
       "frames": 24823,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00022_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00022_01.yaml",
       "action": "written"
     },
     {
@@ -132,7 +132,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00030_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00030_00",
       "frames": 15837,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00030_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00030_00.yaml",
       "action": "written"
     },
     {
@@ -140,7 +140,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00030_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00030_01",
       "frames": 10800,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00030_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00030_01.yaml",
       "action": "written"
     },
     {
@@ -148,7 +148,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00044_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00044_00",
       "frames": 13965,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00044_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00044_00.yaml",
       "action": "written"
     },
     {
@@ -156,7 +156,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00044_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00044_01",
       "frames": 15328,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00044_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00044_01.yaml",
       "action": "written"
     },
     {
@@ -164,7 +164,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00048_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00048_00",
       "frames": 23807,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00048_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00048_00.yaml",
       "action": "written"
     },
     {
@@ -172,7 +172,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00048_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00048_01",
       "frames": 26507,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00048_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00048_01.yaml",
       "action": "written"
     },
     {
@@ -180,7 +180,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00051_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00051_00",
       "frames": 16707,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00051_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00051_00.yaml",
       "action": "written"
     },
     {
@@ -188,7 +188,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00051_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00051_01",
       "frames": 13759,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00051_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00051_01.yaml",
       "action": "written"
     },
     {
@@ -196,7 +196,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00055_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00055_00",
       "frames": 11587,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00055_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00055_00.yaml",
       "action": "written"
     },
     {
@@ -204,7 +204,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00055_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00055_01",
       "frames": 14673,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00055_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00055_01.yaml",
       "action": "written"
     },
     {
@@ -212,7 +212,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00058_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00058_00",
       "frames": 20814,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00058_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00058_00.yaml",
       "action": "written"
     },
     {
@@ -220,7 +220,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00058_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00058_01",
       "frames": 20643,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00058_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00058_01.yaml",
       "action": "written"
     },
     {
@@ -228,7 +228,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00065_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00065_00",
       "frames": 16650,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00065_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00065_00.yaml",
       "action": "written"
     },
     {
@@ -236,7 +236,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00065_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00065_01",
       "frames": 12853,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00065_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00065_01.yaml",
       "action": "written"
     },
     {
@@ -244,7 +244,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00075_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00075_00",
       "frames": 25041,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00075_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00075_00.yaml",
       "action": "written"
     },
     {
@@ -252,7 +252,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00075_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00075_01",
       "frames": 29503,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00075_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00075_01.yaml",
       "action": "written"
     },
     {
@@ -260,7 +260,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00077_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00077_00",
       "frames": 10703,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00077_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00077_00.yaml",
       "action": "written"
     },
     {
@@ -268,7 +268,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00077_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00077_01",
       "frames": 10066,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00077_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00077_01.yaml",
       "action": "written"
     },
     {
@@ -276,7 +276,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00086_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00086_00",
       "frames": 11748,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00086_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00086_00.yaml",
       "action": "written"
     },
     {
@@ -284,7 +284,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00086_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00086_01",
       "frames": 14161,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00086_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00086_01.yaml",
       "action": "written"
     },
     {
@@ -292,7 +292,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00089_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00089_00",
       "frames": 23175,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00089_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00089_00.yaml",
       "action": "written"
     },
     {
@@ -300,7 +300,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00089_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00089_01",
       "frames": 16882,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00089_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00089_01.yaml",
       "action": "written"
     },
     {
@@ -308,7 +308,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00091_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00091_00",
       "frames": 25254,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00091_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00091_00.yaml",
       "action": "written"
     },
     {
@@ -316,7 +316,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00091_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00091_01",
       "frames": 15361,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00091_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00091_01.yaml",
       "action": "written"
     },
     {
@@ -324,7 +324,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00093_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00093_00",
       "frames": 1773,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00093_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00093_00.yaml",
       "action": "written"
     },
     {
@@ -332,7 +332,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00093_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00093_01",
       "frames": 1899,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00093_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00093_01.yaml",
       "action": "written"
     },
     {
@@ -340,7 +340,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00096_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00096_00",
       "frames": 5645,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00096_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00096_00.yaml",
       "action": "written"
     },
     {
@@ -348,7 +348,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00096_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00096_01",
       "frames": 4517,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00096_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00096_01.yaml",
       "action": "written"
     },
     {
@@ -356,7 +356,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00098_00/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00098_00",
       "frames": 6561,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00098_00.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00098_00.yaml",
       "action": "written"
     },
     {
@@ -364,7 +364,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00098_01/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00098_01",
       "frames": 9299,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00098_01.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00098_01.yaml",
       "action": "written"
     },
     {
@@ -372,7 +372,7 @@
       "data_path": "/media/public_dataset2/multiscan/scene_00098_02/outputs/color",
       "output_root": "/media/Pluto/richkung/My3DIS/outputs/scene_00098_02",
       "frames": 8464,
-      "config_path": "/media/Pluto/richkung/My3DIS/configs/multiscan/scene_00098_02.yaml",
+      "config_path": "/media/Pluto/richkung/My3DIS/configs/scenes/scene_00098_02.yaml",
       "action": "written"
     }
   ]

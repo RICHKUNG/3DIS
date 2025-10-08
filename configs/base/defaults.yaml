@@ -1,0 +1,38 @@
+# Shared defaults consumed by tooling when generating new workflow configs.
+defaults:
+  experiment:
+    levels: [2, 4, 6]
+    aggregate_output: false
+    output_layout: scene_level
+  stages:
+    gpu: null
+    ssam:
+      enabled: true
+      frames:
+        step: 50
+      ssam_freq: 2
+      min_area: 1000
+      stability_threshold: 1.0
+      persist_raw: false
+      skip_filtering: false
+      add_gaps: true
+      fill_area: 10000
+      append_timestamp: false
+      downscale_masks: true
+      downscale_ratio: 0.3
+    filter:
+      enabled: false
+    tracker:
+      enabled: true
+      prompt_mode: all_mask
+      max_propagate: 30
+      iou_threshold: 0.6
+      downscale_masks: true
+      downscale_ratio: 0.3
+      render_viz: false
+    report:
+      enabled: true
+      name: report.md
+      max_width: 640
+      record_timings: true
+      timing_output: stage_timings.json

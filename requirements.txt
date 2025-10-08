@@ -1,9 +1,9 @@
 # My3DIS pipeline requirements
 # This file bootstraps the shared Python environment for the pipeline.
-# The curated list in legacy/requirements.my3dis.base.txt intentionally excludes Torch
+# The curated list in archive/env/requirements.my3dis.base.txt intentionally excludes Torch
 # so we reuse it and add the GPU stack and notes here for convenience.
 
--r legacy/requirements.my3dis.base.txt
+-r archive/env/requirements.my3dis.base.txt
 
 # Core PyTorch stack – select the CUDA build that matches your system if needed.
 torch==2.5.1
@@ -12,7 +12,7 @@ torchvision==0.20.1
 # Triton version aligned with the Torch wheel above (pip usually installs it automatically).
 triton==3.4.0
 
-# For the complete frozen snapshot see legacy/requirements.my3dis.freeze.txt.
+# For the complete frozen snapshot see archive/env/requirements.my3dis.freeze.txt.
 # Install sibling repos after cloning:
 #   pip install -e ../Semantic-SAM
 #   pip install -e ../SAM2

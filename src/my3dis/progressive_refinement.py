@@ -5,6 +5,16 @@ Semantic-SAM 影像分割處理管線（精簡版 CLI）
 Author: Rich Kung
 Updated: 2025-09-09
 """
+if __package__ is None or __package__ == '':
+    import sys
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parents[2]
+    src_path = project_root / 'src'
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+
+
 
 # =====================
 # 套件匯入

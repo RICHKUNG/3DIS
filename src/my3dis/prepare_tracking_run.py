@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
 """Utility to duplicate a My3DIS run directory and optionally update YAML configs."""
-
 from __future__ import annotations
+
+if __package__ is None or __package__ == '':
+    import sys
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parents[2]
+    src_path = project_root / 'src'
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+
+
+
 
 import argparse
 import datetime as _dt

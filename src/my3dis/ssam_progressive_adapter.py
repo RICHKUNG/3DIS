@@ -16,12 +16,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from common_utils import (
+from my3dis.common_utils import (
     bbox_from_mask_xyxy,
     bbox_xyxy_to_xywh,
+    downscale_binary_mask,
     ensure_dir,
+    pack_binary_mask,
+    unpack_binary_mask,
 )
-from pipeline_defaults import (
+from my3dis.pipeline_defaults import (
     DEFAULT_SEMANTIC_SAM_ROOT as _DEFAULT_SEMANTIC_SAM_ROOT,
     expand_default,
 )
@@ -34,7 +37,7 @@ if DEFAULT_SEMANTIC_SAM_ROOT not in sys.path:
 
 # Import Semantic-SAM modules
 from semantic_sam import build_semantic_sam, prepare_image  # noqa: E402
-from progressive_refinement import (
+from my3dis.progressive_refinement import (
     progressive_refinement_masks,  # noqa: E402
     setup_output_directories,      # noqa: E402
 )
@@ -116,6 +119,7 @@ def generate_with_progressive(
     save_root: str = None,
     persist_outputs: bool = False,
     enable_gap_fill: bool = True,
+    mask_scale_ratio: float = 1.0,
 ) -> Dict[int, List[List[Dict[str, Any]]]]:
     """Generate per-level candidates using progressive_refinement.
 
@@ -129,6 +133,14 @@ def generate_with_progressive(
         pass
 
     semantic_sam = build_semantic_sam(model_type="L", ckpt=sam_ckpt_path)
+
+    try:
+        mask_scale_ratio = float(mask_scale_ratio)
+    except (TypeError, ValueError):
+        LOGGER.warning("Invalid mask_scale_ratio=%r; defaulting to 1.0", mask_scale_ratio)
+        mask_scale_ratio = 1.0
+    if mask_scale_ratio <= 0.0 or mask_scale_ratio > 1.0:
+        raise ValueError("mask_scale_ratio must be within (0, 1]")
 
     if fill_area is None:
         fill_area = min_area
@@ -197,7 +209,7 @@ def generate_with_progressive(
             if gap_components:
                 for comp in gap_components:
                     additional_gap_masks.append({
-                        'segmentation': comp,
+                        'segmentation': pack_binary_mask(comp, full_resolution_shape=comp.shape),
                         'stability_score': 1.0,
                         'area': int(comp.sum()),
                         'level': base_level,
@@ -220,11 +232,23 @@ def generate_with_progressive(
                 seg = m.get('segmentation')
                 if seg is None:
                     continue
-                seg_bool = np.asarray(seg, dtype=bool)
+                seg_bool = unpack_binary_mask(seg)
+                orig_shape = seg_bool.shape
                 area = int(m.get('area', int(np.sum(seg_bool))))
                 if area == 0:
                     continue
-                x1, y1, x2, y2 = bbox_from_mask_xyxy(seg_bool)
+                seg_scaled = seg_bool
+                applied_ratio = mask_scale_ratio
+                if mask_scale_ratio < 1.0:
+                    seg_scaled = downscale_binary_mask(seg_bool, mask_scale_ratio)
+                    if not seg_scaled.any() and seg_bool.any():
+                        LOGGER.debug(
+                            "Mask collapsed after downscale (ratio %.3f); keeping full resolution",
+                            mask_scale_ratio,
+                        )
+                        seg_scaled = seg_bool
+                        applied_ratio = 1.0
+                x1, y1, x2, y2 = bbox_from_mask_xyxy(seg_scaled)
                 bbox = bbox_xyxy_to_xywh((x1, y1, x2, y2))
                 stability = float(m.get('stability_score', 1.0))
                 frame_cands.append({
@@ -234,7 +258,11 @@ def generate_with_progressive(
                     'area': area,
                     'stability_score': stability,
                     'level': L,
-                    'segmentation': seg_bool,
+                    'mask_scale_ratio': applied_ratio,
+                    'segmentation': pack_binary_mask(
+                        seg_scaled,
+                        full_resolution_shape=orig_shape,
+                    ),
                 })
             per_level[L].append(frame_cands)
 

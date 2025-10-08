@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
 """Generate Markdown summary for a My3DIS experiment run."""
-
 from __future__ import annotations
+
+if __package__ is None or __package__ == '':
+    import sys
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parents[2]
+    src_path = project_root / 'src'
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+
+
+
 
 import argparse
 import json
@@ -13,7 +24,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from PIL import Image
 
-from common_utils import ensure_dir, format_duration
+from my3dis.common_utils import ensure_dir, format_duration
 
 
 @dataclass

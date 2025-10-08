@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
 """Re-apply filtering on stored Semantic-SAM raw candidates."""
-
 from __future__ import annotations
+
+if __package__ is None or __package__ == '':
+    import sys
+    from pathlib import Path
+
+    project_root = Path(__file__).resolve().parents[2]
+    src_path = project_root / 'src'
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
+
+
+
 
 import argparse
 import json
@@ -13,12 +24,15 @@ from typing import Dict, Iterable, List, Optional
 
 import numpy as np
 
-from common_utils import (
+from my3dis.common_utils import (
+    PACKED_MASK_KEY,
+    PACKED_SHAPE_KEY,
     RAW_DIR_NAME,
     RAW_META_TEMPLATE,
     RAW_MASK_TEMPLATE,
     encode_mask,
     ensure_dir,
+    unpack_binary_mask,
 )
 
 
@@ -77,14 +91,25 @@ def load_raw_frame(level_root: str, frame_idx: int) -> Optional[Dict[str, object
 
     mask_path = os.path.join(raw_dir, RAW_MASK_TEMPLATE.format(frame_idx=frame_idx))
     mask_stack = None
+    packed_masks = None
+    mask_shape = None
     has_mask = None
     if os.path.exists(mask_path):
-        npz = np.load(mask_path)
-        mask_stack = npz['masks']
-        has_mask = npz['has_mask'].astype(bool)
+        with np.load(mask_path) as npz:
+            if 'packed_masks' in npz:
+                packed_masks = np.asarray(npz['packed_masks'], dtype=np.uint8)
+                has_mask = np.asarray(npz.get('has_mask'), dtype=bool) if 'has_mask' in npz else None
+                shape_entry = npz.get('mask_shape')
+                if shape_entry is not None:
+                    mask_shape = tuple(int(v) for v in np.array(shape_entry).tolist())
+            elif 'masks' in npz:
+                mask_stack = np.asarray(npz['masks'], dtype=np.bool_)
+                has_mask = np.asarray(npz.get('has_mask'), dtype=bool) if 'has_mask' in npz else None
     return {
         'meta': meta,
         'mask_stack': mask_stack,
+        'packed_masks': packed_masks,
+        'mask_shape': mask_shape,
         'has_mask': has_mask,
     }
 
@@ -111,8 +136,10 @@ def filter_level(
         if payload is None:
             continue
         meta = payload['meta']
-        mask_stack = payload['mask_stack']
-        has_mask = payload['has_mask']
+        mask_stack = payload.get('mask_stack')
+        packed_masks = payload.get('packed_masks')
+        mask_shape = payload.get('mask_shape')
+        has_mask = payload.get('has_mask')
 
         candidates: List[Dict[str, object]] = meta.get('candidates', [])  # type: ignore[assignment]
         kept_items: List[Dict[str, object]] = []
@@ -136,6 +163,17 @@ def filter_level(
             if mask_stack is not None and 0 <= ri < len(mask_stack):
                 if has_mask is None or bool(has_mask[ri]):
                     mask_arr = np.asarray(mask_stack[ri], dtype=bool)
+            elif (
+                packed_masks is not None
+                and mask_shape is not None
+                and 0 <= ri < len(packed_masks)
+            ):
+                if has_mask is None or bool(has_mask[ri]):
+                    mask_payload = {
+                        PACKED_MASK_KEY: packed_masks[ri],
+                        PACKED_SHAPE_KEY: mask_shape,
+                    }
+                    mask_arr = unpack_binary_mask(mask_payload)
 
             if mask_arr is None:
                 dropped_count += 1

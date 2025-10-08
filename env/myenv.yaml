@@ -1,4 +1,4 @@
-name: My3DIS
+name: my3dis
 channels:
   - pytorch
   - defaults
