@@ -1,5 +1,5 @@
 experiment:
-  name: all_1009
+  name: parallel_1009
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
@@ -10,11 +10,16 @@ experiment:
   # scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
 
   scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
-  scene_end: scene_00055_01    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00048_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00077_01    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00058_00  # replace with first scene name (inclusive) to limit the run
+  scene_end: scene_00022_00    # replace with last scene name (inclusive) to limit the run
+  # scene_start: scene_00022_01  # replace with first scene name (inclusive) to limit the run
+  # scene_end: scene_00048_01    # replace with last scene name (inclusive) to limit the run
+  # scene_start: scene_00051_00  # replace with first scene name (inclusive) to limit the run
+  # scene_end: scene_00065_01    # replace with last scene name (inclusive) to limit the run
+  # scene_start: scene_00075_00  # replace with first scene name (inclusive) to limit the run
+  # scene_end: scene_00089_01    # replace with last scene name (inclusive) to limit the run
+  # scene_start: scene_00091_00  # replace with first scene name (inclusive) to limit the run
   # scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
+  parallel_scenes: 1
   levels:
     - 2
     - 4
@@ -24,7 +29,7 @@ experiment:
   output_layout: scene_level
   output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
 stages:
-  gpu: 0
+  gpu: 0  # a
   ssam:
     enabled: true
     frames:
@@ -51,6 +56,8 @@ stages:
     downscale_masks: true
     downscale_ratio: 0.3
     render_viz: true
+    comparison_sampling:
+      max_frames: 6
   report:
     enabled: true
     name: report.md

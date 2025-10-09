@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -29,6 +31,8 @@ __all__ = [
     'build_object_segments_archive',
     'save_comparison_proposals',
 ]
+
+LOGGER = logging.getLogger(__name__)
 
 
 def encode_packed_mask_for_json(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -77,6 +81,78 @@ def _ensure_frames_dir(path: str) -> str:
 def _frame_entry_name(frame_idx: int) -> str:
     return f"frames/frame_{int(frame_idx):06d}.json"
 
+DEFAULT_COMPARISON_MAX_FRAMES = 12
+
+
+def _normalize_stride(value: Optional[int]) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        stride = int(value)
+    except (TypeError, ValueError):
+        return None
+    return stride if stride > 0 else None
+
+
+def _normalize_max_samples(value: Optional[int]) -> Optional[int]:
+    if value is None:
+        return DEFAULT_COMPARISON_MAX_FRAMES
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_COMPARISON_MAX_FRAMES
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _downsample_evenly(values: Sequence[int], target: int) -> List[int]:
+    if target >= len(values):
+        return list(values)
+    if target <= 1:
+        return [values[0]]
+    positions = np.linspace(0, len(values) - 1, num=target, dtype=int)
+    selected = [int(pos) for pos in positions]
+    selected[0] = 0
+    selected[-1] = len(values) - 1
+    result: List[int] = []
+    for idx in selected:
+        value = values[idx]
+        if value in result:
+            continue
+        result.append(value)
+    if result[0] != values[0]:
+        result.insert(0, values[0])
+    if result[-1] != values[-1]:
+        result.append(values[-1])
+    return result[:target] if target > 0 else result
+
+
+def _apply_sampling_to_frames(
+    frames: List[int],
+    sample_stride: Optional[int],
+    max_samples: Optional[int],
+) -> List[int]:
+    if not frames:
+        return []
+    stride = _normalize_stride(sample_stride)
+    target = _normalize_max_samples(max_samples)
+
+    sampled = list(frames)
+    if stride:
+        sampled = sampled[::stride]
+        if sampled[-1] != frames[-1]:
+            sampled.append(frames[-1])
+
+    sampled = list(dict.fromkeys(sampled))
+    if sampled[0] != frames[0]:
+        sampled.insert(0, frames[0])
+    if sampled[-1] != frames[-1]:
+        sampled.append(frames[-1])
+
+    if target is not None and len(sampled) > target:
+        sampled = _downsample_evenly(sampled, target)
+    return sorted(set(sampled))
 
 def build_video_segments_archive(
     frames: Iterable[Dict[str, Any]],
@@ -157,6 +233,7 @@ def build_object_segments_archive(
     return actual_path
 
 
+# NOTE: keep in sync with workflow/summary consumers when updating payload schema.
 def save_comparison_proposals(
     viz_dir: str,
     base_frames_dir: str,
@@ -168,35 +245,30 @@ def save_comparison_proposals(
     frame_name_lookup: Optional[Dict[int, str]] = None,
     subset_dir: Optional[str] = None,
     subset_map: Optional[Dict[int, str]] = None,
-) -> None:
-    """輸出 SAM2 與 SSAM 的遮罩對照圖。"""
+    sample_stride: Optional[int] = None,
+    max_samples: Optional[int] = None,
+) -> Dict[str, Any]:
+    """輸出 SAM2 與 SSAM 的遮罩對照圖，並回傳摘要描述。"""
     from PIL import Image, ImageDraw
 
-    out_dir = ensure_dir(os.path.join(viz_dir, 'compare'))
+    viz_path = Path(ensure_dir(viz_dir))
+    compare_path = Path(ensure_dir(os.path.join(str(viz_path), 'compare')))
 
     if frame_numbers is None:
         frame_numbers = [idx for idx in range(len(filtered_per_frame))]
     frame_numbers = [int(fn) for fn in frame_numbers]
     frame_number_to_local = {fn: idx for idx, fn in enumerate(frame_numbers)}
 
-    frames_to_render = sorted(frame_numbers)
+    requested_frames = sorted(frame_numbers)
+    frames_to_render = list(requested_frames)
     if frames_to_save is not None:
         frames_to_render = [f for f in frames_to_save if f in frame_number_to_local]
 
-    if frames_to_render:
-        total = len(frames_to_render)
-        candidate_indices = [0, total // 2, total - 1]
-        seen = set()
-        ordered_frames: List[int] = []
-        for idx in candidate_indices:
-            if idx < 0 or idx >= total:
-                continue
-            frame_id = frames_to_render[idx]
-            if frame_id in seen:
-                continue
-            ordered_frames.append(frame_id)
-            seen.add(frame_id)
-        frames_to_render = ordered_frames
+    frames_to_render = _apply_sampling_to_frames(frames_to_render, sample_stride, max_samples)
+    if not frames_to_render and requested_frames:
+        frames_to_render = [requested_frames[0]]
+    candidate_targets = list(frames_to_render)
+    selected_frames = list(frames_to_render)
 
     rng = np.random.default_rng(0)
     sam_color_map: Dict[int, Tuple[int, int, int]] = {}
@@ -290,10 +362,16 @@ def save_comparison_proposals(
             rgb[inst_map == obj_id] = sam_color_map[obj_id]
         return Image.fromarray(rgb, 'RGB')
 
-    rendered_count = 0
+    rendered_frames: List[int] = []
+    rendered_images_rel: List[str] = []
+    missing_frame_sources: List[int] = []
+    missing_mask_shapes: List[int] = []
+    skipped_without_candidates: List[int] = []
+
     for f_idx in frames_to_render:
         local_idx = frame_number_to_local.get(f_idx)
         if local_idx is None or local_idx >= len(filtered_per_frame):
+            skipped_without_candidates.append(int(f_idx))
             continue
 
         filtered_candidates = filtered_per_frame[local_idx] or []
@@ -312,7 +390,11 @@ def save_comparison_proposals(
                     H, W = first_mask.shape[:2]
 
         frame_path = resolve_frame_path(f_idx)
-        if frame_path is None or H is None or W is None:
+        if frame_path is None:
+            missing_frame_sources.append(int(f_idx))
+            continue
+        if H is None or W is None:
+            missing_mask_shapes.append(int(f_idx))
             continue
 
         frame_img = Image.open(frame_path).convert('RGB')
@@ -350,9 +432,109 @@ def save_comparison_proposals(
         draw.text((frame_img.width + 10, 10), "SSAM filtered", fill=(255, 255, 255))
         draw.text((frame_img.width * 2 + 10, 10), "SAM2 propagated", fill=(255, 255, 255))
 
-        out_name = os.path.join(out_dir, f"L{level}_{f_idx:05d}.png")
-        canvas.save(out_name)
-        rendered_count += 1
+        out_path = compare_path / f"L{int(level)}_{int(f_idx):05d}.png"
+        canvas.save(out_path)
+        rendered_frames.append(int(f_idx))
+        rendered_images_rel.append(os.path.relpath(out_path, viz_path))
+
+    rendered_count = len(rendered_frames)
+    generated_at = datetime.now(timezone.utc).isoformat()
+
+    issues: Dict[str, List[int]] = {}
+    if missing_frame_sources:
+        issues['missing_frame_sources'] = sorted(set(missing_frame_sources))
+    if missing_mask_shapes:
+        issues['missing_mask_shapes'] = sorted(set(missing_mask_shapes))
+    if skipped_without_candidates:
+        issues['skipped_without_candidates'] = sorted(set(skipped_without_candidates))
+
+    warning_payload: Optional[Dict[str, Any]] = None
+    fallback_path: Optional[Path] = None
 
     if rendered_count == 0:
-        return
+        if not candidate_targets:
+            warning_code = 'comparison.no_targets'
+            warning_msg = 'No frames were selected for comparison rendering.'
+        elif len(missing_frame_sources) == len(selected_frames) and selected_frames:
+            warning_code = 'comparison.missing_sources'
+            warning_msg = 'Source frames required for comparison previews were not found.'
+        elif len(missing_mask_shapes) == len(selected_frames) and selected_frames:
+            warning_code = 'comparison.missing_masks'
+            warning_msg = 'Mask metadata was unavailable for comparison previews.'
+        else:
+            warning_code = 'comparison.render_empty'
+            warning_msg = 'Comparison previews could not be generated.'
+
+        warning_payload = {
+            'code': warning_code,
+            'message': warning_msg,
+            'level': int(level),
+            'details': {
+                'requested_frames': requested_frames,
+                'frames_attempted': selected_frames,
+                **({'issues': issues} if issues else {}),
+            },
+        }
+        fallback_path = compare_path / f"L{int(level):02d}_no_comparisons.json"
+        fallback_payload = {
+            'level': int(level),
+            'generated_at': generated_at,
+            'warning': warning_payload,
+            'issues': issues,
+            'requested_frames': requested_frames,
+            'frames_attempted': selected_frames,
+        }
+        try:
+            with fallback_path.open('w', encoding='utf-8') as handle:
+                json.dump(fallback_payload, handle, indent=2, ensure_ascii=False)
+        except OSError:
+            LOGGER.warning("Failed to write comparison fallback artifact at %s", fallback_path, exc_info=True)
+
+    summary_path = compare_path / f"L{int(level):02d}_comparison_summary.json"
+    summary_payload = {
+        'level': int(level),
+        'generated_at': generated_at,
+        'requested_frames': requested_frames,
+        'frames_attempted': selected_frames,
+        'rendered_frames': rendered_frames,
+        'rendered_count': rendered_count,
+        'rendered_images': rendered_images_rel,
+    }
+    if issues:
+        summary_payload['issues'] = issues
+    if warning_payload:
+        summary_payload['warning'] = warning_payload
+    if fallback_path is not None:
+        summary_payload['fallback_path'] = os.path.relpath(fallback_path, viz_path)
+    try:
+        with summary_path.open('w', encoding='utf-8') as handle:
+            json.dump(summary_payload, handle, indent=2, ensure_ascii=False)
+    except OSError:
+        LOGGER.warning("Failed to write comparison summary at %s", summary_path, exc_info=True)
+
+    result: Dict[str, Any] = {
+        'level': int(level),
+        'generated_at': generated_at,
+        'rendered_count': rendered_count,
+        'requested_frames': requested_frames,
+        'frames_attempted': selected_frames,
+        'rendered_frames': rendered_frames,
+        'rendered_images_rel': rendered_images_rel,
+        'summary_path': str(summary_path),
+        'compare_dir': str(compare_path),
+    }
+    if issues:
+        result['issues'] = issues
+    if warning_payload:
+        result['warning'] = warning_payload
+    if fallback_path is not None:
+        result['fallback_path'] = str(fallback_path)
+
+    if warning_payload:
+        LOGGER.warning(
+            "[Level %s] No comparison previews generated (code=%s)",
+            level,
+            warning_payload['code'],
+        )
+
+    return result

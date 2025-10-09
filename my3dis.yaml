@@ -1,5 +1,6 @@
 name: My3DIS
 channels:
+  - conda-forge
   - pytorch
   - defaults
   - https://repo.anaconda.com/pkgs/main

@@ -14,16 +14,17 @@ from my3dis.filter_candidates import run_filtering
 from my3dis.generate_report import build_report
 
 from .errors import WorkflowConfigError, WorkflowRuntimeError
-from .scenes import derive_scene_metadata, resolve_levels, resolve_stage_gpu, stage_frames_string
+from .scenes import derive_scene_metadata, resolve_levels, stage_frames_string
 from .summary import (
     StageRecorder,
     append_run_history,
     apply_scene_level_layout,
+    collect_environment_snapshot,
     export_stage_timings,
     load_manifest,
     update_summary_config,
 )
-from .utils import now_local_iso, using_gpu
+from .utils import now_local_iso, serialise_gpu_spec, using_gpu
 
 
 @dataclass
@@ -62,13 +63,16 @@ class SceneWorkflow:
         self.manifest: Optional[Dict[str, Any]] = None
 
         self._populate_experiment_metadata()
+        self._stage_gpu_env: Optional[str] = None
 
     def run(self) -> Dict[str, Any]:
-        self._run_ssam_stage()
-        self._run_filter_stage()
-        self._run_tracker_stage()
-        self._run_report_stage()
-        self._finalize()
+        with using_gpu(self.default_stage_gpu):
+            self._stage_gpu_env = serialise_gpu_spec(os.environ.get('CUDA_VISIBLE_DEVICES'))
+            self._run_ssam_stage()
+            self._run_filter_stage()
+            self._run_tracker_stage()
+            self._run_report_stage()
+            self._finalize()
         return self.summary
 
     def _stage_cfg(self, name: str) -> Dict[str, Any]:
@@ -186,10 +190,8 @@ class SceneWorkflow:
             )
         sam_ckpt = str(sam_ckpt_path)
 
-        ssam_gpu = resolve_stage_gpu(stage_cfg, self.default_stage_gpu)
-
         print('Stage SSAM: Semantic-SAM 採樣與候選輸出')
-        with StageRecorder(self.summary, 'ssam', ssam_gpu), using_gpu(ssam_gpu):
+        with StageRecorder(self.summary, 'ssam', self._stage_gpu_env):
             run_root, manifest = run_candidate_generation(
                 data_path=self.data_path,
                 levels=list_to_csv(levels),
@@ -246,7 +248,6 @@ class SceneWorkflow:
 
         manifest = self._ensure_manifest()
         levels = resolve_levels(stage_cfg, manifest, self.experiment_cfg.get('levels'))
-        filter_gpu = resolve_stage_gpu(stage_cfg, self.default_stage_gpu)
         ssam_cfg = self._stage_cfg('ssam')
         min_area = int(stage_cfg.get('min_area', ssam_cfg.get('min_area', 300)))
         stability = float(stage_cfg.get('stability_threshold', ssam_cfg.get('stability_threshold', 0.9)))
@@ -262,7 +263,7 @@ class SceneWorkflow:
             return
 
         print('Stage Filter: 重新套用候選遮罩篩選條件')
-        with StageRecorder(self.summary, 'filter', filter_gpu), using_gpu(filter_gpu):
+        with StageRecorder(self.summary, 'filter', self._stage_gpu_env):
             run_filtering(
                 root=str(run_dir),
                 levels=levels,
@@ -294,7 +295,6 @@ class SceneWorkflow:
 
         manifest = self._ensure_manifest() or {}
         levels = resolve_levels(stage_cfg, manifest, self.experiment_cfg.get('levels'))
-        tracker_gpu = resolve_stage_gpu(stage_cfg, self.default_stage_gpu)
         max_propagate = stage_cfg.get('max_propagate')
         iou_threshold = float(stage_cfg.get('iou_threshold', 0.6))
         prompt_mode_raw = str(stage_cfg.get('prompt_mode', 'all_mask')).lower()
@@ -332,9 +332,35 @@ class SceneWorkflow:
         sam2_ckpt = stage_cfg.get('sam2_ckpt') or self.experiment_cfg.get('sam2_ckpt')
         render_viz = bool(stage_cfg.get('render_viz', True))
 
+        comparison_sample_stride: Optional[int] = None
+        comparison_max_samples: Optional[int] = None
+        comparison_cfg = stage_cfg.get('comparison_sampling')
+        if comparison_cfg is not None:
+            if not isinstance(comparison_cfg, dict):
+                raise WorkflowConfigError('tracker.comparison_sampling must be a mapping')
+            if 'stride' in comparison_cfg:
+                try:
+                    comparison_sample_stride = int(comparison_cfg['stride'])
+                except (TypeError, ValueError):
+                    raise WorkflowConfigError(
+                        f"Invalid tracker.comparison_sampling.stride={comparison_cfg['stride']!r}"
+                    )
+                if comparison_sample_stride <= 0:
+                    raise WorkflowConfigError('tracker.comparison_sampling.stride must be > 0')
+            if 'max_frames' in comparison_cfg:
+                try:
+                    max_frames_val = int(comparison_cfg['max_frames'])
+                except (TypeError, ValueError):
+                    raise WorkflowConfigError(
+                        f"Invalid tracker.comparison_sampling.max_frames={comparison_cfg['max_frames']!r}"
+                    )
+                if max_frames_val < 0:
+                    raise WorkflowConfigError('tracker.comparison_sampling.max_frames must be >= 0')
+                comparison_max_samples = max_frames_val if max_frames_val > 0 else None
+
         run_dir = self._ensure_run_dir()
         print('Stage Tracker: SAM2 追蹤與遮罩匯出')
-        with StageRecorder(self.summary, 'tracker', tracker_gpu), using_gpu(tracker_gpu):
+        with StageRecorder(self.summary, 'tracker', self._stage_gpu_env):
             run_candidate_tracking(
                 data_path=self.data_path,
                 candidates_root=str(run_dir),
@@ -347,6 +373,8 @@ class SceneWorkflow:
                 long_tail_box_prompt=long_tail_box,
                 all_box_prompt=all_box,
                 mask_scale_ratio=mask_scale_ratio,
+                comparison_sample_stride=comparison_sample_stride,
+                comparison_max_samples=comparison_max_samples,
                 render_viz=render_viz,
             )
 
@@ -361,9 +389,29 @@ class SceneWorkflow:
                     'downscale_masks': downscale_enabled,
                     'downscale_ratio': mask_scale_ratio,
                     'render_viz': render_viz,
+                    'comparison_sampling': {
+                        'stride': comparison_sample_stride,
+                        'max_frames': comparison_max_samples,
+                    },
                 }
             }
         )
+        self.manifest = load_manifest(run_dir)
+        manifest_snapshot = self.manifest or {}
+        artifacts_entry = stage_summary.setdefault('artifacts', {})
+        tracking_artifacts = manifest_snapshot.get('tracking_artifacts')
+        if tracking_artifacts:
+            artifacts_entry['tracking'] = tracking_artifacts
+        comparison_summary = manifest_snapshot.get('comparison_summary')
+        if comparison_summary:
+            artifacts_entry['comparison'] = comparison_summary
+        tracker_warnings = [
+            warning
+            for warning in manifest_snapshot.get('warnings', [])
+            if isinstance(warning, dict) and warning.get('stage') == 'tracker'
+        ]
+        if tracker_warnings:
+            stage_summary.setdefault('warnings', []).extend(tracker_warnings)
 
     def _run_report_stage(self) -> None:
         stage_cfg = self._stage_cfg('report')
@@ -372,11 +420,10 @@ class SceneWorkflow:
 
         report_name = stage_cfg.get('name', 'report.md')
         max_width = int(stage_cfg.get('max_width', 960))
-        report_gpu = resolve_stage_gpu(stage_cfg, self.default_stage_gpu)
         run_dir = self._ensure_run_dir()
 
         print('Stage Report: 生成 Markdown 紀錄')
-        with StageRecorder(self.summary, 'report', report_gpu), using_gpu(report_gpu):
+        with StageRecorder(self.summary, 'report', self._stage_gpu_env):
             build_report(run_dir, report_name=report_name, max_preview_width=max_width)
             report_summary = self._stage_summary('report').setdefault('params', {})
             report_summary['max_width'] = max_width
@@ -397,6 +444,17 @@ class SceneWorkflow:
 
         self.summary['generated_at'] = now_local_iso()
         self.summary['run_dir'] = str(run_dir)
+        env_snapshot = collect_environment_snapshot()
+        self.summary['environment'] = env_snapshot
+        env_path = run_dir / 'environment_snapshot.json'
+        try:
+            with env_path.open('w', encoding='utf-8') as handle:
+                json.dump(env_snapshot, handle, indent=2)
+        except OSError:
+            env_path = None
+        artifacts_entry = self.summary.setdefault('artifacts', {})
+        if env_path is not None:
+            artifacts_entry['environment_snapshot'] = str(env_path)
 
         if self.output_layout_mode == 'scene_level':
             aggregated_payload = apply_scene_level_layout(run_dir, self.summary, manifest)

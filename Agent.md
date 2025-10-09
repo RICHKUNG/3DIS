@@ -45,6 +45,16 @@ Next Actions
 2) Update or clone the notebook (`archive/experiments/algorithm1.ipynb`) to reuse the helper functions if interactive analysis is needed.
 3) Execute the refreshed pipeline on a larger slice using the new `--ssam-freq` / `--sam2-max-propagate` knobs to validate runtime savings. ✅ small-scale verification pending.
 4) Push code to https://github.com/RICHKUNG/3DIS when credentials are ready.
+5) Refactor `src/my3dis/track_from_candidates.py` by extracting orchestration helpers for `run_tracking` (context prep, subset rebuild, per-level runner, manifest update).
+6) Introduce a shared config dataclass and helper modules so CLI orchestration can reuse pipeline logic before expanding additional refactors.
+
+Refactor TODOs
+- `src/my3dis/track_from_candidates.py`: split `run_tracking` into helpers (`prepare_tracking_context`, `ensure_subset_video`, `run_level_tracking`, `persist_level_outputs`, `update_manifest`) or a `TrackingPipeline` class to reduce scope.
+- `src/my3dis/track_from_candidates.py`: break down `sam2_tracking` via `_process_batch`, `_collect_segments`, `_record_preview` helpers to isolate dedup, propagation, and preview handling.
+- `src/my3dis/generate_candidates.py`: add a `CandidateGenerationConfig` dataclass and move frame selection/run-root/manifest logic into dedicated helpers.
+- `src/my3dis/generate_candidates.py`: wrap raw-candidate persistence in a `RawFramePersistor` (or equivalent helpers) to manage mask packing and storage side effects.
+- `src/my3dis/progressive_refinement.py`: introduce a `MaskRefinementPipeline`/`RefinementNode` structure and extract level preparation, refinement, and viz persistence steps.
+- `src/my3dis/workflow/scene_workflow.py`: promote `_run_ssam_stage`/`_run_tracker_stage` into reusable stage objects so orchestration code stays short and logging is shared.
 
 Open Items
 - 啟動第一批跨場景 batch（透過 `scripts/pipeline/run_workflow_batch.py`），並確認 `logs/workflow_history.csv`、`logs/batch/*.json` 的內容完整。

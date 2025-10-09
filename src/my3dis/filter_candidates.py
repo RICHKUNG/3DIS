@@ -27,13 +27,11 @@ import numpy as np
 from my3dis.common_utils import (
     PACKED_MASK_KEY,
     PACKED_SHAPE_KEY,
-    RAW_DIR_NAME,
-    RAW_META_TEMPLATE,
-    RAW_MASK_TEMPLATE,
     encode_mask,
     ensure_dir,
     unpack_binary_mask,
 )
+from my3dis.raw_archive import RawCandidateArchiveReader
 
 
 @dataclass
@@ -62,56 +60,6 @@ def bbox_from_mask(mask: np.ndarray) -> Optional[List[int]]:
     return [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
 
 
-def iter_level_raw_frames(level_root: str) -> Iterable[int]:
-    raw_dir = os.path.join(level_root, RAW_DIR_NAME)
-    if not os.path.isdir(raw_dir):
-        return []
-    frame_indices = []
-    for fname in os.listdir(raw_dir):
-        if not fname.endswith('.json'):
-            continue
-        stem = fname[:-5]
-        if not stem.startswith('frame_'):
-            continue
-        try:
-            frame_idx = int(stem.split('_')[1])
-        except (IndexError, ValueError):
-            continue
-        frame_indices.append(frame_idx)
-    return sorted(frame_indices)
-
-
-def load_raw_frame(level_root: str, frame_idx: int) -> Optional[Dict[str, object]]:
-    raw_dir = os.path.join(level_root, RAW_DIR_NAME)
-    meta_path = os.path.join(raw_dir, RAW_META_TEMPLATE.format(frame_idx=frame_idx))
-    if not os.path.exists(meta_path):
-        return None
-    with open(meta_path, 'r') as f:
-        meta = json.load(f)
-
-    mask_path = os.path.join(raw_dir, RAW_MASK_TEMPLATE.format(frame_idx=frame_idx))
-    mask_stack = None
-    packed_masks = None
-    mask_shape = None
-    has_mask = None
-    if os.path.exists(mask_path):
-        with np.load(mask_path) as npz:
-            if 'packed_masks' in npz:
-                packed_masks = np.asarray(npz['packed_masks'], dtype=np.uint8)
-                has_mask = np.asarray(npz.get('has_mask'), dtype=bool) if 'has_mask' in npz else None
-                shape_entry = npz.get('mask_shape')
-                if shape_entry is not None:
-                    mask_shape = tuple(int(v) for v in np.array(shape_entry).tolist())
-            elif 'masks' in npz:
-                mask_stack = np.asarray(npz['masks'], dtype=np.bool_)
-                has_mask = np.asarray(npz.get('has_mask'), dtype=bool) if 'has_mask' in npz else None
-    return {
-        'meta': meta,
-        'mask_stack': mask_stack,
-        'packed_masks': packed_masks,
-        'mask_shape': mask_shape,
-        'has_mask': has_mask,
-    }
 
 
 def filter_level(
@@ -122,7 +70,8 @@ def filter_level(
     verbose: bool = True,
 ) -> FilterStats:
     stats = FilterStats()
-    raw_frames = list(iter_level_raw_frames(level_root))
+    archive = RawCandidateArchiveReader(level_root)
+    raw_frames = archive.frame_indices()
     if not raw_frames:
         if verbose:
             print(f"No raw frames found in {level_root} — skipping")
@@ -132,7 +81,7 @@ def filter_level(
     frames_meta: List[Dict[str, object]] = []
 
     for frame_idx in raw_frames:
-        payload = load_raw_frame(level_root, frame_idx)
+        payload = archive.load_frame(frame_idx)
         if payload is None:
             continue
         meta = payload['meta']

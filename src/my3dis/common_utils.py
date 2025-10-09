@@ -21,6 +21,7 @@ PACKED_MASK_KEY = "packed_bits"
 PACKED_MASK_B64_KEY = "packed_bits_b64"
 PACKED_SHAPE_KEY = "shape"
 PACKED_ORIG_SHAPE_KEY = "full_resolution_shape"
+ENTRY_LOG_FORMAT = "%(asctime)s [pid=%(process)d] %(levelname)s %(message)s"
 
 
 def ensure_dir(path: str | Path) -> str:
@@ -258,3 +259,14 @@ def setup_logging(
             logging.getLogger(name).setLevel(logging.WARNING)
 
     return explicit_level
+
+
+def configure_entry_log_format(*, explicit_level: Optional[int] = None) -> int:
+    """Ensure root handlers emit timestamps and PIDs like the CLI entrypoint."""
+
+    level = setup_logging(explicit_level=explicit_level)
+    formatter = logging.Formatter(ENTRY_LOG_FORMAT)
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers:
+        handler.setFormatter(formatter)
+    return level

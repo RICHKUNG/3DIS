@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import concurrent.futures
+from collections import deque
 import json
 import logging
+import multiprocessing as mp
 import os
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .errors import WorkflowConfigError, WorkflowRuntimeError
 from .scene_workflow import run_scene_workflow
 from .scenes import expand_output_path_template, normalize_scene_list
 from .utils import now_local_iso, now_local_stamp
+
+from my3dis.common_utils import configure_entry_log_format
+
+from oom_monitor.memory_events import MemoryEventsReader, OOMEvent
 
 LOGGER = logging.getLogger(__name__)
 
@@ -26,7 +33,67 @@ class _SceneJob:
 
 
 def _run_scene_job(job: _SceneJob) -> Dict[str, Any]:
+    level = configure_entry_log_format()
+    LOGGER.setLevel(level)
     return run_scene_workflow(**job.kwargs)
+
+
+def _scene_job_worker(conn: mp.connection.Connection, job: _SceneJob) -> None:
+    """Execute a scene workflow inside an isolated process and report back the outcome."""
+    try:
+        summary = _run_scene_job(job)
+    except BaseException as exc:  # pragma: no cover - propagate detailed diagnostics
+        try:
+            conn.send(
+                {
+                    'status': 'error',
+                    'exc_type': f'{type(exc).__module__}.{type(exc).__name__}',
+                    'exc_message': str(exc),
+                    'traceback': traceback.format_exc(),
+                }
+            )
+        except OSError:
+            pass
+    else:
+        try:
+            conn.send({'status': 'ok', 'summary': summary})
+        except OSError:
+            pass
+    finally:
+        conn.close()
+
+
+def _run_scene_job_isolated(job: _SceneJob) -> Tuple[bool, Dict[str, Any]]:
+    """Launch a dedicated child process for a scene job and return success flag with payload."""
+    ctx = mp.get_context('spawn')
+    parent_conn, child_conn = ctx.Pipe(duplex=False)
+    process = ctx.Process(target=_scene_job_worker, args=(child_conn, job), daemon=False)
+    try:
+        process.start()
+    finally:
+        child_conn.close()
+
+    payload: Dict[str, Any] = {}
+    try:
+        payload = parent_conn.recv()
+    except EOFError:
+        payload = {}
+    finally:
+        parent_conn.close()
+        process.join()
+
+    if payload.get('status') == 'ok':
+        return True, payload['summary']
+
+    error_payload = dict(payload)
+    error_payload['exitcode'] = process.exitcode
+    if not error_payload.get('exc_type'):
+        error_payload.setdefault('exc_type', 'RuntimeError')
+        error_payload.setdefault(
+            'exc_message',
+            f'Isolated scene process exited with code {process.exitcode}',
+        )
+    return False, error_payload
 
 
 def _resolve_path_override(env_var: str, configured: Optional[str]) -> Optional[str]:
@@ -36,11 +103,62 @@ def _resolve_path_override(env_var: str, configured: Optional[str]) -> Optional[
     return override if override else configured
 
 
+def _prepare_memory_event_readers(
+    paths: Optional[Sequence[Path | str]],
+) -> Tuple[List[MemoryEventsReader], List[Path]]:
+    readers: List[MemoryEventsReader] = []
+    missing: List[Path] = []
+    if not paths:
+        return readers, missing
+    for raw in paths:
+        path = Path(raw)
+        reader = MemoryEventsReader(path)
+        try:
+            snapshot = reader.read()
+        except OSError:
+            missing.append(reader.path)
+            continue
+        if 'oom' in snapshot or 'oom_kill' in snapshot:
+            readers.append(reader)
+        else:
+            missing.append(reader.path)
+    return readers, missing
+
+
+def _read_memory_snapshots(readers: Sequence[MemoryEventsReader]) -> Dict[Path, Dict[str, int]]:
+    snapshot: Dict[Path, Dict[str, int]] = {}
+    for reader in readers:
+        try:
+            snapshot[reader.path] = reader.read()
+        except OSError:
+            snapshot[reader.path] = {}
+    return snapshot
+
+
+def _detect_memory_events(
+    readers: Sequence[MemoryEventsReader],
+    previous: Dict[Path, Dict[str, int]],
+    current: Dict[Path, Dict[str, int]],
+) -> List[OOMEvent]:
+    events: List[OOMEvent] = []
+    for reader in readers:
+        events.extend(reader.detect_oom_events(previous.get(reader.path), current.get(reader.path, {})))
+    return events
+
+
+def _format_oom_events(events: Sequence[OOMEvent]) -> str:
+    parts = []
+    for event in events:
+        parts.append(f"{event.path.name}:{event.field}+{event.delta}")
+    return ", ".join(parts)
+
+
 def execute_workflow(
     config: Dict[str, Any],
     *,
     override_output: Optional[str] = None,
     config_path: Optional[Path] = None,
+    memory_event_paths: Optional[Sequence[Path | str]] = None,
 ) -> List[Dict[str, Any]]:
     """根據設定檔執行場景或多場景工作流程。"""
     experiment_cfg = config.get('experiment', {})
@@ -51,6 +169,19 @@ def execute_workflow(
     if not isinstance(stages_cfg, dict):
         raise WorkflowConfigError('`stages` section must be a mapping')
     default_stage_gpu = stages_cfg.get('gpu')
+
+    memory_readers, missing_memory_paths = _prepare_memory_event_readers(memory_event_paths)
+    if memory_event_paths is not None:
+        if missing_memory_paths and not memory_readers:
+            LOGGER.warning(
+                "memory.events monitoring unavailable (%s); parallel scene execution will be disabled",
+                ", ".join(str(path) for path in missing_memory_paths),
+            )
+        elif missing_memory_paths:
+            LOGGER.warning(
+                "Some memory.events files lack OOM counters: %s",
+                ", ".join(str(path) for path in missing_memory_paths),
+            )
 
     scenes_cfg = experiment_cfg.get('scenes')
     scene_start_cfg = experiment_cfg.get('scene_start')
@@ -109,6 +240,11 @@ def execute_workflow(
             )
             parallel_scenes = 1
         parallel_scenes = max(1, parallel_scenes)
+        if parallel_scenes > 1 and memory_event_paths is not None and not memory_readers:
+            LOGGER.warning(
+                "Parallel execution requested but OOM monitoring is unavailable; forcing sequential scene scheduling",
+            )
+            parallel_scenes = 1
 
         jobs: List[_SceneJob] = []
         for index, scene_name in enumerate(scenes_list):
@@ -150,16 +286,42 @@ def execute_workflow(
         summaries_ordered: List[Optional[Dict[str, Any]]] = [None] * len(jobs)
         scene_errors: List[Tuple[_SceneJob, BaseException]] = []
 
+        isolate_cfg = experiment_cfg.get('isolate_scenes')
+        if isolate_cfg is None:
+            isolate_scenes = parallel_scenes == 1
+        else:
+            isolate_scenes = bool(isolate_cfg)
+            if isolate_scenes and parallel_scenes > 1:
+                LOGGER.warning(
+                    "experiment.isolate_scenes=%r requested with parallel_scenes=%d; isolation only applies when remaining scenes run sequentially",
+                    isolate_cfg,
+                    parallel_scenes,
+                )
+
         if parallel_scenes > 1 and len(jobs) > 1:
             LOGGER.info(
                 "Executing %d scenes with up to %d parallel workers",
                 len(jobs),
                 parallel_scenes,
             )
+            pending_jobs = deque(jobs)
+            future_map: Dict[concurrent.futures.Future[Dict[str, Any]], _SceneJob] = {}
+            executor_backoff = False
+            previous_snapshot = _read_memory_snapshots(memory_readers) if memory_readers else {}
+
+            def submit_next(executor: concurrent.futures.ProcessPoolExecutor) -> None:
+                if executor_backoff or not pending_jobs:
+                    return
+                next_job = pending_jobs.popleft()
+                future_map[executor.submit(_run_scene_job, next_job)] = next_job
+
             with concurrent.futures.ProcessPoolExecutor(max_workers=parallel_scenes) as executor:
-                future_map = {executor.submit(_run_scene_job, job): job for job in jobs}
-                for future in concurrent.futures.as_completed(future_map):
-                    job = future_map[future]
+                while not executor_backoff and pending_jobs and len(future_map) < parallel_scenes:
+                    submit_next(executor)
+
+                while future_map:
+                    future = next(concurrent.futures.as_completed(future_map))
+                    job = future_map.pop(future)
                     try:
                         summary = future.result()
                     except BaseException as exc:  # pragma: no cover - propagate detailed logs
@@ -167,10 +329,94 @@ def execute_workflow(
                         scene_errors.append((job, exc))
                     else:
                         summaries_ordered[job.index] = summary
+
+                    if memory_readers:
+                        current_snapshot = _read_memory_snapshots(memory_readers)
+                        events = _detect_memory_events(memory_readers, previous_snapshot, current_snapshot)
+                        previous_snapshot = current_snapshot
+                        if events and not executor_backoff:
+                            executor_backoff = True
+                            LOGGER.warning(
+                                "OOM counters increased while running in parallel (%s); "
+                                "continuing remaining %d scene(s) sequentially",
+                                _format_oom_events(events),
+                                len(pending_jobs),
+                            )
+
+                    if not executor_backoff:
+                        submit_next(executor)
+
+            if executor_backoff and pending_jobs:
+                LOGGER.info(
+                    "Falling back to sequential execution for remaining %d scene(s)",
+                    len(pending_jobs),
+                )
+                while pending_jobs:
+                    job = pending_jobs.popleft()
+                    try:
+                        before_snapshot = previous_snapshot if memory_readers else {}
+                        if isolate_scenes:
+                            ok, payload = _run_scene_job_isolated(job)
+                            if ok:
+                                summaries_ordered[job.index] = payload
+                            else:
+                                message = (
+                                    f"Scene {job.scene} failed in isolated subprocess "
+                                    f"{payload.get('exc_type')}: {payload.get('exc_message')}"
+                                ).strip()
+                                exitcode = payload.get('exitcode')
+                                if exitcode is not None:
+                                    message = f"{message} (exitcode={exitcode})"
+                                if payload.get('traceback'):
+                                    message = f"{message}\n{payload['traceback']}"
+                                raise WorkflowRuntimeError(message)
+                        else:
+                            summaries_ordered[job.index] = _run_scene_job(job)
+                        if memory_readers:
+                            current_snapshot = _read_memory_snapshots(memory_readers)
+                            events = _detect_memory_events(memory_readers, before_snapshot, current_snapshot)
+                            previous_snapshot = current_snapshot
+                            if events:
+                                LOGGER.warning(
+                                    "OOM counters increased during scene %s (%s)",
+                                    job.scene,
+                                    _format_oom_events(events),
+                                )
+                    except BaseException as exc:
+                        LOGGER.error("Scene %s failed during execution", job.scene, exc_info=True)
+                        raise
         else:
+            previous_snapshot = _read_memory_snapshots(memory_readers) if memory_readers else {}
             for job in jobs:
                 try:
-                    summaries_ordered[job.index] = _run_scene_job(job)
+                    before_snapshot = previous_snapshot if memory_readers else {}
+                    if isolate_scenes:
+                        ok, payload = _run_scene_job_isolated(job)
+                        if ok:
+                            summaries_ordered[job.index] = payload
+                        else:
+                            message = (
+                                f"Scene {job.scene} failed in isolated subprocess "
+                                f"{payload.get('exc_type')}: {payload.get('exc_message')}"
+                            ).strip()
+                            exitcode = payload.get('exitcode')
+                            if exitcode is not None:
+                                message = f"{message} (exitcode={exitcode})"
+                            if payload.get('traceback'):
+                                message = f"{message}\n{payload['traceback']}"
+                            raise WorkflowRuntimeError(message)
+                    else:
+                        summaries_ordered[job.index] = _run_scene_job(job)
+                    if memory_readers:
+                        current_snapshot = _read_memory_snapshots(memory_readers)
+                        events = _detect_memory_events(memory_readers, before_snapshot, current_snapshot)
+                        previous_snapshot = current_snapshot
+                        if events:
+                            LOGGER.warning(
+                                "OOM counters increased during scene %s (%s)",
+                                job.scene,
+                                _format_oom_events(events),
+                            )
                 except BaseException as exc:
                     LOGGER.error("Scene %s failed during execution", job.scene, exc_info=True)
                     raise

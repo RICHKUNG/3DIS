@@ -16,6 +16,7 @@ if __package__ is None or __package__ == '':
 
 import argparse
 import datetime
+import io
 import json
 import logging
 import os
@@ -59,6 +60,7 @@ if _SEM_ROOT_STR not in sys.path:
     sys.path.append(_SEM_ROOT_STR)
 
 from my3dis.ssam_progressive_adapter import generate_with_progressive, ensure_dir
+from my3dis.raw_archive import RawCandidateArchiveWriter
 
 
 LOGGER = logging.getLogger("my3dis.generate_candidates")
@@ -157,6 +159,7 @@ def persist_raw_frame(
     frame_idx: int,
     frame_name: str,
     candidates: List[Dict[str, Any]],
+    chunk_writer: Optional[RawCandidateArchiveWriter] = None,
 ) -> Dict[str, int]:
     """Persist raw Semantic-SAM candidates for a given frame.
 
@@ -253,25 +256,54 @@ def persist_raw_frame(
         'candidate_count': len(metadata_items),
         'candidates': metadata_items,
     }
-    with open(meta_path, 'w') as f:
-        json.dump(frame_record, f, indent=2)
-
     stored_masks = 0
+    mask_bytes: Optional[bytes] = None
+
     if mask_shape is not None and packed_len is not None:
         packed_matrix = (
             np.stack(packed_arrays, axis=0)
             if packed_arrays
             else np.zeros((0, packed_len), dtype=np.uint8)
         )
+        stored_masks = packed_matrix.shape[0]
+        mask_buffer = io.BytesIO()
         np.savez_compressed(
-            mask_path,
+            mask_buffer,
             packed_masks=packed_matrix,
             mask_shape=np.asarray(mask_shape, dtype=np.int32),
             has_mask=np.asarray(has_mask_flags, dtype=np.bool_),
         )
-        stored_masks = packed_matrix.shape[0]
-    elif os.path.exists(mask_path):
-        os.remove(mask_path)
+        mask_bytes = mask_buffer.getvalue()
+
+    if chunk_writer is None:
+        with open(meta_path, 'w') as f:
+            json.dump(frame_record, f, indent=2)
+        if mask_bytes is not None:
+            with open(mask_path, 'wb') as fh:
+                fh.write(mask_bytes)
+        elif os.path.exists(mask_path):
+            os.remove(mask_path)
+    else:
+        meta_bytes = json.dumps(frame_record, ensure_ascii=False).encode('utf-8')
+        chunk_writer.add_frame(
+            frame_idx=frame_idx,
+            frame_name=frame_name,
+            meta_bytes=meta_bytes,
+            mask_bytes=mask_bytes,
+            candidate_count=len(metadata_items),
+            mask_count=stored_masks,
+        )
+        # 清理 legacy 檔案，避免新舊格式並存
+        if os.path.exists(meta_path):
+            try:
+                os.remove(meta_path)
+            except OSError:
+                pass
+        if os.path.exists(mask_path):
+            try:
+                os.remove(mask_path)
+            except OSError:
+                pass
 
     return {
         'meta_count': len(metadata_items),
@@ -499,7 +531,7 @@ def run_generation(
     manifest['frames_selected'] = len(selected)
     manifest['frames_ssam'] = len(ssam_frames)
 
-    manifest_path = os.path.join(run_root, 'manifest.json')
+    run_manifest_path = os.path.join(run_root, 'manifest.json')
     LOGGER.info("Selected %d SSAM frames cached at %s", len(ssam_frames), subset_dir)
 
     # 只對選定的幀進行 Semantic-SAM 分割，逐幀處理以避免一次佔用全部記憶體
@@ -520,6 +552,7 @@ def run_generation(
         cand_dir = ensure_dir(os.path.join(level_root, 'candidates'))
         filt_dir = ensure_dir(os.path.join(level_root, 'filtered'))
         ensure_dir(os.path.join(level_root, 'viz'))
+        raw_writer = RawCandidateArchiveWriter(level_root) if persist_raw else None
         info: Dict[str, Any] = {
             'level': level,
             'index': level_idx,
@@ -531,6 +564,8 @@ def run_generation(
             'raw_total': 0,
             'filtered_total': 0,
             'frame_count': 0,
+            'raw_writer': raw_writer,
+            'raw_manifest': None,
         }
         level_infos.append(info)
 
@@ -562,24 +597,31 @@ def run_generation(
                     scaled_fill_area = max(1, int(round(fill_area * ratio_sq)))
                 if first_mask is not None:
                     H, W = first_mask.shape
-                    union = np.zeros((H, W), dtype=bool)
+                    mask_stack: List[np.ndarray] = []
                     for m in candidates:
                         seg_arr = _mask_to_bool(m.get('segmentation'))
                         if seg_arr is None:
                             continue
-                        if seg_arr.shape != union.shape:
-                            coerced = _coerce_union_shape(seg_arr, union.shape)
+                        if seg_arr.shape != first_mask.shape:
+                            coerced = _coerce_union_shape(seg_arr, first_mask.shape)
                             if coerced is None:
                                 LOGGER.warning(
                                     "Gap-fill union skipped mask for frame %s due to shape %s (expected %s)",
                                     frame_name,
                                     tuple(seg_arr.shape),
-                                    union.shape,
+                                    first_mask.shape,
                                 )
                                 continue
                             seg_arr = coerced
-                        union |= seg_arr
-                    gap = ~union
+                        mask_stack.append(np.asarray(seg_arr, dtype=np.bool_))
+                    if mask_stack:
+                        mask_matrix = np.empty((len(mask_stack), H, W), dtype=np.bool_)
+                        for idx, seg_arr in enumerate(mask_stack):
+                            mask_matrix[idx] = seg_arr
+                        union = np.any(mask_matrix, axis=0)
+                    else:
+                        union = np.zeros((H, W), dtype=np.bool_)
+                    gap = np.logical_not(union)
                     gap_area = int(gap.sum())
                 if gap is not None and gap_area >= scaled_fill_area:
                     ys, xs = np.where(gap)
@@ -633,6 +675,7 @@ def run_generation(
                     frame_idx=ssam_frame_idx,
                     frame_name=frame_name,
                     candidates=candidates,
+                    chunk_writer=info.get('raw_writer'),
                 )
 
             for m in candidates:
@@ -687,6 +730,11 @@ def run_generation(
         level = info['level']
         cand_dir = info['cand_dir']
         filt_dir = info['filt_dir']
+        writer: Optional[RawCandidateArchiveWriter] = info.get('raw_writer')
+        if writer is not None:
+            raw_manifest_path = writer.close()
+            if raw_manifest_path is not None:
+                info['raw_manifest'] = str(raw_manifest_path)
 
         with open(os.path.join(cand_dir, 'candidates.json'), 'w') as f:
             json.dump({'items': info['raw_items']}, f, indent=2)
@@ -705,8 +753,20 @@ def run_generation(
             }
         )
 
+    raw_manifest_entries: Dict[str, str] = {}
+    for info in level_infos:
+        raw_manifest_path = info.get('raw_manifest')
+        if raw_manifest_path:
+            try:
+                rel_path = os.path.relpath(raw_manifest_path, info['level_root'])
+            except (KeyError, TypeError, ValueError):
+                rel_path = raw_manifest_path
+            raw_manifest_entries[str(info['level'])] = rel_path
+
     manifest['generation_summary'] = level_stats
-    with open(manifest_path, 'w') as f:
+    if raw_manifest_entries:
+        manifest['raw_archives'] = raw_manifest_entries
+    with open(run_manifest_path, 'w') as f:
         json.dump(manifest, f, indent=2)
 
     if level_stats:

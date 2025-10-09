@@ -55,7 +55,7 @@ from my3dis.workflow import (
     update_summary_config,
     using_gpu,
 )
-from my3dis.common_utils import setup_logging
+from my3dis.common_utils import configure_entry_log_format
 
 # 與舊版介面相容的別名
 _now_local_iso = now_local_iso
@@ -101,13 +101,7 @@ LOGGER = logging.getLogger("my3dis.run_workflow")
 
 def _configure_entry_logging() -> None:
     """Ensure root logging includes timestamp and pid for entrypoint logs."""
-    level = setup_logging()
-    formatter = logging.Formatter(
-        "%(asctime)s [pid=%(process)d] %(levelname)s %(message)s"
-    )
-    root_logger = logging.getLogger()
-    for handler in root_logger.handlers:
-        handler.setFormatter(formatter)
+    level = configure_entry_log_format()
     LOGGER.setLevel(level)
 
 
@@ -255,6 +249,7 @@ def main() -> int:
                 config,
                 override_output=args.override_output,
                 config_path=config_path,
+                memory_event_paths=watched_paths,
             )
 
     except BaseException as exc:
