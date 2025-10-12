@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Sequence
 
 import numpy as np
 
@@ -93,6 +93,7 @@ def iter_candidate_batches(
     frames_meta: List[Dict[str, Any]],
     *,
     mask_scale_ratio: float,
+    local_indices: Optional[Sequence[int]] = None,
 ) -> Iterator[FrameCandidateBatch]:
     filt_dir = os.path.join(level_root, 'filtered')
     for local_idx, frame_meta in enumerate(frames_meta):
@@ -100,9 +101,13 @@ def iter_candidate_batches(
         fname = frame_meta.get('frame_name')
         if fname is None:
             fname = f"{int(fidx):05d}.png"
+        if local_indices is not None and local_idx < len(local_indices):
+            effective_local = int(local_indices[local_idx])
+        else:
+            effective_local = local_idx
         candidates = _load_frame_candidates(filt_dir, frame_meta, mask_scale_ratio=mask_scale_ratio)
         yield FrameCandidateBatch(
-            local_index=local_idx,
+            local_index=effective_local,
             frame_index=fidx,
             frame_name=str(fname),
             candidates=candidates,

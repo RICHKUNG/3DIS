@@ -157,18 +157,38 @@ def resolve_levels(
     raise WorkflowConfigError('Unable to determine levels for stage')
 
 
-def stage_frames_string(stage_cfg: Dict[str, Any]) -> str:
-    """將 frame 設定統一格式化為 'start:end:step'。"""
-    frames_cfg = stage_cfg.get('frames', {}) or {}
+def stage_frames_string(stage_cfg: Dict[str, Any], experiment_cfg: Optional[Dict[str, Any]] = None) -> str:
+    """將 frame 設定統一格式化為 'start:end:step'，支援 experiment 預設以及 stage 覆寫。"""
+
+    frames_cfg: Dict[str, Any] = {}
+    if experiment_cfg and isinstance(experiment_cfg.get('frames'), dict):
+        frames_cfg.update({k: v for k, v in experiment_cfg['frames'].items() if v is not None})
+    stage_frames = stage_cfg.get('frames')
+    if isinstance(stage_frames, dict):
+        frames_cfg.update({k: v for k, v in stage_frames.items() if v is not None})
+
     start_raw = frames_cfg.get('start', frames_cfg.get('from'))
     end_raw = frames_cfg.get('end', frames_cfg.get('to'))
-    step = int(
-        frames_cfg.get('step')
-        or frames_cfg.get('freq')
-        or frames_cfg.get('stride')
-        or stage_cfg.get('freq')
-        or 1
-    )
+
+    step_candidates = [
+        frames_cfg.get('step'),
+        frames_cfg.get('freq'),
+        frames_cfg.get('stride'),
+        stage_cfg.get('freq'),
+    ]
+    if experiment_cfg:
+        exp_freq = experiment_cfg.get('freq')
+        if exp_freq is not None:
+            step_candidates.append(exp_freq)
+
+    step_raw = next((candidate for candidate in step_candidates if candidate not in (None, '')), 1)
+    try:
+        step = int(step_raw)
+    except (TypeError, ValueError):
+        raise WorkflowConfigError(f'invalid frame step specification: {step_raw!r}')
+    if step <= 0:
+        raise WorkflowConfigError(f'frame step must be positive, got {step}')
+
     start = int(start_raw) if start_raw is not None else 0
     # Use -1 as sentinel to indicate "until end" when end not provided.
     end = int(end_raw) if end_raw is not None else -1

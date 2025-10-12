@@ -6,7 +6,7 @@ import logging
 import os
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import torch
@@ -248,6 +248,7 @@ def sam2_tracking(
     *,
     frame_numbers: List[int],
     frame_name_lookup: Dict[int, str],
+    ssam_local_indices: Optional[Sequence[int]] = None,
     iou_threshold: float = 0.6,
     max_propagate: Optional[int] = None,
     use_box_for_small: bool = False,
@@ -281,7 +282,15 @@ def sam2_tracking(
         sy: Optional[float] = None
 
         local_to_abs = {i: frame_numbers[i] for i in range(len(frame_numbers))}
-        progress = ProgressPrinter(len(frame_numbers))
+        if ssam_local_indices is not None:
+            try:
+                total_updates = max(1, len(ssam_local_indices))  # type: ignore[arg-type]
+            except TypeError:
+                ssam_local_indices = list(ssam_local_indices)
+                total_updates = max(1, len(ssam_local_indices))
+        else:
+            total_updates = max(1, len(frame_numbers))
+        progress = ProgressPrinter(total_updates)
 
         if max_propagate is not None:
             try:

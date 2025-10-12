@@ -17,6 +17,7 @@ Status
 - `src/my3dis/run_workflow.py` 支援 `scene_start`/`scene_end`，可用來鎖定 MultiScan 範圍，例如 `scene_start: scene_00030_00`、`scene_end: scene_00075_01` 會按照資料夾順序依序執行。
 
 Progress Log
+- 2025-01-XX: Finalized progressive refinement split—core algorithm now lives in `src/my3dis/semantic_refinement.py`, new CLI under `semantic_refinement_cli.py`, and the old modules emit deprecation warnings while re-exporting the same API surface.
 - Added `scripts/pipeline/run_pipeline.py` to glue Semantic-SAM candidate generation with SAM2 tracking.
 - Added `src/my3dis/generate_candidates.py` (Semantic-SAM stage) and `src/my3dis/track_from_candidates.py` (SAM2 stage) for two-environment execution.
 - Added `run_experiment.sh` to orchestrate stage execution across environments with sensible defaults.
@@ -39,22 +40,22 @@ Progress Log
 - 2025-10-08: Added `--dry-run` flag to `src/my3dis/run_workflow.py`, documented the `PYTHONPATH` export requirement in README, and verified with `PYTHONPATH=src conda run -n My3DIS python -m my3dis.run_workflow --config configs/scenes/scene_00065_00.yaml --dry-run`, which now prints the parsed config without executing stages.
 - 2025-10-07: 清理 `configs/multiscan_all.yaml` 合併衝突並改為 `persist_raw=true` / `skip_filtering=true`，同時重新啟用 filter stage（沿用 `min_area=1000`, `stability_threshold=1.0`）以將 SSAM 遮罩改為磁碟暫存，避免 OOM。
 - 2025-10-07: 導入 `oom_monitor/` 工具集，`src/my3dis/run_workflow.py` 與 `scripts/pipeline/run_workflow_batch.py` 預設掛載 cgroup `memory.events` watcher，將 OOM 指標寫入 `logs/oom_monitor.log`（`--no-oom-watch` 可停用，`--oom-watch-*` 旗標可調整行為）。
+- 2025-01-XX: Code review conducted - identified optimization opportunities in progressive_refinement.py (large file ~1000 lines), config unification needs, and PROBLEM.md items. Refactor plans documented but implementation deferred to maintain stability.
 
 Next Actions
 1) Create the shared environment from `archive/env/Algorithm1_env.yml` (optional but recommended).
 2) Update or clone the notebook (`archive/experiments/algorithm1.ipynb`) to reuse the helper functions if interactive analysis is needed.
 3) Execute the refreshed pipeline on a larger slice using the new `--ssam-freq` / `--sam2-max-propagate` knobs to validate runtime savings. ✅ small-scale verification pending.
 4) Push code to https://github.com/RICHKUNG/3DIS when credentials are ready.
-5) Refactor `src/my3dis/track_from_candidates.py` by extracting orchestration helpers for `run_tracking` (context prep, subset rebuild, per-level runner, manifest update).
-6) Introduce a shared config dataclass and helper modules so CLI orchestration can reuse pipeline logic before expanding additional refactors.
+5) **Code review completed** - optimization opportunities identified but implementation deferred.
+6) Address PROBLEM.md items systematically: torch.load security, package installation, config unification.
 
-Refactor TODOs
+Refactor TODOs (Updated - not implemented yet)
+- `src/my3dis/progressive_refinement.py`: Consider splitting into core.py, cli.py, viz.py when ready for major refactor - file is currently ~1000 lines with mixed responsibilities.
 - `src/my3dis/track_from_candidates.py`: split `run_tracking` into helpers (`prepare_tracking_context`, `ensure_subset_video`, `run_level_tracking`, `persist_level_outputs`, `update_manifest`) or a `TrackingPipeline` class to reduce scope.
-- `src/my3dis/track_from_candidates.py`: break down `sam2_tracking` via `_process_batch`, `_collect_segments`, `_record_preview` helpers to isolate dedup, propagation, and preview handling.
-- `src/my3dis/generate_candidates.py`: add a `CandidateGenerationConfig` dataclass and move frame selection/run-root/manifest logic into dedicated helpers.
-- `src/my3dis/generate_candidates.py`: wrap raw-candidate persistence in a `RawFramePersistor` (or equivalent helpers) to manage mask packing and storage side effects.
-- `src/my3dis/progressive_refinement.py`: introduce a `MaskRefinementPipeline`/`RefinementNode` structure and extract level preparation, refinement, and viz persistence steps.
-- `src/my3dis/workflow/scene_workflow.py`: promote `_run_ssam_stage`/`_run_tracker_stage` into reusable stage objects so orchestration code stays short and logging is shared.
+- Config unification: Create unified config schema to reduce duplication across modules.
+- Package installation: Convert to installable package with console entry points.
+- Security: Audit torch.load calls for weights_only=True compliance.
 
 Open Items
 - 啟動第一批跨場景 batch（透過 `scripts/pipeline/run_workflow_batch.py`），並確認 `logs/workflow_history.csv`、`logs/batch/*.json` 的內容完整。

@@ -270,3 +270,10 @@ def configure_entry_log_format(*, explicit_level: Optional[int] = None) -> int:
     for handler in root_logger.handlers:
         handler.setFormatter(formatter)
     return level
+
+
+# 這些函數原本就在這裡，progressive_refinement 引用它們：
+# - parse_levels() - 解析層級設定
+# - parse_range() - 解析範圍字串
+# - format_duration() - 格式化時間
+# - setup_logging() - 日誌設定

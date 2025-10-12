@@ -8,13 +8,15 @@
     4,
     6
   ],
+  "experiment_defaults": {
+    "frames": {
+      "step": 50
+    }
+  },
   "stage_defaults": {
     "gpu": 0,
     "ssam": {
       "enabled": true,
-      "frames": {
-        "step": 50
-      },
       "ssam_freq": 2,
       "min_area": 0,
       "stability_threshold": 1.0,

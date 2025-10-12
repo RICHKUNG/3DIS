@@ -24,6 +24,7 @@ class TrackingContext:
     selected_indices: List[int]
     ssam_frames: List[str]
     ssam_absolute_indices: List[int]
+    ssam_local_indices: List[int]
     ssam_freq: int
     subset_dir: Optional[str]
     subset_map: Dict[int, Any]
@@ -61,13 +62,17 @@ def prepare_tracking_context(
         selected_indices = list(range(len(selected)))
     else:
         selected_indices = [int(x) for x in selected_indices_raw]
-
     ssam_frames = manifest.get('ssam_frames', selected) or []
     ssam_abs_raw = manifest.get('ssam_absolute_indices', selected_indices_raw)
     if ssam_abs_raw is None:
         ssam_absolute_indices = list(selected_indices)
     else:
         ssam_absolute_indices = [int(x) for x in ssam_abs_raw]
+    ssam_local_raw = manifest.get('ssam_indices')
+    if ssam_local_raw is None:
+        ssam_local_indices = list(range(len(ssam_frames)))
+    else:
+        ssam_local_indices = [int(x) for x in ssam_local_raw]
 
     subset_dir = manifest.get('subset_dir')
     subset_map = manifest.get('subset_map', {})
@@ -102,6 +107,7 @@ def prepare_tracking_context(
         selected_indices=list(selected_indices),
         ssam_frames=list(ssam_frames),
         ssam_absolute_indices=list(ssam_absolute_indices),
+        ssam_local_indices=list(ssam_local_indices),
         ssam_freq=int(ssam_freq),
         subset_dir=subset_dir,
         subset_map=dict(subset_map),
@@ -174,6 +180,17 @@ def ensure_subset_video(
             for f in os.listdir(subset_dir)
             if os.path.splitext(f)[1] in {".jpg", ".jpeg", ".JPG", ".JPEG"}
         ]
+        expected = len(context.selected_frames)
+        if len(valid_imgs) != expected:
+            rebuild_subset = True
+        elif len(subset_map_int) != expected:
+            rebuild_subset = True
+        else:
+            missing = [
+                idx for idx in context.selected_indices if int(idx) not in subset_map_int
+            ]
+            if missing:
+                rebuild_subset = True
         if len(valid_imgs) == 0:
             rebuild_subset = True
     else:
@@ -182,8 +199,8 @@ def ensure_subset_video(
     if rebuild_subset:
         subset_dir, subset_map_int = build_subset_video(
             frames_dir=data_path,
-            selected=context.ssam_frames,
-            selected_indices=context.ssam_absolute_indices,
+            selected=context.selected_frames,
+            selected_indices=context.selected_indices,
             out_root=out_root,
         )
         context.manifest['subset_dir'] = subset_dir

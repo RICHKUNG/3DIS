@@ -34,8 +34,8 @@ if DEFAULT_SEMANTIC_SAM_ROOT not in sys.path:
 
 # Import Semantic-SAM modules
 from semantic_sam import build_semantic_sam, prepare_image  # noqa: E402
+from .progressive_refinement_core import progressive_refinement_masks
 from my3dis.progressive_refinement import (
-    progressive_refinement_masks,  # noqa: E402
     setup_output_directories,      # noqa: E402
 )
 

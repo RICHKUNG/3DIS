@@ -31,7 +31,6 @@ def build_stage_template(args: argparse.Namespace) -> Dict[str, Any]:
         'gpu': args.default_gpu,
         'ssam': {
             'enabled': True,
-            'frames': {'step': args.frame_step},
             'ssam_freq': args.ssam_freq,
             'min_area': args.min_area,
             'stability_threshold': args.stability_threshold,
@@ -118,6 +117,9 @@ def main() -> int:
         requested = None
 
     stage_template = build_stage_template(args)
+    experiment_defaults = {
+        'frames': {'step': args.frame_step},
+    }
     levels = [int(x) for x in str(args.levels).split(',') if x.strip()]
 
     entries: List[Dict[str, Any]] = []
@@ -138,6 +140,7 @@ def main() -> int:
                 'name': scene_dir.name,
                 'data_path': str(color_dir),
                 'output_root': str(output_root),
+                'frames': {'step': args.frame_step},
                 'levels': levels,
                 'tag': args.tag,
             },
@@ -178,6 +181,7 @@ def main() -> int:
                 'output_base': str(output_base),
                 'levels': levels,
                 'stage_defaults': stage_template,
+                'experiment_defaults': experiment_defaults,
                 'scenes': entries,
             }
             json.dump(payload, f, indent=2)

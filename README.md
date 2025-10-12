@@ -90,7 +90,7 @@ Workflow Orchestrators
 - Level folder layout: `candidates/`, `raw/`（若有啟用持久化）、`filtered/`, `tracking/`, `viz/`, `report/`。
 - `candidates/candidates.json` keeps raw proposal metadata；若啟用 `persist_raw=True`，`raw/frame_XXXXX.json` + `raw/frame_XXXXX.npz` 會保存完整遮罩堆疊，供 `src/my3dis/filter_candidates.py` 重跑。
 - `filtered/filtered.json` embeds filtered masks (packed bits + shape) directly in JSON，若重新套用篩選則會覆寫此檔案並更新 manifest。
-- `tracking/video_segments*.npz` 以 manifest 方式封裝（`manifest.json` + `frames/frame_XXXXX.json`），每個 frame 檔案包含經過 base64 編碼的 packed mask；`tracking/object_segments*.npz` 轉為 object → frame 的參考表，避免重複寫入遮罩資料，讀取時可透過 `frame_entry` 反查 `video_segments` 中的對應 JSON。
+- `tracking/video_segments*.npz` 以 manifest 方式封裝（`manifest.json` + `frames/frame_XXXXX.json`），每個 frame 檔案包含經過 base64 編碼的 packed mask，並涵蓋 `experiment.frames.step` 抽出的每張影格（即使 `ssam_freq > 1`，SAM2 仍會輸出完整序列）；`tracking/object_segments*.npz` 轉為 object → frame 的參考表，避免重複寫入遮罩資料，讀取時可透過 `frame_entry` 反查 `video_segments` 中的對應 JSON。
 - `viz/compare/` holds contrast panels for Semantic-SAM vs. SAM2；輸出已稀疏化為每第 10 個 SSAM 幀。`level_x/report/` 底下仍保留縮小後的代表性圖檔（第一張／中位／最後一張），供 Markdown 報告引用。
 - `report.md`（根目錄）為中文摘要，包含階段耗時表格、主要參數、每個 level 的代表圖表連結；`workflow_summary.json` 保存原始紀錄。
 - Each run writes `manifest.json` with frame selection, thresholds, model paths, timestamps, the SSAM subset (`ssam_frames`, `ssam_freq`), any SAM2 propagation cap in effect，以及篩選/原始資料的設定。
@@ -180,6 +180,7 @@ Notes & Tips
 - `selected_frames/` captures the exact frames passed to SAM2, aiding debugging and reproducibility.
 - `logs/workflow_history.csv` 會自動堆疊每次 `run_workflow` 執行摘要，`logs/batch/` 則保存批次報表，可納入後續分析或建置儀表板。
 - Outputs are `.gitignore`d; commit code/configs, or add representative samples selectively.
+- **Code Status**: Several optimization opportunities have been identified (large files, config unification, package installation) but current implementation remains stable and functional. See `PROBLEM.md` for improvement roadmap.
 
 Implementation Notes
 - Stage 1 (`src/my3dis/generate_candidates.py` + `src/my3dis/ssam_progressive_adapter.py`): runs Semantic-SAM progressive refinement per level, throttled by `--ssam-freq`, synthesises gap-fill masks ≥ `fill_area` (default = `min_area`) only on the first level when `add_gaps=true`, and keeps progressive outputs in temporary directories (no `_progressive_tmp` folder under the run root).

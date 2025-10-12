@@ -38,6 +38,7 @@ from my3dis.common_utils import (
     bbox_from_mask_xyxy,
     bbox_xyxy_to_xywh,
     build_subset_video,
+    ensure_dir,
     encode_mask,
     format_duration,
     is_packed_mask,
@@ -59,8 +60,8 @@ _SEM_ROOT_STR = expand_default(_DEFAULT_SEMANTIC_SAM_ROOT)
 if _SEM_ROOT_STR not in sys.path:
     sys.path.append(_SEM_ROOT_STR)
 
-from my3dis.ssam_progressive_adapter import generate_with_progressive, ensure_dir
-from my3dis.raw_archive import RawCandidateArchiveWriter
+from .ssam_progressive_adapter import generate_with_progressive
+from my3dis.raw_archive import ARCHIVE_FORMAT_TAG, RawCandidateArchiveWriter
 
 
 LOGGER = logging.getLogger("my3dis.generate_candidates")
@@ -414,16 +415,14 @@ def run_generation(
     )
 
     # 建立自動化的資料夾名稱，包含重要參數
-    def build_folder_name():
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+    def build_folder_name(run_timestamp: str) -> str:
         # 重要參數
         levels_str = "L" + "_".join(str(x) for x in level_list)
         ssam_str = f"ssam{ssam_freq}"
-        
+
         # 可選參數
-        parts = [timestamp, levels_str, ssam_str]
-        
+        parts = [run_timestamp, levels_str, ssam_str]
+
         if sam2_max_propagate is not None:
             parts.append(f"propmax{sam2_max_propagate}")
 
@@ -445,20 +444,21 @@ def run_generation(
 
         return "_".join(parts)
 
+    run_timestamp: Optional[str]
     if no_timestamp:
         if experiment_tag:
             run_root = ensure_dir(os.path.join(output, experiment_tag))
         else:
             run_root = ensure_dir(output)
-        timestamp = None
+        run_timestamp = None
     else:
-        folder_name = build_folder_name()
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        folder_name = build_folder_name(run_timestamp)
         run_root = ensure_dir(os.path.join(output, folder_name))
 
-    # 只為有 SSAM 分割的幀建立 subset
+    # 建立全量取樣的 subset，供 downstream / tracker 直接使用
     subset_dir, subset_map = build_subset_video(
-        frames_dir, ssam_frames, ssam_absolute_indices, run_root
+        frames_dir, selected, selected_indices, run_root
     )
     frames_path = Path(frames_dir).expanduser()
     try:
@@ -497,7 +497,7 @@ def run_generation(
         'subset_map': subset_map,
         'sam_ckpt': sam_ckpt,
         'ts_epoch': int(time.time()),
-        'timestamp': timestamp,
+        'timestamp': run_timestamp,
         'output_root': run_root,
         'gap_fill': {
             'fill_area': fill_area,
@@ -515,8 +515,9 @@ def run_generation(
         },
         'raw_storage': {
             'enabled': bool(persist_raw),
-            'format': 'frame_npz_v1',
+            'format': ARCHIVE_FORMAT_TAG if persist_raw else None,
             'dir_name': RAW_DIR_NAME if persist_raw else None,
+            'archives': {},
         },
     }
 
@@ -532,7 +533,13 @@ def run_generation(
     manifest['frames_ssam'] = len(ssam_frames)
 
     run_manifest_path = os.path.join(run_root, 'manifest.json')
-    LOGGER.info("Selected %d SSAM frames cached at %s", len(ssam_frames), subset_dir)
+    LOGGER.info(
+        "Cached %d sampled frames at %s (SSAM cadence=%d → %d frames)",
+        len(selected),
+        subset_dir,
+        ssam_freq,
+        len(ssam_frames),
+    )
 
     # 只對選定的幀進行 Semantic-SAM 分割，逐幀處理以避免一次佔用全部記憶體
     progressive_iter = generate_with_progressive(
@@ -764,6 +771,18 @@ def run_generation(
             raw_manifest_entries[str(info['level'])] = rel_path
 
     manifest['generation_summary'] = level_stats
+    if persist_raw:
+        storage_meta = manifest.setdefault('raw_storage', {})
+        storage_meta.update(
+            {
+                'enabled': bool(raw_manifest_entries),
+                'format': ARCHIVE_FORMAT_TAG,
+                'dir_name': RAW_DIR_NAME,
+                'archives': raw_manifest_entries,
+            }
+        )
+    else:
+        manifest['raw_storage'] = {'enabled': False}
     if raw_manifest_entries:
         manifest['raw_archives'] = raw_manifest_entries
     with open(run_manifest_path, 'w') as f:

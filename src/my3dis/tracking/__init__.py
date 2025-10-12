@@ -20,6 +20,13 @@ from .outputs import (
     encode_packed_mask_for_json,
     save_comparison_proposals,
 )
+from .compat import (
+    LegacyFrame,
+    iter_legacy_frames,
+    load_legacy_frame_dict,
+    load_legacy_video_segments,
+    load_object_segments_manifest,
+)
 
 __all__ = [
     'ProgressPrinter',
@@ -38,4 +45,9 @@ __all__ = [
     'build_video_segments_archive',
     'build_object_segments_archive',
     'save_comparison_proposals',
+    'LegacyFrame',
+    'iter_legacy_frames',
+    'load_legacy_frame_dict',
+    'load_legacy_video_segments',
+    'load_object_segments_manifest',
 ]

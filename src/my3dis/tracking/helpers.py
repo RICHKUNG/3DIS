@@ -34,16 +34,17 @@ class ProgressPrinter:
         self.total = max(0, int(total))
         self._last_len = 0
         self._closed = False
+        self._count = 0
 
     def update(self, index: int, abs_frame: Optional[int] = None) -> None:
         if self._closed or self.total == 0:
             return
-        current = min(index + 1, self.total)
-        pct = (current / self.total) * 100.0
-        bars = int((current / self.total) * 20)
+        self._count = min(self._count + 1, self.total)
+        pct = (self._count / self.total) * 100.0
+        bars = int((self._count / self.total) * 20)
         bar = f"[{'#' * bars}{'.' * (20 - bars)}]"
         frame_info = f" → frame {abs_frame:05d}" if abs_frame is not None else ""
-        msg = f"SAM2 tracking {bar} {current}/{self.total} SSAM frames ({pct:5.1f}%)" + frame_info
+        msg = f"SAM2 tracking {bar} {self._count}/{self.total} frames ({pct:5.1f}%){frame_info}"
         pad = ' ' * max(0, self._last_len - len(msg))
         sys.stdout.write('\r' + msg + pad)
         sys.stdout.flush()

@@ -238,7 +238,7 @@ def save_comparison_proposals(
     viz_dir: str,
     base_frames_dir: str,
     filtered_per_frame: List[Optional[List[Dict[str, Any]]]],
-    video_segments: Dict[int, Dict[int, Any]],
+    video_segments: Optional[Dict[int, Dict[int, Any]]],
     level: int,
     frame_numbers: Optional[List[int]] = None,
     frames_to_save: Optional[List[int]] = None,
@@ -247,12 +247,80 @@ def save_comparison_proposals(
     subset_map: Optional[Dict[int, str]] = None,
     sample_stride: Optional[int] = None,
     max_samples: Optional[int] = None,
+    video_segments_archive: Optional[str] = None,
 ) -> Dict[str, Any]:
     """輸出 SAM2 與 SSAM 的遮罩對照圖，並回傳摘要描述。"""
     from PIL import Image, ImageDraw
 
     viz_path = Path(ensure_dir(viz_dir))
     compare_path = Path(ensure_dir(os.path.join(str(viz_path), 'compare')))
+
+    archive_loader: Optional[Any] = None
+
+    def _frame_has_mask(payload: Dict[int, Any]) -> bool:
+        if not payload:
+            return False
+        for obj_payload in payload.values():
+            arr = obj_payload
+            if isinstance(arr, dict):
+                arr = unpack_binary_mask(arr)
+            if arr is None:
+                continue
+            arr_np = np.asarray(arr)
+            if arr_np.size and np.any(arr_np):
+                return True
+        return False
+
+    def _close_archive_loader() -> None:
+        nonlocal archive_loader
+        if archive_loader is not None:
+            try:
+                archive_loader.close()  # type: ignore[attr-defined]
+            except AttributeError:
+                pass
+            archive_loader = None
+
+    def _load_archive_frame(frame_idx: int) -> Dict[int, Dict[str, Any]]:
+        if not video_segments_archive:
+            return {}
+        nonlocal archive_loader
+        if archive_loader is None:
+            try:
+                archive_loader = np.load(video_segments_archive, allow_pickle=True)
+            except OSError:
+                archive_loader = None
+        if archive_loader is None:
+            return {}
+        entry_name = _frame_entry_name(frame_idx)
+        try:
+            raw_payload = archive_loader[entry_name]
+        except KeyError:
+            return {}
+        if isinstance(raw_payload, bytes):
+            json_bytes = raw_payload
+        else:
+            try:
+                json_bytes = raw_payload.tobytes()
+            except AttributeError:
+                json_bytes = bytes(raw_payload)
+        try:
+            payload = json.loads(json_bytes.decode('utf-8'))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+        objects = payload.get('objects', {})
+        result: Dict[int, Dict[str, Any]] = {}
+        for obj_id_str, obj_payload in objects.items():
+            if not isinstance(obj_payload, dict):
+                continue
+            decoded = decode_packed_mask_from_json(obj_payload)
+            shape_val = decoded.get(PACKED_SHAPE_KEY)
+            if isinstance(shape_val, list):
+                decoded[PACKED_SHAPE_KEY] = tuple(int(v) for v in shape_val)
+            full_shape_val = decoded.get(PACKED_ORIG_SHAPE_KEY)
+            if isinstance(full_shape_val, list):
+                decoded[PACKED_ORIG_SHAPE_KEY] = tuple(int(v) for v in full_shape_val)
+            result[int(obj_id_str)] = decoded
+        return result
 
     if frame_numbers is None:
         frame_numbers = [idx for idx in range(len(filtered_per_frame))]
@@ -368,74 +436,95 @@ def save_comparison_proposals(
     missing_mask_shapes: List[int] = []
     skipped_without_candidates: List[int] = []
 
-    for f_idx in frames_to_render:
-        local_idx = frame_number_to_local.get(f_idx)
-        if local_idx is None or local_idx >= len(filtered_per_frame):
-            skipped_without_candidates.append(int(f_idx))
-            continue
-
-        filtered_candidates = filtered_per_frame[local_idx] or []
-
-        H = W = None
-        if filtered_candidates:
-            seg0 = filtered_candidates[0].get('segmentation')
-            if isinstance(seg0, np.ndarray):
-                H, W = seg0.shape[:2]
-
-        sam_frame = video_segments.get(f_idx) or {}
-        if H is None or W is None:
-            if sam_frame:
-                first_mask = next(iter(sam_frame.values()))
-                if isinstance(first_mask, np.ndarray):
-                    H, W = first_mask.shape[:2]
-
-        frame_path = resolve_frame_path(f_idx)
-        if frame_path is None:
-            missing_frame_sources.append(int(f_idx))
-            continue
-        if H is None or W is None:
-            missing_mask_shapes.append(int(f_idx))
-            continue
-
-        frame_img = Image.open(frame_path).convert('RGB')
-        frame_img = frame_img.resize((W, H), resample=Image.BILINEAR)
-
-        filtered_masks = [
-            resize_mask_to_shape(item.get('segmentation'), (H, W))
-            for item in filtered_candidates
-            if item.get('segmentation') is not None
-        ]
-        filtered_masks = [m for m in filtered_masks if m is not None]
-        filtered_img = build_instance_map_img((H, W), filtered_masks)
-
-        sam_masks: Dict[int, np.ndarray] = {}
-        for obj_id, payload in sam_frame.items():
-            mask = payload
-            if isinstance(payload, dict):
-                mask = unpack_binary_mask(payload)
-            arr = resize_mask_to_shape(mask, (H, W))
-            if arr is None:
+    try:
+        for f_idx in frames_to_render:
+            local_idx = frame_number_to_local.get(f_idx)
+            if local_idx is None or local_idx >= len(filtered_per_frame):
+                skipped_without_candidates.append(int(f_idx))
                 continue
-            sam_masks[int(obj_id)] = np.asarray(arr, dtype=np.bool_)
 
-        sam_img = build_sam_instance_map_img((H, W), sam_masks)
+            filtered_candidates = filtered_per_frame[local_idx] or []
 
-        canvas_w = frame_img.width * 3
-        canvas_h = frame_img.height
-        canvas = Image.new('RGB', (canvas_w, canvas_h), color=(0, 0, 0))
-        canvas.paste(frame_img, (0, 0))
-        canvas.paste(filtered_img, (frame_img.width, 0))
-        canvas.paste(sam_img, (frame_img.width * 2, 0))
+            H = W = None
+            if filtered_candidates:
+                seg0 = filtered_candidates[0].get('segmentation')
+                if isinstance(seg0, np.ndarray):
+                    H, W = seg0.shape[:2]
 
-        draw = ImageDraw.Draw(canvas)
-        draw.text((10, 10), f"Frame {f_idx}", fill=(255, 255, 255))
-        draw.text((frame_img.width + 10, 10), "SSAM filtered", fill=(255, 255, 255))
-        draw.text((frame_img.width * 2 + 10, 10), "SAM2 propagated", fill=(255, 255, 255))
+            sam_frame: Dict[int, Any] = {}
+            if isinstance(video_segments, dict):
+                sam_frame = video_segments.get(f_idx) or {}
+            if not _frame_has_mask(sam_frame):
+                archive_frame = _load_archive_frame(int(f_idx))
+                if archive_frame:
+                    sam_frame = archive_frame
+            if not sam_frame:
+                sam_frame = _load_archive_frame(int(f_idx))
+            if H is None or W is None:
+                if sam_frame:
+                    first_mask = next(iter(sam_frame.values()))
+                    if isinstance(first_mask, np.ndarray):
+                        H, W = first_mask.shape[:2]
+                    elif isinstance(first_mask, dict):
+                        shape_hint = first_mask.get(PACKED_SHAPE_KEY) or first_mask.get('shape')
+                        if isinstance(shape_hint, np.ndarray):
+                            shape_seq = shape_hint.tolist()
+                        elif isinstance(shape_hint, (list, tuple)):
+                            shape_seq = list(shape_hint)
+                        else:
+                            shape_seq = None
+                        if shape_seq and len(shape_seq) >= 2:
+                            H, W = int(shape_seq[-2]), int(shape_seq[-1])
 
-        out_path = compare_path / f"L{int(level)}_{int(f_idx):05d}.png"
-        canvas.save(out_path)
-        rendered_frames.append(int(f_idx))
-        rendered_images_rel.append(os.path.relpath(out_path, viz_path))
+            frame_path = resolve_frame_path(f_idx)
+            if frame_path is None:
+                missing_frame_sources.append(int(f_idx))
+                continue
+            if H is None or W is None:
+                missing_mask_shapes.append(int(f_idx))
+                continue
+
+            frame_img = Image.open(frame_path).convert('RGB')
+            frame_img = frame_img.resize((W, H), resample=Image.BILINEAR)
+
+            filtered_masks = [
+                resize_mask_to_shape(item.get('segmentation'), (H, W))
+                for item in filtered_candidates
+                if item.get('segmentation') is not None
+            ]
+            filtered_masks = [m for m in filtered_masks if m is not None]
+            filtered_img = build_instance_map_img((H, W), filtered_masks)
+
+            sam_masks: Dict[int, np.ndarray] = {}
+            for obj_id, payload in sam_frame.items():
+                mask = payload
+                if isinstance(payload, dict):
+                    mask = unpack_binary_mask(payload)
+                arr = resize_mask_to_shape(mask, (H, W))
+                if arr is None:
+                    continue
+                sam_masks[int(obj_id)] = np.asarray(arr, dtype=np.bool_)
+
+            sam_img = build_sam_instance_map_img((H, W), sam_masks)
+
+            canvas_w = frame_img.width * 3
+            canvas_h = frame_img.height
+            canvas = Image.new('RGB', (canvas_w, canvas_h), color=(0, 0, 0))
+            canvas.paste(frame_img, (0, 0))
+            canvas.paste(filtered_img, (frame_img.width, 0))
+            canvas.paste(sam_img, (frame_img.width * 2, 0))
+
+            draw = ImageDraw.Draw(canvas)
+            draw.text((10, 10), f"Frame {f_idx}", fill=(255, 255, 255))
+            draw.text((frame_img.width + 10, 10), "SSAM filtered", fill=(255, 255, 255))
+            draw.text((frame_img.width * 2 + 10, 10), "SAM2 propagated", fill=(255, 255, 255))
+
+            out_path = compare_path / f"L{int(level)}_{int(f_idx):05d}.png"
+            canvas.save(out_path)
+            rendered_frames.append(int(f_idx))
+            rendered_images_rel.append(os.path.relpath(out_path, viz_path))
+    finally:
+        _close_archive_loader()
 
     rendered_count = len(rendered_frames)
     generated_at = datetime.now(timezone.utc).isoformat()

@@ -120,6 +120,7 @@ def run_tracking(
     level_list = context.level_list
     ssam_frames = context.ssam_frames
     ssam_absolute_indices = context.ssam_absolute_indices
+    ssam_local_indices = context.ssam_local_indices
     ssam_freq = context.ssam_freq
     sam2_max_propagate = context.sam2_max_propagate
 
@@ -158,7 +159,7 @@ def run_tracking(
 
     frame_index_to_name = {
         int(idx): str(name)
-        for idx, name in zip(ssam_absolute_indices, ssam_frames)
+        for idx, name in zip(context.selected_indices, context.selected_frames)
     }
 
     level_results: List[LevelRunResult] = []
@@ -173,6 +174,8 @@ def run_tracking(
             subset_map=subset_map,
             predictor=predictor,
             frame_index_lookup=frame_index_to_name,
+            selected_indices=context.selected_indices,
+            ssam_local_indices=ssam_local_indices,
             sam2_max_propagate=sam2_max_propagate,
             iou_threshold=iou_threshold,
             long_tail_box_prompt=long_tail_box_prompt,

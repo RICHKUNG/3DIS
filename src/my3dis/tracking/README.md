@@ -2,6 +2,36 @@
 
 > 本目錄涵蓋「SAM2 追蹤」階段的所有協作元件：載入 SSAM 候選、準備 prompt、呼叫 SAM2、儲存結果與視覺化。內容依實際執行順序排列，逐一說明檔案與函式。
 
+## 追蹤階段流程圖（Level 內部）
+
+```
+run_level_tracking(level, ...) ─────────────────────────────────────────────┐
+  ├─ load_filtered_manifest(level_root)                                    │
+  ├─ frames_meta = filtered.json['frames']                                 │
+  ├─ preview_local_indices = select_preview_indices(...)                   │
+  ├─ candidate_iter = iter_candidate_batches(level_root, frames_meta, ...) │
+  ├─ dedup_store = DedupStore()                                            │
+  ├─ frame_store = FrameResultStore()                                      │
+  └─ sam2_tracking(subset_dir, predictor, candidate_iter, ...)             │
+       ├─ predictor.init_state(video_path=subset_dir)                      │
+       ├─ for each FrameCandidateBatch:                                    │
+       │    ├─ prepared = _prepare_prompt_candidates(batch.candidates)     │
+       │    ├─ filtered = _filter_new_candidates(prepared, dedup_store)    │
+       │    ├─ _add_prompts_to_predictor(predictor, state, filtered, ...)  │
+       │    └─ frame_segments = _propagate_frame_predictions(...)          │
+       │         └─ result: {abs_idx: {obj_id: packed_mask}}               │
+       │              ├─ dedup_store.add_packed(abs_idx, ...)              │
+       │              └─ frame_store.update(abs_idx, frame_name, ...)      │
+       └─ return TrackingArtifacts(object_refs, preview_segments, ...)     │
+
+  ├─ artifacts = persist_level_outputs(..., frame_store, ...)              │
+  │    ├─ build_video_segments_archive(iter_frames(), video_segments.npz)  │
+  │    └─ build_object_segments_archive(object_refs, object_segments.npz)  │
+  ├─ if render_viz:                                                        │
+  │    └─ save_comparison_proposals(viz_dir, base_frames_dir, ...)         │
+  └─ 回傳 LevelRunResult(artifacts, comparison, warnings, stats, timer)     │
+```
+
 ## Step 2-0：匯出與共用工具
 
 ### `__init__.py`

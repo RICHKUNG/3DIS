@@ -3,6 +3,39 @@
 > 本文件按「實驗流程」視角整理 `src/my3dis` 目錄下各個 `.py` 的角色與函式。  
 > 追蹤與工作流程子模組請參照 `tracking/README.md`、`workflow/README.md` 取得更細節。
 
+## 執行流程圖（總覽與模式分支）
+
+```
+                   ┌──────────────────────────────────────┐
+                   │            執行模式選擇              │
+                   └──────────────────────────────────────┘
+                         │                     │
+              YAML Orchestrator           Two-Stage CLI
+               (建議：多場景)            (單場景/自訂)
+                         │                     │
+            python -m my3dis.run_workflow     ├─────────▶ SSAM 候選：
+                         │                     │            my3dis.generate_candidates: run_generation
+          ▼ execute_workflow(...)              │            ├─ ssam_progressive_adapter.generate_with_progressive
+              for scene in scenes                  │            │   └─ semantic_refinement.progressive_refinement_masks
+              ▼ SceneWorkflow.run()            │            └─ raw_archive.persist_raw_frame / filtered.json
+              ├─ SSAM → generate_candidates    │
+              ├─ Filter → filter_candidates    │          ▶ SAM2 追蹤：
+              ├─ Tracker → track_from_candidates          my3dis.track_from_candidates: run_tracking
+              ├─ Report → generate_report                 ├─ prepare_tracking_context / ensure_subset_video
+              └─ Finalize → apply_scene_level_layout      ├─ for level: tracking.level_runner.run_level_tracking
+                         │                                │    ├─ candidate_loader.iter_candidate_batches
+                         │                                │    ├─ sam2_runner.sam2_tracking
+                         │                                │    │   ├─ _prepare_prompt_candidates
+                         │                                │    │   ├─ _filter_new_candidates (DedupStore)
+                         │                                │    │   ├─ _add_prompts_to_predictor
+                         │                                │    │   └─ _propagate_frame_predictions
+                         │                                │    ├─ persist_level_outputs
+                         │                                │    │   ├─ outputs.build_video_segments_archive
+                         │                                │    │   └─ outputs.build_object_segments_archive
+                         │                                │    └─ outputs.save_comparison_proposals (可選)
+                         │                                └─ update_manifest
+```
+
 ## Step 0：共用環境與基礎工具
 
 ### `__init__.py`
@@ -43,22 +76,19 @@
 - `_extract_gap_components(segs, fill_area)`：從一組遮罩中找出未覆蓋的大區域，支援 gap-fill。
 - `generate_with_progressive(frames_dir, selected_frames, sam_ckpt_path, levels, ...)`：包裝 `progressive_refinement_masks`，逐幀產生各層候選並補上 gap-fill 遮罩，最後以 packed 格式回傳。
 
-### `progressive_refinement.py`
-- `console(message, important)`：集中控制額外訊息輸出（供調試用）。
-- `timer_decorator(func)`：裝飾器，計算函式耗時並印出友善文字。
-- `log_step(step_name, start_time)`：顯示每個步驟開始/結束與耗時。
-- `parse_levels(levels_str)`、`parse_range(range_str)`：提供 CLI 版本的層級與影格解析工具。
-- `get_git_commit_hash(default)`：抓取當前 repo 的 Git commit，寫入輸出 metadata。
-- `instance_map_to_color_image(instance_map)`：將實例編號矩陣轉成彩色圖，利於快速檢視。
-- `bbox_from_mask(seg)`：回傳 XYXY 邊界框，供後面生成候選 metadata。
-- `get_experiment_timestamp()`：生成時間戳記字串。
-- `create_experiment_folder(base_path, experiment_name, timestamp)`：建立輸出主資料夾。
-- `setup_output_directories(experiment_path)`：創建 progressive refinement 需要的子資料夾結構。
-- `save_original_image_info(image_path, output_dirs)`：複製原始影像並記錄尺寸，方便後續比對。
-- `prepare_image_from_pil(pil_img)`：把 PIL 影像轉成 Semantic-SAM 期望的張量格式。
-- `create_masked_image(original_image, mask_data, background_color)`：用遮罩把前景擷取出來做快照。
-- `progressive_refinement_masks(semantic_sam, image_path, level_sequence, ...)`：呼叫 Semantic-SAM 逐層產生遮罩、整理層級資訊並回傳，是 `ssam_progressive_adapter` 的核心依賴。
-- `main()`：原始 CLI 程式入口（保留以便單獨跑 progressive refinement）。
+### `progressive_refinement.py` ⚠️ **相容層**
+- **僅保留舊匯入路徑**：會發出棄用警告，後續版本將移除。
+- 重新導出 `semantic_refinement` / `semantic_refinement_cli` 的公開 API，舊代碼依然可呼叫 `progressive_refinement_masks()`、`setup_output_directories()` 等函式。
+
+### `semantic_refinement.py` ⭐ **核心模組**
+- `progressive_refinement_masks()`：主要漸進式細化演算法。
+- `create_masked_image()`、`prepare_image_from_pil()`：生成 masked 圖、避免中途落盤。
+- `setup_output_directories()`、`save_original_image_info()`：統一輸出結構與原圖備份。
+- `bbox_from_mask()`、`instance_map_to_color_image()`：輔助函式與視覺檢查工具。
+
+### `semantic_refinement_cli.py` ⭐ **CLI 模組**
+- `parse_args()`：支援單張或整個場景批次、checkpoint 指定、gap-fill 參數等。
+- `main()`：整合 logging、模型載入、manifest/index 生成，再呼叫核心演算法。
 
 ### `raw_archive.py`
 - `_PendingFrame`：內部暫存單幀資料（metadata、遮罩二進位、統計），供 writer flush。

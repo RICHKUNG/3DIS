@@ -3,6 +3,37 @@
 > 本目錄負責解析 YAML、挑選場景、依序或平行執行各 stage，並記錄結果。  
 > 下列內容依「設定解析 → 場景選擇 → 單場景執行 → 多場景排程 → 摘要輸出」排列，涵蓋每個函式/方法的角色。
 
+## 執行流程圖（YAML 模式）
+
+```
+python -m my3dis.run_workflow --config <YAML>
+    └─ main()
+       ├─ _record_pid_map(config)
+       └─ execute_workflow(config, override_output, config_path)
+             ├─ 解析 experiment/stages（io.load_yaml 於上層已完成）
+             ├─ scenes.normalize_scene_list() + 路徑展開
+             ├─ （可選）記憶體事件監控初始化
+             └─ for scene in scenes:
+                   ▼ run_scene_workflow(...)
+                     └─ SceneWorkflow.run()
+                        ├─ StageRecorder('ssam')
+                        │   └─ my3dis.generate_candidates.run_generation()
+                        │       └─ ssam_progressive_adapter.generate_with_progressive()
+                        │           └─ progressive_refinement.progressive_refinement_masks()
+                        ├─ StageRecorder('filter') [若 enabled]
+                        │   └─ my3dis.filter_candidates.run_filtering()
+                        ├─ StageRecorder('tracker') [若 enabled]
+                        │   └─ my3dis.track_from_candidates.run_tracking()
+                        │       └─ tracking.level_runner.run_level_tracking() × N level
+                        │           └─ tracking.sam2_runner.sam2_tracking()
+                        ├─ StageRecorder('report') [若 enabled]
+                        │   └─ my3dis.generate_report.build_report()
+                        └─ Finalize
+                            ├─ summary.export_stage_timings()
+                            ├─ summary.apply_scene_level_layout()
+                            └─ summary.append_run_history()
+```
+
 ## Step 4-0：對外匯出
 
 ### `__init__.py`
@@ -35,7 +66,7 @@
 - `discover_scene_names(dataset_root)`：列出 dataset 根目錄下的場景資料夾（偏好 `scene_*` 命名）。
 - `normalize_scene_list(raw_scenes, dataset_root, scene_start, scene_end)`：處理 YAML 中的場景選擇（單一值、列表、`all` token、起迄範圍），並驗證存在性。
 - `resolve_levels(stage_cfg, manifest, fallback)`：決定各 stage 要跑哪些層級，優先讀 stage 設定，其次 manifest，再次 fallback。
-- `stage_frames_string(stage_cfg)`：將 stage 的 frame 設定統一成 `start:end:step` 字串。
+- `stage_frames_string(stage_cfg, experiment_cfg=None)`：合併 experiment 預設與 stage 覆寫，產出 `start:end:step` 字串。
 - `resolve_stage_gpu(stage_cfg, default_gpu)`：回傳 stage 指定的 GPU，沒有就落回共用設定。
 - `derive_scene_metadata(data_path)`：從資料路徑推導場景名稱、根目錄，寫入 summary。
 

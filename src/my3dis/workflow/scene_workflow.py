@@ -148,7 +148,7 @@ class SceneWorkflow:
         )
 
         levels = resolve_levels(stage_cfg, None, self.experiment_cfg.get('levels'))
-        frames_str = stage_frames_string(stage_cfg)
+        frames_str = stage_frames_string(stage_cfg, self.experiment_cfg)
         try:
             ssam_freq = int(stage_cfg.get('ssam_freq', 1))
         except (TypeError, ValueError) as exc:

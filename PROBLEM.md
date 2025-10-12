@@ -16,15 +16,15 @@ This note records the open risks, verification tasks, and mid-term improvements 
 
 ## Security & Stability
 
-- Audit every `torch.load` call and opt into `weights_only=True` (or an allowlist) before the upstream default flips. `logs/new/run_exp_20251008_144940.log:8`, `logs/new/run_exp_20251008_144940.log:12`
+- **URGENT**: Audit every `torch.load` call and opt into `weights_only=True` (or an allowlist) before the upstream default flips. `logs/new/run_exp_20251008_144940.log:8`, `logs/new/run_exp_20251008_144940.log:12`
 - Multi-scene execution still maps GPUs via `CUDA_VISIBLE_DEVICES` only; add explicit scheduling or per-stage GPU selection to avoid collisions when `ProcessPoolExecutor` fans out. `src/my3dis/workflow/executor.py:132-215`
 - When the OOM watcher reports missing `memory.events`, surface actionable warnings and consider auto-reducing concurrency instead of proceeding silently. `logs/new/run_exp_20251008_144940.log:2`
 
 ## Maintainability & Architecture
 
-- Fix: stand up a single `my3dis.config.schema` module (pydantic/dataclass) and route all CLI + workflow config loading through it so overrides, defaults, and validation logic stop drifting. `src/my3dis/common_utils.py:166-191`, `src/my3dis/progressive_refinement.py:314-360`, `scripts/pipeline/run_pipeline.py:51-126`
-- Fix: convert the repo into an installable package with console entry points so the orchestration scripts drop ad-hoc `sys.path` mutations and import resolution becomes reproducible. `src/my3dis/generate_candidates.py:1-18`, `src/my3dis/track_from_candidates.py:1-40`, `src/my3dis/filter_candidates.py:1-18`, `src/my3dis/generate_report.py:1-18`
-- Fix: split `src/my3dis/progressive_refinement.py` into `core.py`, `cli.py`, and `viz.py` (or similar) to isolate the algorithm from presentation code and make unit coverage feasible. `src/my3dis/progressive_refinement.py:1-260`
+- **HIGH PRIORITY**: stand up a single `my3dis.config.schema` module (pydantic/dataclass) and route all CLI + workflow config loading through it so overrides, defaults, and validation logic stop drifting. `src/my3dis/common_utils.py:166-191`, `src/my3dis/progressive_refinement.py:314-360`, `scripts/pipeline/run_pipeline.py:51-126`
+- **HIGH PRIORITY**: convert the repo into an installable package with console entry points so the orchestration scripts drop ad-hoc `sys.path` mutations and import resolution becomes reproducible. `src/my3dis/generate_candidates.py:1-18`, `src/my3dis/track_from_candidates.py:1-40`, `src/my3dis/filter_candidates.py:1-18`, `src/my3dis/generate_report.py:1-18`
+- **MEDIUM PRIORITY**: split `src/my3dis/progressive_refinement.py` (~1000 lines) into `core.py`, `cli.py`, and `viz.py` (or similar) to isolate the algorithm from presentation code and make unit coverage feasible. `src/my3dis/progressive_refinement.py:1-260`
 - Fix: inject commit hashes and env metadata into manifest headers with a tolerant fallback path so downstream runs can reproduce a scene without manual bookkeeping. `src/my3dis/progressive_refinement.py:152-188`, `src/my3dis/workflow/scene_workflow.py:360-410`
 
 ## Performance & Resource Management
