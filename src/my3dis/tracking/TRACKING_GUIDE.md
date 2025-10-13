@@ -122,7 +122,7 @@ run_level_tracking(level, ...) ────────────────�
   - `video_segments.npz`（frame-major）
   - `object_segments.npz`（object-major）
   並移除暫存檔。
-- `run_level_tracking(level, candidates_root, data_path, subset_dir, subset_map, predictor, ...)`：串起整個層級流程：載入候選 → 建立 dedup/frame store → 呼叫 `sam2_tracking` → 儲存輸出 → 抽樣視覺化 → 收集統計，最後回傳 `LevelRunResult`。
+- `run_level_tracking(level, candidates_root, data_path, subset_dir, subset_map, predictor, ...)`：串起整個層級流程：載入候選 → 建立 dedup/frame store → 呼叫 `sam2_tracking` → 儲存輸出 → 依 `comparison_sample_stride` / `comparison_max_samples` 抽樣視覺化 → 收集統計與 resource timer，最後回傳 `LevelRunResult`。
 
 ## Step 2-6：輸出封裝與比較視覺化
 
@@ -139,9 +139,9 @@ run_level_tracking(level, ...) ────────────────�
   - 決定要渲染哪些幀。
   - 找出原始影像/子集影像。
   - 描繪遮罩與邊框。
-  - 儲存 PNG 與摘要 JSON，供 `apply_scene_level_layout` 與報告使用。
+  - 儲存 PNG 與摘要 JSON，必要時輸出 fallback 檔並回報結構化 warning，供 `apply_scene_level_layout` 與報告使用。
 
 ---
 
 整體流程建議從 `track_from_candidates.py → pipeline_context → level_runner → sam2_runner → outputs` 順向閱讀，以掌握每個函式在 Step 2 的串接位置。  
-若需回顧全流程或其他階段，請參考 `src/my3dis/README.md` 與 `workflow/README.md`。
+若需回顧全流程或其他階段，請參考 `src/my3dis/OVERVIEW.md` 與 `workflow/WORKFLOW_GUIDE.md`。

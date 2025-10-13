@@ -4,6 +4,9 @@ Summary
 - Replace SAM in Algorithm 1 with Semantic-SAM and run the modified tracker per Semantic-SAM level.
 - Drive multi-level Semantic-SAM at fixed levels [2,4,6] by default, sampling frames via ranges such as 1200:1600:20 (CLI) or by setting only `step` in YAML to span the full sequence, and throttle expensive SSAM calls with `--ssam-freq` when desired.
 - Persist raw candidate lists, filtered mask metadata (packed into JSON), SAM2 tracking `.npz` artifacts (frame-major + object-major, suffixed with `_scale{ratio}x` when mask downsampling is enabled), and comparison visuals while automatically gap-filling large uncovered regions on the coarsest level only when `add_gaps=true`.
+- Chunk raw Semantic-SAM frames into tar archives under each `level_*/raw/` directory (`raw_archive.py` manifest + NPZ payloads) so filter reruns never reload the full JSON into memory.
+- Collect per-stage CPU/GPU peaks via `StageResourceMonitor`, drop an `environment_snapshot.json`, and embed run metadata inside `workflow_summary.json`/`logs/workflow_history.csv` for reproducibility.
+- Wire OOM watcher integration (`oom_monitor`), `--dry-run` shortcuts, and tracker comparison sampling knobs so YAML configs can skip execution, detect memory pressure early, and limit preview rendering.
 - Execute the pipeline through two dedicated conda environments (Semantic-SAM + SAM2); use `run_experiment.sh` or invoke the YAML-driven orchestrator via `python -m my3dis.run_workflow --config <path>` (set `PYTHONPATH=src` when running from the repo checkout) to propagate shared knobs (levels, frame slice, thresholds, SSAM cadence, SAM2 propagation limit, prompt 策略等)。
 - Workflow history appends now acquire file locks, so parallel runs safely extend `logs/workflow_history.csv` without corrupting headers or rows。
 - 透過 `src/my3dis/generate_report.py` 自動輸出 Markdown 報告，記錄階段耗時、參數設定與各層代表性的 Semantic-SAM / SAM2 比對圖，有助於後續調參與結果彙整。
@@ -179,17 +182,18 @@ Notes & Tips
 - SAM2 logits thresholding defaults to >0.0. Adjusting to 0.4–0.6 can sharpen edges—add a CLI flag if needed.
 - `selected_frames/` captures the exact frames passed to SAM2, aiding debugging and reproducibility.
 - `logs/workflow_history.csv` 會自動堆疊每次 `run_workflow` 執行摘要，`logs/batch/` 則保存批次報表，可納入後續分析或建置儀表板。
+- 每個 stage 的 CPU/GPU 峰值會記錄到 `workflow_summary.json` → `stages.*.resources`，同時在 run 目錄留下 `environment_snapshot.json` 供復現。
 - Outputs are `.gitignore`d; commit code/configs, or add representative samples selectively.
 - **Code Status**: Several optimization opportunities have been identified (large files, config unification, package installation) but current implementation remains stable and functional. See `PROBLEM.md` for improvement roadmap.
 
 Implementation Notes
-- Stage 1 (`src/my3dis/generate_candidates.py` + `src/my3dis/ssam_progressive_adapter.py`): runs Semantic-SAM progressive refinement per level, throttled by `--ssam-freq`, synthesises gap-fill masks ≥ `fill_area` (default = `min_area`) only on the first level when `add_gaps=true`, and keeps progressive outputs in temporary directories (no `_progressive_tmp` folder under the run root).
-- Stage 2 (`src/my3dis/track_from_candidates.py`): seeds SAM2 with filtered masks/boxes, respects `--sam2-max-propagate` to cap forward/backward steps, optionally downsamples stored masks via `downscale_masks`/`downscale_ratio` (file名改為 `video_segments_scale{ratio}x.npz` / `object_segments_scale{ratio}x.npz`)，並僅輸出 frame/object `.npz` 與每 10 張 SSAM 幀的比較圖。
+- Stage 1 (`src/my3dis/generate_candidates.py` + `src/my3dis/ssam_progressive_adapter.py`): runs Semantic-SAM progressive refinement per level, throttled by `--ssam-freq`, synthesises gap-fill masks ≥ `fill_area` (default = `min_area`) only on the first level when `add_gaps=true`, streams raw frames into chunked tar archives (`raw/manifest.json` + `chunk_*.tar.gz`), and keeps temporary progressive assets outside the run directory.
+- Stage 2 (`src/my3dis/track_from_candidates.py`): seeds SAM2 with filtered masks/boxes, respects `--sam2-max-propagate` to cap forward/backward steps, optionally downsamples stored masks via `downscale_masks`/`downscale_ratio` (file名改為 `video_segments_scale{ratio}x.npz` / `object_segments_scale{ratio}x.npz`)，並依 `comparison_sampling` 設定最多挑選 12 張預覽幀輸出到 `viz/compare/`（預設保留首/中/尾幀）。
 - `run_experiment.sh` wires both stages together, forwarding shared flags so a single CLI controls cadence, thresholds, and propagation depth across environments.
 
 實作說明（繁體中文版）
-- 第一階段（`src/my3dis/generate_candidates.py` 與 `src/my3dis/ssam_progressive_adapter.py`）：針對指定的 SSAM 取樣頻率執行 progressive refinement，並僅在第 1 個 level (`add_gaps=true` 時) 補上大於 `fill_area`（預設等同 `min_area`）的未覆蓋區域，避免同一缺口在多層重複出現。
-- 第二階段（`src/my3dis/track_from_candidates.py`）：以篩選後的遮罩／方框提示 SAM2，依 `--sam2-max-propagate` 限制向前向後的傳播步數，可透過 `downscale_masks` / `downscale_ratio` 將遮罩縮小後儲存（輸出 `video_segments_scale{ratio}x.npz` / `object_segments_scale{ratio}x.npz`），並維持每第 10 個 SSAM 影格產生比較圖。
+- 第一階段（`src/my3dis/generate_candidates.py` 與 `src/my3dis/ssam_progressive_adapter.py`）：針對指定的 SSAM 取樣頻率執行 progressive refinement，僅在第 1 個 level (`add_gaps=true` 時) 補上大於 `fill_area` 的未覆蓋區域，並將原始候選打包成 `raw/manifest.json` + `chunk_*.tar.gz` 方便後續重跑篩選。
+- 第二階段（`src/my3dis/track_from_candidates.py`）：以篩選後的遮罩／方框提示 SAM2，依 `--sam2-max-propagate` 限制向前向後的傳播步數，可透過 `downscale_masks` / `downscale_ratio` 將遮罩縮小後儲存（輸出 `video_segments_scale{ratio}x.npz` / `object_segments_scale{ratio}x.npz`），並依 `comparison_sampling` 參數挑選最多 12 張預覽幀（預設首/中/尾）產生比較圖。
 - `run_experiment.sh` 串接兩個環境，將層級、時間取樣、SSAM 頻率與 SAM2 傳播深度等參數一次傳遞，方便透過同一個指令調整流程。
 
 - `My3DIS/src/my3dis/run_workflow.py` — YAML orchestrator，整合 SSAM → filter → SAM2 → 報告。
@@ -199,6 +203,6 @@ Implementation Notes
 - `My3DIS/src/my3dis/track_from_candidates.py` — Stage 2 SAM2 tracker producing masks and visualizations。
 - `My3DIS/scripts/pipeline/run_pipeline.py` — 單一環境的備用流程。
 - `My3DIS/archive/experiments/build_hierarchy.py` — Optional mask containment post-processing。
-- `My3DIS/src/my3dis/src/my3dis/ssam_progressive_adapter.py` — Adapter utility for Semantic-SAM calls。
+- `My3DIS/src/my3dis/ssam_progressive_adapter.py` — Adapter utility for Semantic-SAM calls。
 - `My3DIS/archive/env/Algorithm1_env.yml` — Reference environment spec。
 - `My3DIS/Agent.md` — Project log and status updates (operational details now live here in the README)。

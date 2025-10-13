@@ -7,12 +7,15 @@ This note records the open risks, verification tasks, and mid-term improvements 
 - Added environment overrides for all external paths (repos, checkpoints, datasets, outputs) to avoid hard-coded mounts. `src/my3dis/pipeline_defaults.py:9-52`, `src/my3dis/workflow/executor.py:32-108`
 - Reworked SAM2 tracking to stream results: down-sampled IoU dedup is kept in memory while full-resolution payloads are written per frame/object through manifests. `src/my3dis/track_from_candidates.py:93-233`, `src/my3dis/track_from_candidates.py:547-689`, `src/my3dis/track_from_candidates.py:883-998`
 - Replaced `np.savez_compressed` bundles with manifest-backed archives (`video_segments*.npz` / `object_segments*.npz`) so large scenes no longer spike RAM when persisting artifacts. `src/my3dis/tracking/outputs.py:81-158`
+- Raw SSAM frames now stream into chunked tar archives with a manifest, allowing filter reruns without rehydrating giant JSON blobs. `src/my3dis/raw_archive.py` (`RawCandidateArchiveWriter` / `RawCandidateArchiveReader`), `src/my3dis/generate_candidates.py` (`persist_raw_frame`)
+- Tracker comparison previews honour stride/max knobs (`tracker.comparison_sampling`) and fall back to structured warnings when nothing renders. `src/my3dis/workflow/scene_workflow.py` (`_run_tracker_stage`), `src/my3dis/tracking/outputs.py` (`save_comparison_proposals`)
+- Stage execution records CPU/GPU peaks and drops `environment_snapshot.json` + `workflow_summary.json` snapshots for each run. `src/my3dis/workflow/summary.py` (`StageResourceMonitor`, `StageRecorder`), `src/my3dis/workflow/scene_workflow.py` (`_finalize`)
 
 ## Immediate Next Actions
 
-- **E2E verification** – Run one large MultiScan scene with the new streaming pipeline and confirm downstream consumers (`summary`, reporting, notebooks) can read the manifest layout without loading everything into memory. `src/my3dis/track_from_candidates.py:883-998`, `src/my3dis/tracking/outputs.py:81-158`
-- **Manifest tooling** – Provide a CLI/helper to iterate the new archives (list objects, dump masks) to unlock smoke tests and ad-hoc inspections. Current scripts still assume `np.load` on dense dictionaries. `src/my3dis/tracking/outputs.py:81-158`
-- **Regression test gap** – Add a unit/integration test that exercises `FrameResultStore` + `build_video_segments_archive` to prevent accidental regressions in the streaming writer. `src/my3dis/track_from_candidates.py:191-233`, `src/my3dis/tracking/outputs.py:81-158`
+- **E2E verification** – Run one large MultiScan scene with the new streaming pipeline and confirm downstream consumers (`summary`, reporting, notebooks) can read the manifest layout without loading everything into memory. `src/my3dis/track_from_candidates.py` (`run_tracking`), `src/my3dis/tracking/outputs.py` (`build_video_segments_archive`)
+- **Manifest tooling** – Provide a CLI/helper to iterate the new archives (list objects, dump masks) to unlock smoke tests and ad-hoc inspections. Current scripts still assume `np.load` on dense dictionaries. `src/my3dis/raw_archive.py`, `tools/` (new)
+- **Regression test gap** – Add a unit/integration test that exercises `FrameResultStore` + `build_video_segments_archive` to prevent accidental regressions in the streaming writer. `src/my3dis/tracking/stores.py`, `src/my3dis/tracking/outputs.py`
 
 ## Security & Stability
 
@@ -29,16 +32,14 @@ This note records the open risks, verification tasks, and mid-term improvements 
 
 ## Performance & Resource Management
 
-- Fix: vectorise the gap-fill union (`np.stack` + `np.any`) with preallocated buffers to kill the Python resize loop and shave peak RSS during dense scenes. `src/my3dis/generate_candidates.py:566-612`
-- Fix: stream candidate dumps into chunked archives (tar + manifest or parquet batches) instead of per-frame JSON/NPZ pairs to cut filesystem thrash and allocator pressure. `src/my3dis/generate_candidates.py:214-258`
-- Fix: expose a config knob for comparison sampling density and throttle the default for large scenes so report generation scales without spiking memory. `src/my3dis/tracking/outputs.py:160-210`
+- Fix: vectorise the gap-fill union (`np.stack` + `np.any`) with preallocated buffers to kill the Python resize loop and shave peak RSS during dense scenes. `src/my3dis/generate_candidates.py` (`_coerce_union_shape`)
+- Add knobs for raw archive chunk sizing/compression (currently fixed to 32 frames, gzip) so long sequences can trade throughput vs disk usage. `src/my3dis/raw_archive.py`, `src/my3dis/generate_candidates.py`
 - Fix: wire the OOM watcher into pipeline orchestration so when memory.events are missing or `oom_kill` increments we automatically back off concurrency. `logs/new/run_exp_20251008_144940.log:2`, `src/my3dis/workflow/executor.py:132-215`
 
 ## Observability & Reporting
 
-- Record peak GPU/CPU memory per stage and emit it with the timing summary for easier regressions. `src/my3dis/workflow/summary.py:20-110`
-- When no tracker comparisons can be rendered, emit a structured warning (and fallback artefact) instead of silently skipping. `src/my3dis/tracking/outputs.py:160-337`
-- Persist the active environment snapshot (Python/Torch/CUDA/tool versions) into workflow summaries to ease multi-machine audits. `src/my3dis/workflow/scene_workflow.py:360-410`, `src/my3dis/workflow/summary.py:20-110`
+- Surface `StageResourceMonitor` stats inside generated Markdown reports and CLI summaries so peaks are visible outside JSON payloads. `src/my3dis/generate_report.py`, `src/my3dis/workflow/summary.py`
+- Provide a lightweight `report resources` helper that prints recent `workflow_summary.json` metrics for quick regressions (no spreadsheet wrangling). `src/my3dis/workflow/summary.py`, `tools/` (new)
 
 ## Tooling & UX
 

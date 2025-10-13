@@ -114,11 +114,11 @@ python -m my3dis.run_workflow --config <YAML>
   - `_populate_experiment_metadata()`：填入場景/資料路徑等資訊，含多場景時的父設定。
   - `_ensure_run_dir()`：確認 SSAM 階段產生的 run 目錄存在。
   - `_ensure_manifest()`：載入（或快取） SSAM 階段留下的 manifest。
-  - `_run_ssam_stage()`：處理候選生成（可重用既有 run 或直接呼叫 `generate_candidates.run_generation`）。
+  - `_run_ssam_stage()`：處理候選生成（可重用既有 run 或直接呼叫 `generate_candidates.run_generation`），支援 `persist_raw` chunk archive、`skip_filtering`、`downscale_masks` 等選項。
   - `_run_filter_stage()`：若啟用則呼叫 `filter_candidates.run_filtering` 重新篩選。
-  - `_run_tracker_stage()`：依設定呼叫 `track_from_candidates.run_tracking`。
-  - `_run_report_stage()`：視需求建立報告與補充 summary。
-  - `_finalize()`：整理輸出版型 (`apply_scene_level_layout`)、紀錄歷史 (`append_run_history`)。
+  - `_run_tracker_stage()`：依設定呼叫 `track_from_candidates.run_tracking`，處理 `prompt_mode`（mask/box）、`mask_scale_ratio`、`comparison_sampling` 與 `render_viz` 等參數。
+  - `_run_report_stage()`：視需求建立報告、控制 `report_name`/`max_width`，並可選擇輸出 `stage_timings.json`。
+  - `_finalize()`：寫入 `environment_snapshot.json`、`workflow_summary.json`（含 per-stage 資源峰值）、重新整理輸出版型 (`apply_scene_level_layout`)、紀錄歷史 (`append_run_history`)。
 - `run_scene_workflow(**kwargs)`：簡化呼叫介面，建立 `SceneWorkflow` 並執行 `run()`。
 
 ## Step 4-5：多場景排程與平行化
@@ -141,5 +141,5 @@ python -m my3dis.run_workflow --config <YAML>
 
 ---
 
-如需返回「所有模組總覽」，請參考 `src/my3dis/README.md`。  
-若要瞭解 SAM2 追蹤內部運作，請閱讀 `tracking/README.md`。
+如需返回「所有模組總覽」，請參考 `src/my3dis/OVERVIEW.md`。  
+若要瞭解 SAM2 追蹤內部運作，請閱讀 `tracking/TRACKING_GUIDE.md`。

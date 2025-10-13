@@ -1,30 +1,24 @@
 experiment:
-  name: parallel_1009
+  name: run_all_parallel_1013
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
   # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00048_00  # replace with first scene name (inclusive) to limit the run
+  # scene_start: scene_00077_00  # replace with first scene name (inclusive) to limit the run
   # scene_end: scene_00077_01    # replace with last scene name (inclusive) to limit the run
   # scene_start: scene_00086_00  # replace with first scene name (inclusive) to limit the run
   # scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
 
   # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00022_00    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00022_01  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00048_01    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00051_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00065_01    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00075_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00089_01    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00091_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
-  parallel_scenes: 1
+  # scene_end: scene_00058_00    # replace with last scene name (inclusive) to limit the run
+  scene_start: scene_00058_01  # replace with first scene name (inclusive) to limit the run
+  scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
+  parallel_scenes: 2
   levels:
     - 2
     - 4
     - 6
-  tag: 246_filter_fill_prop30
+  tag: 246_ssam2_filter_fill5k_prop30_iou06
   aggregate_output: false
   output_layout: scene_level
   output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
@@ -32,22 +26,22 @@ experiment:
     step: 50
   # run_dir: /media/Pluto/richkung/My3DIS/outputs/experiments/test_1009_2/scene_00065_00/246_filter_fill_prop30
 stages:
-  gpu: 0  # a
+  gpu: 1  # aniki
   ssam:
     enabled: true
     ssam_freq: 2
-    min_area: 1000
+    min_area: 500
     stability_threshold: 1.0
     persist_raw: true
     skip_filtering: true
     add_gaps: true
-    fill_area: 10000
+    fill_area: 5000
     append_timestamp: false
     downscale_masks: true
     downscale_ratio: 0.3
   filter:
     enabled: true
-    min_area: 1000
+    min_area: 500
     stability_threshold: 1.0
   tracker:
     enabled: true
@@ -58,7 +52,7 @@ stages:
     downscale_ratio: 0.3
     render_viz: true
     comparison_sampling:
-      max_frames: 6
+      max_frames: 10
   report:
     enabled: true
     name: report.md

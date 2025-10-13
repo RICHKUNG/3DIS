@@ -15,6 +15,10 @@ Status
 - YAML `experiment.scenes` + `experiment.dataset_root` 現在支援單一實驗跑多個場景，輸出集中在 `outputs/experiments/<experiment>/<scene>/...`。
 - `configs/multiscan/base.yaml` 集中定義跨場景 sweep（預設 `scenes: all`），`src/my3dis/run_workflow.py` 會自動建立實驗 timestamp 資料夾並整理輸出成 scene/level 目錄、`summary.json`、三張報表圖片與 SAM2 NPZ。
 - `src/my3dis/run_workflow.py` 支援 `scene_start`/`scene_end`，可用來鎖定 MultiScan 範圍，例如 `scene_start: scene_00030_00`、`scene_end: scene_00075_01` 會按照資料夾順序依序執行。
+- `generate_candidates` 會把 raw SSAM 幀寫成 `raw/manifest.json` + `chunk_*.tar.{gz}`，filter stage 可在不讀入所有 JSON 的情況下重跑。
+- `StageRecorder` 內建 `StageResourceMonitor`，每階段的 CPU/GPU 峰值與 `environment_snapshot.json` 會寫入 run 目錄供後續驗證。
+- `oom_monitor` watcher 與 `--dry-run` 選項已整合進 `run_workflow.py`，batch/單場景都能先檢查配置或監控 cgroup 記憶體。
+- Tracker 預覽支援 `comparison_sampling`（stride / max_frames），預設收斂為首/中/尾等≤12 張幀圖，減少長序列渲染成本。
 
 Progress Log
 - 2025-01-XX: Finalized progressive refinement split—core algorithm now lives in `src/my3dis/semantic_refinement.py`, new CLI under `semantic_refinement_cli.py`, and the old modules emit deprecation warnings while re-exporting the same API surface.
@@ -38,6 +42,9 @@ Progress Log
 - 2025-09-27: `src/my3dis/run_workflow.py` 支援 `experiment.scenes` 多場景執行，將 `experiment.output_root` 當作實驗根目錄並在 `/<scene>/` 建立 run；History CSV 新增 `parent_experiment` / `scene_index` 欄位，`scripts/pipeline/run_workflow_batch.py` 會展開每個場景的紀錄。
 - 2025-10-02: 新增 `configs/multiscan/base.yaml`，`src/my3dis/run_workflow.py` 自動列舉 MultiScan 全場景、建立 `aggregate_output` timestamp 根目錄，SAM2 階段支援 `render_viz` 關閉，報告輸出整併為每個 `scene/level` 目錄含 `object_segments_Lxx.npz`、`video_segments_Lxx.npz`、三張報表圖片與 `summary.json`。
 - 2025-10-08: Added `--dry-run` flag to `src/my3dis/run_workflow.py`, documented the `PYTHONPATH` export requirement in README, and verified with `PYTHONPATH=src conda run -n My3DIS python -m my3dis.run_workflow --config configs/scenes/scene_00065_00.yaml --dry-run`, which now prints the parsed config without executing stages.
+- 2025-10-09: Raw SSAM frames now stream into chunked archives (`raw_archive.py` → `chunk_*.tar.gz` + `raw/manifest.json`); filter reruns reuse these manifests without rehydrating entire JSON payloads.
+- 2025-10-09: Stage recorder gained resource probes—CPU/GPU peaks per stage and `environment_snapshot.json` land in every run dir, also duplicated in `workflow_summary.json`.
+- 2025-10-10: Tracker comparison sampling exposes stride/max knobs (`tracker.comparison_sampling`) so long scenes keep ≤12 preview frames by default while still forcing first/last snapshots.
 - 2025-10-07: 清理 `configs/multiscan_all.yaml` 合併衝突並改為 `persist_raw=true` / `skip_filtering=true`，同時重新啟用 filter stage（沿用 `min_area=1000`, `stability_threshold=1.0`）以將 SSAM 遮罩改為磁碟暫存，避免 OOM。
 - 2025-10-07: 導入 `oom_monitor/` 工具集，`src/my3dis/run_workflow.py` 與 `scripts/pipeline/run_workflow_batch.py` 預設掛載 cgroup `memory.events` watcher，將 OOM 指標寫入 `logs/oom_monitor.log`（`--no-oom-watch` 可停用，`--oom-watch-*` 旗標可調整行為）。
 - 2025-01-XX: Code review conducted - identified optimization opportunities in progressive_refinement.py (large file ~1000 lines), config unification needs, and PROBLEM.md items. Refactor plans documented but implementation deferred to maintain stability.

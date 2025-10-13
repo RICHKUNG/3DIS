@@ -1,7 +1,7 @@
 # My3DIS 核心模組說明（依實驗流程）
 
 > 本文件按「實驗流程」視角整理 `src/my3dis` 目錄下各個 `.py` 的角色與函式。  
-> 追蹤與工作流程子模組請參照 `tracking/README.md`、`workflow/README.md` 取得更細節。
+> 追蹤與工作流程子模組請參照 `tracking/TRACKING_GUIDE.md`、`workflow/WORKFLOW_GUIDE.md` 取得更細節。
 
 ## 執行流程圖（總覽與模式分支）
 
@@ -118,7 +118,7 @@
 
 ## Step 2：SAM2 追蹤準備與執行
 
-> 入口 `track_from_candidates.py` 以及詳細追蹤邏輯、請參考 `tracking/README.md`。
+> 入口 `track_from_candidates.py` 以及詳細追蹤邏輯、請參考 `tracking/TRACKING_GUIDE.md`。
 
 ### `track_from_candidates.py`
 - `resolve_sam2_config_path(config_arg)`：將 CLI 指定的 config 轉為 SAM2 可識別的 Hydra 路徑或絕對檔案。
@@ -140,14 +140,14 @@
 
 ## Step 4：Workflow 管線（多場景協調）
 
-> 詳細的 workflow 模組、場景切換、平行化與摘要請見 `workflow/README.md`。  
+> 詳細的 workflow 模組、場景切換、平行化與摘要請見 `workflow/WORKFLOW_GUIDE.md`。  
 > 此處說明入口腳本：
 
 ### `run_workflow.py`
 - `_configure_entry_logging()`：保證 CLI log 帶有時間與 PID。
 - `_stdout_descriptor()`：偵測標準輸出導向（檔案、pipe）並回傳字串，寫入 PID map。
 - `_record_pid_map(config_path)`：在 `logs/run_pid_map.csv` 新增一列，記錄本次執行細節。
-- `main()`：解析 `--config` 等參數、載入 YAML、呼叫 `workflow.execute_workflow`，並處理錯誤通知／歷史紀錄。
+- `main()`：解析 `--config` 等參數（含 `--dry-run` 用於僅檢查配置）、載入 YAML、呼叫 `workflow.execute_workflow`，並透過 `oom_monitor.memory_watch_context` 監控 OOM、寫入通知與歷史紀錄。
 
 ## Step 5：附屬工具
 
@@ -159,5 +159,5 @@
 
 ---
 
-- 追蹤模組詳細對照：`tracking/README.md`  
-- Workflow 佇列與多場景執行細節：`workflow/README.md`
+- 追蹤模組詳細對照：`tracking/TRACKING_GUIDE.md`  
+- Workflow 佇列與多場景執行細節：`workflow/WORKFLOW_GUIDE.md`
