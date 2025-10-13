@@ -451,15 +451,26 @@ def save_comparison_proposals(
                 if isinstance(seg0, np.ndarray):
                     H, W = seg0.shape[:2]
 
-            sam_frame: Dict[int, Any] = {}
+            preview_frame: Dict[int, Any] = {}
             if isinstance(video_segments, dict):
-                sam_frame = video_segments.get(f_idx) or {}
+                preview_frame = video_segments.get(f_idx) or {}
+
+            archive_frame = _load_archive_frame(int(f_idx))
+
+            sam_frame: Dict[int, Any] = {}
+            if archive_frame:
+                sam_frame.update(archive_frame)
+
+            if preview_frame:
+                # Preview segments may be incomplete; merge while normalising keys.
+                for obj_id, payload in preview_frame.items():
+                    sam_frame[int(obj_id)] = payload
+
             if not _frame_has_mask(sam_frame):
-                archive_frame = _load_archive_frame(int(f_idx))
-                if archive_frame:
-                    sam_frame = archive_frame
-            if not sam_frame:
-                sam_frame = _load_archive_frame(int(f_idx))
+                if _frame_has_mask(preview_frame):
+                    sam_frame = {int(obj_id): payload for obj_id, payload in preview_frame.items()}
+                else:
+                    sam_frame = archive_frame or {}
             if H is None or W is None:
                 if sam_frame:
                     first_mask = next(iter(sam_frame.values()))

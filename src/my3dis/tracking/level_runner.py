@@ -125,6 +125,13 @@ def run_level_tracking(
             frame_name_lookup[int(abs_idx)] = str(name)
         except (TypeError, ValueError):
             continue
+    for abs_idx, rel_name in subset_map.items():
+        try:
+            abs_idx_int = int(abs_idx)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(rel_name, str):
+            frame_name_lookup.setdefault(abs_idx_int, rel_name)
     for abs_idx in frame_numbers:
         abs_idx_int = int(abs_idx)
         if abs_idx_int not in frame_name_lookup:
@@ -251,6 +258,9 @@ def run_level_tracking(
         viz_dir = os.path.join(out_root, f'level_{level}', 'viz')
         with level_timer.track('viz.comparison'):
             frames_to_save = list(preview_abs_indices)
+            # Forward comparison sampling parameters so _apply_sampling_to_frames
+            # does not fall back to its 12-frame default when no custom limit is set.
+            render_max_samples = comparison_max_samples if comparison_max_samples is not None else 0
             comparison_result = save_comparison_proposals(
                 viz_dir=viz_dir,
                 base_frames_dir=data_path,
@@ -263,7 +273,7 @@ def run_level_tracking(
                 subset_map=subset_map,
                 frames_to_save=frames_to_save,
                 sample_stride=comparison_sample_stride,
-                max_samples=effective_max_samples,
+                max_samples=render_max_samples,
                 video_segments_archive=artifacts.get('video_segments'),
             )
     if comparison_result:

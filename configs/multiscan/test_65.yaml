@@ -1,5 +1,5 @@
 experiment:
-  name: test_1012_00005
+  name: test_1013_test
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
@@ -27,7 +27,7 @@ experiment:
     - 2
     - 4
     - 6
-  tag: 246_filter_fill_prop30_claude_test
+  tag: 246_filter_fill_prop30_mask_repair
   aggregate_output: false
   output_layout: scene_level
   output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
@@ -35,7 +35,7 @@ experiment:
   frames:
     step: 50
 stages:
-  gpu: 1  # a
+  gpu: 0  # a
   ssam:
     enabled: true
     ssam_freq: 2
@@ -61,7 +61,7 @@ stages:
     downscale_ratio: 0.3
     render_viz: true
     comparison_sampling:
-      max_frames: 60
+      max_frames: 600
   report:
     enabled: true
     name: report.md
