@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import concurrent.futures
+import contextlib
+import io
 from collections import deque
 import json
 import logging
 import multiprocessing as mp
 import os
+import sys
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +20,7 @@ from .scene_workflow import run_scene_workflow
 from .scenes import expand_output_path_template, normalize_scene_list
 from .utils import now_local_iso, now_local_stamp
 
-from my3dis.common_utils import configure_entry_log_format
+from my3dis.common_utils import ENTRY_LOG_FORMAT, configure_entry_log_format
 
 from oom_monitor.memory_events import MemoryEventsReader, OOMEvent
 
@@ -32,10 +34,123 @@ class _SceneJob:
     kwargs: Dict[str, Any]
 
 
+@dataclass(frozen=True)
+class _SceneProcessHandle:
+    job: _SceneJob
+    process: mp.Process
+    conn: mp.connection.Connection
+
+
+class _TeeStream(io.TextIOBase):
+    """Write data to the scene log file and mirror to the original stream."""
+
+    def __init__(self, primary: io.TextIOBase, mirror: io.TextIOBase | None) -> None:
+        self._primary = primary
+        self._mirror = mirror
+
+    def write(self, data: str) -> int:  # type: ignore[override]
+        if self._primary:
+            self._primary.write(data)
+        if self._mirror:
+            self._mirror.write(data)
+        return len(data)
+
+    def flush(self) -> None:  # type: ignore[override]
+        if self._primary:
+            self._primary.flush()
+        if self._mirror:
+            self._mirror.flush()
+
+    def writable(self) -> bool:  # type: ignore[override]
+        return True
+
+    def isatty(self) -> bool:  # type: ignore[override]
+        if self._mirror and hasattr(self._mirror, 'isatty'):
+            return self._mirror.isatty()
+        return False
+
+    @property
+    def encoding(self) -> str | None:  # type: ignore[override]
+        primary_encoding = getattr(self._primary, 'encoding', None)
+        if primary_encoding:
+            return primary_encoding
+        if self._mirror:
+            return getattr(self._mirror, 'encoding', None)
+        return None
+
+
+def _sanitise_scene_name(name: str) -> str:
+    return ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in name) or 'scene'
+
+
+def _prepare_scene_log(job: _SceneJob) -> tuple[Optional[logging.Handler], Optional[contextlib.ExitStack], Optional[Path]]:
+    """Return logging handler + stdout/stderr redirect stack pointing to a scene log."""
+
+    config_path = job.kwargs.get('config_path')
+    config_stem = Path(config_path).stem if config_path else 'adhoc'
+    experiment_cfg = job.kwargs.get('experiment_cfg') or {}
+    run_stamp_raw = experiment_cfg.get('run_timestamp')
+    run_stamp = str(run_stamp_raw) if run_stamp_raw else now_local_stamp()
+
+    log_dir = Path('logs') / 'scene_workers' / f'{config_stem}_{run_stamp}'
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        LOGGER.warning("Unable to prepare log directory %s for scene %s: %s", log_dir, job.scene, exc)
+        return None, None, None
+
+    sanitised_scene = _sanitise_scene_name(job.scene)
+    log_path = log_dir / f'{job.index:03d}_{sanitised_scene}_pid{os.getpid()}.log'
+
+    handler: Optional[logging.Handler] = None
+    stack: Optional[contextlib.ExitStack] = None
+    try:
+        handler = logging.FileHandler(log_path, mode='a', encoding='utf-8')
+        handler.setFormatter(logging.Formatter(ENTRY_LOG_FORMAT))
+        logging.getLogger().addHandler(handler)
+
+        stack = contextlib.ExitStack()
+        log_stream = stack.enter_context(open(log_path, 'a', encoding='utf-8', buffering=1))
+        stdout = _TeeStream(log_stream, sys.stdout)
+        stderr = _TeeStream(log_stream, sys.stderr)
+        stack.enter_context(contextlib.redirect_stdout(stdout))
+        stack.enter_context(contextlib.redirect_stderr(stderr))
+    except OSError as exc:
+        LOGGER.warning("Unable to open log file %s for scene %s: %s", log_path, job.scene, exc)
+        if stack:
+            stack.close()
+        if handler:
+            logging.getLogger().removeHandler(handler)
+            handler.close()
+        return None, None, log_path
+
+    return handler, stack, log_path
+
+
+def _cleanup_scene_log(handler: Optional[logging.Handler], stack: Optional[contextlib.ExitStack]) -> None:
+    if handler:
+        logging.getLogger().removeHandler(handler)
+        handler.close()
+    if stack:
+        stack.close()
+
+
 def _run_scene_job(job: _SceneJob) -> Dict[str, Any]:
     level = configure_entry_log_format()
     LOGGER.setLevel(level)
-    return run_scene_workflow(**job.kwargs)
+    handler: Optional[logging.Handler] = None
+    stack: Optional[contextlib.ExitStack] = None
+    log_path: Optional[Path] = None
+    try:
+        handler, stack, log_path = _prepare_scene_log(job)
+        if log_path:
+            LOGGER.info("Scene %s PID=%d logging to %s", job.scene, os.getpid(), log_path)
+        summary = run_scene_workflow(**job.kwargs)
+        if log_path:
+            summary.setdefault('experiment', {}).setdefault('scene_log', str(log_path))
+        return summary
+    finally:
+        _cleanup_scene_log(handler, stack)
 
 
 def _scene_job_worker(conn: mp.connection.Connection, job: _SceneJob) -> None:
@@ -63,37 +178,50 @@ def _scene_job_worker(conn: mp.connection.Connection, job: _SceneJob) -> None:
         conn.close()
 
 
-def _run_scene_job_isolated(job: _SceneJob) -> Tuple[bool, Dict[str, Any]]:
-    """Launch a dedicated child process for a scene job and return success flag with payload."""
-    ctx = mp.get_context('spawn')
+def _launch_scene_process(job: _SceneJob, ctx: mp.context.BaseContext) -> _SceneProcessHandle:
+    """Spawn a new process to execute a scene job and return a handle for communication."""
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     process = ctx.Process(target=_scene_job_worker, args=(child_conn, job), daemon=False)
     try:
         process.start()
+    except BaseException:
+        parent_conn.close()
+        raise
     finally:
         child_conn.close()
+    return _SceneProcessHandle(job=job, process=process, conn=parent_conn)
 
+
+def _finalise_scene_process(handle: _SceneProcessHandle) -> Tuple[bool, Dict[str, Any]]:
+    """Collect the outcome from an isolated scene process."""
     payload: Dict[str, Any] = {}
     try:
-        payload = parent_conn.recv()
+        payload = handle.conn.recv()
     except EOFError:
         payload = {}
     finally:
-        parent_conn.close()
-        process.join()
+        handle.conn.close()
+        handle.process.join()
 
     if payload.get('status') == 'ok':
         return True, payload['summary']
 
     error_payload = dict(payload)
-    error_payload['exitcode'] = process.exitcode
+    error_payload['exitcode'] = handle.process.exitcode
     if not error_payload.get('exc_type'):
         error_payload.setdefault('exc_type', 'RuntimeError')
         error_payload.setdefault(
             'exc_message',
-            f'Isolated scene process exited with code {process.exitcode}',
+            f'Isolated scene process exited with code {handle.process.exitcode}',
         )
     return False, error_payload
+
+
+def _run_scene_job_isolated(job: _SceneJob) -> Tuple[bool, Dict[str, Any]]:
+    """Launch a dedicated child process for a scene job and return success flag with payload."""
+    ctx = mp.get_context('spawn')
+    handle = _launch_scene_process(job, ctx)
+    return _finalise_scene_process(handle)
 
 
 def _resolve_path_override(env_var: str, configured: Optional[str]) -> Optional[str]:
@@ -288,47 +416,80 @@ def execute_workflow(
 
         isolate_cfg = experiment_cfg.get('isolate_scenes')
         if isolate_cfg is None:
-            isolate_scenes = parallel_scenes == 1
+            isolate_scenes = True
         else:
             isolate_scenes = bool(isolate_cfg)
-            if isolate_scenes and parallel_scenes > 1:
+            if not isolate_scenes:
                 LOGGER.warning(
-                    "experiment.isolate_scenes=%r requested with parallel_scenes=%d; isolation only applies when remaining scenes run sequentially",
+                    "experiment.isolate_scenes=%r disables per-scene isolation; memory usage may accumulate across scenes",
                     isolate_cfg,
-                    parallel_scenes,
                 )
 
         if parallel_scenes > 1 and len(jobs) > 1:
             LOGGER.info(
-                "Executing %d scenes with up to %d parallel workers",
+                "Executing %d scenes with up to %d parallel workers (isolated per scene)",
                 len(jobs),
                 parallel_scenes,
             )
+            ctx = mp.get_context('spawn')
             pending_jobs = deque(jobs)
-            future_map: Dict[concurrent.futures.Future[Dict[str, Any]], _SceneJob] = {}
+            active_handles: List[_SceneProcessHandle] = []
             executor_backoff = False
             previous_snapshot = _read_memory_snapshots(memory_readers) if memory_readers else {}
 
-            def submit_next(executor: concurrent.futures.ProcessPoolExecutor) -> None:
-                if executor_backoff or not pending_jobs:
-                    return
-                next_job = pending_jobs.popleft()
-                future_map[executor.submit(_run_scene_job, next_job)] = next_job
-
-            with concurrent.futures.ProcessPoolExecutor(max_workers=parallel_scenes) as executor:
-                while not executor_backoff and pending_jobs and len(future_map) < parallel_scenes:
-                    submit_next(executor)
-
-                while future_map:
-                    future = next(concurrent.futures.as_completed(future_map))
-                    job = future_map.pop(future)
+            def fill_pool() -> None:
+                while (
+                    not executor_backoff
+                    and pending_jobs
+                    and len(active_handles) < parallel_scenes
+                ):
+                    next_job = pending_jobs.popleft()
                     try:
-                        summary = future.result()
-                    except BaseException as exc:  # pragma: no cover - propagate detailed logs
+                        handle = _launch_scene_process(next_job, ctx)
+                    except BaseException as exc:  # pragma: no cover - propagate diagnostics
+                        LOGGER.error(
+                            "Failed to start isolated process for scene %s",
+                            next_job.scene,
+                            exc_info=True,
+                        )
+                        scene_errors.append((next_job, exc))
+                        continue
+                    active_handles.append(handle)
+
+            fill_pool()
+
+            while active_handles:
+                ready_conns = mp.connection.wait([handle.conn for handle in active_handles])
+                for conn in ready_conns:
+                    idx = next(
+                        (i for i, handle in enumerate(active_handles) if handle.conn is conn),
+                        None,
+                    )
+                    if idx is None:
+                        continue
+                    handle = active_handles.pop(idx)
+                    job = handle.job
+                    before_snapshot = previous_snapshot if memory_readers else {}
+                    try:
+                        ok, payload = _finalise_scene_process(handle)
+                    except BaseException as exc:  # pragma: no cover - propagate diagnostics
                         LOGGER.error("Scene %s failed during execution", job.scene, exc_info=True)
                         scene_errors.append((job, exc))
+                        continue
+
+                    if ok:
+                        summaries_ordered[job.index] = payload
                     else:
-                        summaries_ordered[job.index] = summary
+                        message = (
+                            f"Scene {job.scene} failed in isolated subprocess "
+                            f"{payload.get('exc_type')}: {payload.get('exc_message')}"
+                        ).strip()
+                        exitcode = payload.get('exitcode')
+                        if exitcode is not None:
+                            message = f"{message} (exitcode={exitcode})"
+                        if payload.get('traceback'):
+                            message = f"{message}\n{payload['traceback']}"
+                        scene_errors.append((job, WorkflowRuntimeError(message)))
 
                     if memory_readers:
                         current_snapshot = _read_memory_snapshots(memory_readers)
@@ -343,8 +504,7 @@ def execute_workflow(
                                 len(pending_jobs),
                             )
 
-                    if not executor_backoff:
-                        submit_next(executor)
+                fill_pool()
 
             if executor_backoff and pending_jobs:
                 LOGGER.info(

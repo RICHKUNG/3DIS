@@ -16,6 +16,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
+try:
+    from scipy import ndimage
+except ImportError:  # SciPy may be optional in some environments
+    ndimage = None
+
 from my3dis.common_utils import (
     bbox_from_mask_xyxy,
     bbox_xyxy_to_xywh,
@@ -86,24 +91,48 @@ def _extract_gap_components(segs: List[np.ndarray], fill_area: int) -> List[np.n
         return []
 
     ref_shape = valid[0].shape
-    coverage = np.zeros(ref_shape, dtype=bool)
+    aligned = []
     for seg in valid:
-        if seg.shape != ref_shape:
+        if seg.shape == ref_shape:
+            aligned.append(seg)
+        else:
             LOGGER.debug(
                 "Skipping gap computation for mask with mismatched shape %s != %s",
                 seg.shape,
                 ref_shape,
             )
-            continue
-        coverage |= seg
+    if not aligned:
+        return []
+
+    if len(aligned) == 1:
+        coverage = aligned[0].copy()
+    else:
+        coverage = np.any(np.stack(aligned, axis=0), axis=0)
 
     gap = np.logical_not(coverage)
     if not gap.any():
         return []
 
+    gap_components: List[np.ndarray] = []
+
+    if ndimage is not None:
+        structure = ndimage.generate_binary_structure(gap.ndim, 1)
+        labels, num_labels = ndimage.label(gap, structure=structure)
+        if num_labels == 0:
+            return []
+
+        counts = np.bincount(labels.ravel())
+        min_count = max(fill_area, 1)
+        for label_id in range(1, num_labels + 1):
+            if counts[label_id] < min_count:
+                continue
+            comp_mask = labels == label_id
+            gap_components.append(comp_mask)
+        return gap_components
+
+    # Fallback flood-fill when SciPy is unavailable.
     h, w = gap.shape
     visited = np.zeros_like(gap, dtype=bool)
-    gap_components: List[np.ndarray] = []
 
     def neighbors(y: int, x: int):
         if y > 0:
@@ -121,23 +150,21 @@ def _extract_gap_components(segs: List[np.ndarray], fill_area: int) -> List[np.n
                 continue
             stack = [(y, x)]
             visited[y, x] = True
-            coords: List[Tuple[int, int]] = []
+            comp_mask = np.zeros_like(gap, dtype=bool)
+            comp_mask[y, x] = True
+            size = 1
 
             while stack:
                 cy, cx = stack.pop()
-                coords.append((cy, cx))
                 for ny, nx in neighbors(cy, cx):
                     if gap[ny, nx] and not visited[ny, nx]:
                         visited[ny, nx] = True
                         stack.append((ny, nx))
+                        comp_mask[ny, nx] = True
+                        size += 1
 
-            if len(coords) < fill_area:
-                continue
-
-            comp_mask = np.zeros_like(gap, dtype=bool)
-            ys, xs = zip(*coords)
-            comp_mask[ys, xs] = True
-            gap_components.append(comp_mask)
+            if size >= fill_area:
+                gap_components.append(comp_mask)
 
     return gap_components
 
