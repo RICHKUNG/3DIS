@@ -66,7 +66,7 @@ def build_stage_template(args: argparse.Namespace) -> Dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='Prepare YAML configs for MultiScan scenes')
-    parser.add_argument('--dataset-root', default='/media/public_dataset2/multiscan', help='MultiScan dataset root')
+    parser.add_argument('--dataset-root', default='./data/multiscan', help='MultiScan dataset root')
     parser.add_argument('--project-root', default='.', help='Project root that contains the outputs directory')
     parser.add_argument('--output-dir', default='configs/scenes', help='Directory to write generated YAML files (per-scene)')
     parser.add_argument('--output-base', help='Base directory for experiment outputs (default: <project-root>/outputs)')

@@ -19,7 +19,7 @@ class ExperimentConfig:
     """實驗配置"""
     name: str = "default_experiment"
     scenes: List[str] = field(default_factory=lambda: ["scene_00065_00"])
-    dataset_root: str = "/media/public_dataset2/multiscan"
+    dataset_root: str = "./data/multiscan"
     output_root: str = "./outputs"
     tag: Optional[str] = None
     run_dir: Optional[str] = None

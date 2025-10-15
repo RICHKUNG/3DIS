@@ -125,7 +125,7 @@ dependencies:
       - backcall==0.2.0
       - ballpark==1.4.0
       - beautifulsoup4==4.13.5
-      - black==25.1.0
+      - black==21.4b2
       - blinker==1.9.0
       - braceexpand==0.1.7
       - cachetools==5.5.2
@@ -191,7 +191,7 @@ dependencies:
       - importlib-metadata==8.7.0
       - importlib-resources==6.5.2
       - infinibatch==0.1.1
-      - iopath==0.1.10
+      - iopath==0.1.9
       - ipykernel==6.30.1
       - ipython==8.37.0
       - ipywidgets==8.1.7
@@ -260,7 +260,7 @@ dependencies:
       - optree==0.17.0
       - orjson==3.11.3
       - packaging==25.0
-      - pandas==2.3.2
+      - pandas==2.0.3
       - parso==0.8.5
       - pathspec==0.12.1
       - pathtools==0.1.2
@@ -316,7 +316,7 @@ dependencies:
       - sam-2==1.0
       - scann==1.3.4
       - scikit-image==0.24.0
-      - scikit-learn==1.7.2
+      - scikit-learn==1.3.1
       - scipy==1.13.1
       - seaborn==0.13.2
       - semantic-sam==1.0

@@ -5,6 +5,16 @@
 set -euo pipefail
 
 SCRIPT_PID=$$
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PROJECT_ROOT="$SCRIPT_DIR"
+
+DEFAULT_SEMANTIC_SAM_ROOT="${MY3DIS_SEMANTIC_SAM_ROOT:-$PROJECT_ROOT/../Semantic-SAM}"
+DEFAULT_SEMANTIC_SAM_CKPT="${MY3DIS_SEMANTIC_SAM_CKPT:-$DEFAULT_SEMANTIC_SAM_ROOT/checkpoints/swinl_only_sam_many2many.pth}"
+DEFAULT_SAM2_ROOT="${MY3DIS_SAM2_ROOT:-$PROJECT_ROOT/../SAM2}"
+DEFAULT_SAM2_CFG="${MY3DIS_SAM2_CFG:-$DEFAULT_SAM2_ROOT/sam2/configs/sam2.1/sam2.1_hiera_l.yaml}"
+DEFAULT_SAM2_CKPT="${MY3DIS_SAM2_CKPT:-$DEFAULT_SAM2_ROOT/checkpoints/sam2.1_hiera_large.pt}"
+DEFAULT_DATA_PATH="${MY3DIS_DATA_PATH:-$PROJECT_ROOT/data/multiscan/scene_00065_00/outputs/color}"
+DEFAULT_OUTPUT_ROOT="${MY3DIS_OUTPUT_ROOT:-$PROJECT_ROOT/outputs/scene_00065_00}"
 
 timestamp_now() {
   date '+%Y-%m-%d %H:%M:%S%z'
@@ -18,19 +28,13 @@ log_error() {
   printf '[%s][pid=%d] %s\n' "$(timestamp_now)" "$SCRIPT_PID" "$*" >&2
 }
 
-DEFAULT_SEMANTIC_SAM_CKPT="/media/Pluto/richkung/Semantic-SAM/checkpoints/swinl_only_sam_many2many.pth"
-DEFAULT_SAM2_CFG="/media/Pluto/richkung/SAM2/sam2/configs/sam2.1/sam2.1_hiera_l.yaml"
-DEFAULT_SAM2_CKPT="/media/Pluto/richkung/SAM2/checkpoints/sam2.1_hiera_large.pt"
-DEFAULT_DATA_PATH="/media/public_dataset2/multiscan/scene_00065_00/outputs/color"
-DEFAULT_OUTPUT_ROOT="/media/Pluto/richkung/My3DIS/outputs/scene_00065_00"
-
 usage() {
-  cat <<'USAGE'
+  cat <<USAGE
 Usage: run_experiment.sh [options]
 
 Fixed paths:
-  data path   /media/public_dataset2/multiscan/scene_00065_00/outputs/color
-  output root /media/Pluto/richkung/My3DIS/outputs/scene_00065_00
+  data path   ${DEFAULT_DATA_PATH}
+  output root ${DEFAULT_OUTPUT_ROOT}
 
 Options:
   --levels L1,L2,...          Levels to process (default: 2,4,6)
@@ -56,15 +60,15 @@ Note: Folder names automatically include key parameters for easy identification:
   Format: YYYYMMDD_HHMMSS_L2_4_6_ssam2_propmax30_[custom_params]
 
 Examples:
-  # 基本使用 (輸出: 20250922_143052_L2_4_6_ssam1)
+  # Basic usage (outputs: 20250922_143052_L2_4_6_ssam1)
   ./run_experiment.sh
 
-  # 每2張圖片執行一次SSAM，SAM2最多向前後各傳播30幀
-  # 輸出: 20250922_143052_L2_4_6_ssam2_propmax30
+  # Run Semantic-SAM every 2 frames and cap SAM2 propagation at 30
+  # Outputs: 20250922_143052_L2_4_6_ssam2_propmax30
   ./run_experiment.sh --ssam-freq 2 --sam2-max-propagate 30
 
-  # 自定義參數和幀範圍
-  # 輸出: 20250922_143052_L2_4_ssam3_propmax50_area500
+  # Custom levels, frame slice, cadence, and thresholds
+  # Outputs: 20250922_143052_L2_4_ssam3_propmax50_area500
   ./run_experiment.sh \
     --levels 2,4 \
     --frames 1000:2000:50 \
@@ -73,8 +77,8 @@ Examples:
     --min-area 500 \
     --stability 0.8
 
-  # 加上自定義標籤
-  # 輸出: 20250922_143052_L2_4_6_ssam2_propmax30_test_run
+  # Attach a custom tag
+  # Outputs: 20250922_143052_L2_4_6_ssam2_propmax30_test_run
   ./run_experiment.sh --ssam-freq 2 --sam2-max-propagate 30 --experiment-tag "test_run"
 USAGE
 }
@@ -163,7 +167,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 GEN_SCRIPT="$SCRIPT_DIR/generate_candidates.py"
 TRACK_SCRIPT="$SCRIPT_DIR/track_from_candidates.py"
 

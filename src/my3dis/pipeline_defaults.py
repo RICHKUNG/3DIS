@@ -21,8 +21,12 @@ def _path_from_env(env_var: str, fallback: Path) -> Path:
         return override_path.absolute()
 
 
+# Identify the project root so relative fallbacks remain stable even when launched elsewhere.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
 # Semantic-SAM assets -----------------------------------------------------
-_DEFAULT_SEMANTIC_SAM_ROOT = Path("/media/Pluto/richkung/Semantic-SAM")
+_DEFAULT_SEMANTIC_SAM_ROOT = Path.home() / "repos" / "Semantic-SAM"
 DEFAULT_SEMANTIC_SAM_ROOT = _path_from_env("MY3DIS_SEMANTIC_SAM_ROOT", _DEFAULT_SEMANTIC_SAM_ROOT)
 DEFAULT_SEMANTIC_SAM_CKPT = _path_from_env(
     "MY3DIS_SEMANTIC_SAM_CKPT",
@@ -30,7 +34,7 @@ DEFAULT_SEMANTIC_SAM_CKPT = _path_from_env(
 )
 
 # SAM2 assets -------------------------------------------------------------
-_DEFAULT_SAM2_ROOT = Path("/media/Pluto/richkung/SAM2")
+_DEFAULT_SAM2_ROOT = Path.home() / "repos" / "SAM2"
 DEFAULT_SAM2_ROOT = _path_from_env("MY3DIS_SAM2_ROOT", _DEFAULT_SAM2_ROOT)
 DEFAULT_SAM2_CFG = _path_from_env(
     "MY3DIS_SAM2_CFG",
@@ -44,11 +48,11 @@ DEFAULT_SAM2_CKPT = _path_from_env(
 # Example dataset + output layout ----------------------------------------
 DEFAULT_DATA_PATH = _path_from_env(
     "MY3DIS_DATA_PATH",
-    Path("/media/public_dataset2/multiscan/scene_00065_00/outputs/color"),
+    _PROJECT_ROOT / "data" / "multiscan" / "scene_00065_00" / "outputs" / "color",
 )
 DEFAULT_OUTPUT_ROOT = _path_from_env(
     "MY3DIS_OUTPUT_ROOT",
-    Path("/media/Pluto/richkung/My3DIS/outputs/scene_00065_00"),
+    _PROJECT_ROOT / "outputs" / "scene_00065_00",
 )
 
 

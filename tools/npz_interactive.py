@@ -2,8 +2,15 @@ import numpy as np
 import os
 import sys
 
-# 載入 npz 檔案
-npz_file = "/media/Pluto/richkung/My3DIS/outputs/scene_00065_00/20250927_122525_L2_4_6_ssam2_area0_fill10000_no_fill_unlimited/level_6/tracking/object_segments_scale0.3x.npz"
+# Load the NPZ file (prefer CLI argument, fall back to environment or sample path).
+npz_file = sys.argv[1] if len(sys.argv) > 1 else os.environ.get(
+    "MY3DIS_NPZ_PATH",
+    "outputs/scene_00065_00/sample_run/level_6/tracking/object_segments_scale0.3x.npz",
+)
+
+if not os.path.exists(npz_file):
+    raise SystemExit(f"NPZ file not found: {npz_file}")
+
 data = np.load(npz_file, allow_pickle=True)
 
 # 顯示檔案中的所有鍵

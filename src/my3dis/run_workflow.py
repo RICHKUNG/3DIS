@@ -28,6 +28,10 @@ from typing import Any, Dict, List, Optional
 
 from oom_monitor import memory_watch_context
 
+from my3dis.torch_compat import patch_torch_compat
+
+patch_torch_compat()
+
 from my3dis.workflow import (
     WorkflowConfigError,
     WorkflowError,

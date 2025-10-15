@@ -30,7 +30,7 @@ from .common_utils import parse_levels, parse_range
 
 DEFAULT_SEMANTIC_SAM_ROOT = os.environ.get(
     "SEMANTIC_SAM_ROOT",
-    "/media/Pluto/richkung/Semantic-SAM",
+    os.path.expanduser("~/repos/Semantic-SAM"),
 )
 
 if DEFAULT_SEMANTIC_SAM_ROOT and DEFAULT_SEMANTIC_SAM_ROOT not in sys.path:

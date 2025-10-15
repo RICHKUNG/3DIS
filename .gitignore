@@ -14,6 +14,9 @@ stages.filter.enabled=true/
 logs/
 *.log
 
+# Local environment exports
+condaenv.*.requirements.txt
+
 # Generated reports and binaries
 *.out
 

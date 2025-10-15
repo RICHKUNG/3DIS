@@ -38,11 +38,12 @@ from my3dis.tracking.pipeline_context import (
     resolve_long_tail_area_threshold,
     update_manifest,
 )
-from sam2.build_sam import build_sam2_video_predictor
 
 _SAM2_ROOT_STR = expand_default(_DEFAULT_SAM2_ROOT)
 if _SAM2_ROOT_STR not in sys.path:
     sys.path.insert(0, _SAM2_ROOT_STR)
+
+from sam2.build_sam import build_sam2_video_predictor
 
 LOGGER = logging.getLogger("my3dis.track_from_candidates")
 

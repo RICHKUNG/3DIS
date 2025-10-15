@@ -33,28 +33,31 @@ MASK_TYPE="SAM2_max_overlap_mask3d_sp_new_level4_vis_orig_pivot"
 # MASK_TYPE="SAM2_max_overlap_mask3d_sp_new_level4_overlap"
 
 
-DATA_FOLDER="/media/Pluto/Yenhongxuan/Uni3DIS/data/auto_generation/multiscan"
+DATA_FOLDER=${DATA_FOLDER:-"./data/auto_generation/multiscan"}
+DATASET_ROOT=${DATASET_ROOT:-"./data/multiscan"}
+OUTPUT_BASE=${OUTPUT_BASE:-"./outputs/evaluation/${DATASET_NAME}_${MASK_TYPE}"}
+EVALUATION_SCRIPT=${EVALUATION_SCRIPT:-"../Uni3DIS/run_evaluation.py"}
+CUDA_DEVICE=${CUDA_DEVICE:-0}
 
-SCENE_LIST=$(head -n $(($m)) /media/public_dataset2/multiscan/scans.txt | tail -n $(($m - $n + 1)))
+SCENE_LIST=$(head -n $(($m)) "${DATASET_ROOT}/scans.txt" | tail -n $(($m - $n + 1)))
 
 
 # # Randomly select n scenes from SCENE_LIST
 # SELECTED_SCENES=$(echo "$SCENE_LIST" | shuf -n 10)
 
 for SCENE_NAME in $SCENE_LIST; do
-    
-    SCENE_DIR="/media/public_dataset2/multiscan"
+    SCENE_DIR="$DATASET_ROOT"
 
     echo "[SCENE] Processing scene: $SCENE_NAME"
     echo "[SCENE] Scene directory: $SCENE_DIR"
 
     # INPUT
-    SCENE_PLY_PATH="/media/public_dataset2/multiscan"
+    SCENE_PLY_PATH="$DATASET_ROOT"
 
-    OUTPUT_FOLDER="/media/Pluto/Yenhongxuan/Uni3DIS/output/${DATASET_NAME}_${MASK_TYPE}/${SCENE_NAME}"
+    OUTPUT_FOLDER="${OUTPUT_BASE}/${SCENE_NAME}"
 
     # OUTPUT
-    # OUTPUT_FOLDER="/media/public_dataset2/OpenYolo3D/ScanNetV2_val/top${topk}_pair${topk_per_image}"
+    # OUTPUT_FOLDER="/path/to/custom/output/top${topk}_pair${topk_per_image}"
 
     # Check if the output folder exists, if not, create it
     if [ ! -d "$OUTPUT_FOLDER" ]; then
@@ -65,8 +68,8 @@ for SCENE_NAME in $SCENE_LIST; do
     # echo "[OUTPUT] OUTPUT directory: $OUTPUT_FOLDER"
 
     # run single scene inference
-    CUDA_VISIBLE_DEVICES=0 \
-    python /media/Pluto/Yenhongxuan/Uni3DIS/run_evaluation.py \
+    CUDA_VISIBLE_DEVICES=$CUDA_DEVICE \
+    python "$EVALUATION_SCRIPT" \
     --dataset_name=${DATASET_NAME} \
     --input_rgb_dataset_path=${SCENE_DIR} \
     --scene_name=${SCENE_NAME} \

@@ -33,7 +33,7 @@ from .semantic_refinement import (
 
 DEFAULT_CONFIG = {
     "SCENE_NAME": "scene_00065_00",
-    "DATA_ROOT": "/media/public_dataset2/multiscan/",
+    "DATA_ROOT": "./data/multiscan/",
     "LEVELS": [2, 4, 6],
     "RANGE_STR": "1400:1500:20",
     "MIN_AREA": 200,
