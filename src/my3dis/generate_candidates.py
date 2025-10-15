@@ -345,6 +345,7 @@ def run_generation(
     skip_filtering: bool = False,
     downscale_masks: bool = False,
     mask_scale_ratio: float = 1.0,
+    tag_in_path: bool = True,
 ) -> Tuple[str, Dict[str, Any]]:
     """Generate candidates and persist them in the standard layout.
 
@@ -439,14 +440,14 @@ def run_generation(
             parts.append(f"scale{ratio_str}x")
 
         # 如果有自定義標籤，加到最後
-        if experiment_tag:
+        if experiment_tag and tag_in_path:
             parts.append(experiment_tag)
 
         return "_".join(parts)
 
     run_timestamp: Optional[str]
     if no_timestamp:
-        if experiment_tag:
+        if experiment_tag and tag_in_path:
             run_root = ensure_dir(os.path.join(output, experiment_tag))
         else:
             run_root = ensure_dir(output)
@@ -839,6 +840,13 @@ def main():
                     help='Downscale SSAM masks before persistence')
     ap.add_argument('--mask-scale-ratio', type=float, default=1.0,
                     help='Scale ratio applied when --downscale-masks is provided (0 < r ≤ 1)')
+    ap.add_argument(
+        '--no-tag-subdir',
+        dest='tag_in_path',
+        action='store_false',
+        help='Do not include experiment tag in output path naming',
+    )
+    ap.set_defaults(tag_in_path=True)
     args = ap.parse_args()
 
     run_generation(
@@ -859,6 +867,7 @@ def main():
         skip_filtering=args.skip_filtering,
         downscale_masks=args.downscale_masks,
         mask_scale_ratio=args.mask_scale_ratio,
+        tag_in_path=args.tag_in_path,
     )
 
 

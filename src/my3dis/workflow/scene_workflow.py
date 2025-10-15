@@ -65,6 +65,21 @@ class SceneWorkflow:
         self._populate_experiment_metadata()
         self._stage_gpu_env: Optional[str] = None
 
+    @staticmethod
+    def _resolve_bool_flag(value: Any, default: bool) -> bool:
+        """將可能的布林輸入正規化。"""
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {'1', 'true', 'yes', 'on'}:
+                return True
+            if lowered in {'0', 'false', 'no', 'off'}:
+                return False
+        return bool(value)
+
     def run(self) -> Dict[str, Any]:
         with using_gpu(self.default_stage_gpu):
             self._stage_gpu_env = serialise_gpu_spec(os.environ.get('CUDA_VISIBLE_DEVICES'))
@@ -169,6 +184,10 @@ class SceneWorkflow:
         add_gaps = bool(stage_cfg.get('add_gaps', False))
         append_timestamp = stage_cfg.get('append_timestamp', True)
         experiment_tag = stage_cfg.get('experiment_tag') or self.experiment_cfg.get('tag')
+        tag_in_path_raw = stage_cfg.get('tag_in_path')
+        if tag_in_path_raw is None:
+            tag_in_path_raw = self.experiment_cfg.get('tag_in_path')
+        tag_in_path = self._resolve_bool_flag(tag_in_path_raw, True)
         ssam_downscale_enabled = bool(stage_cfg.get('downscale_masks', False))
         ssam_downscale_ratio = stage_cfg.get('downscale_ratio', stage_cfg.get('mask_scale_ratio', 1.0))
         try:
@@ -210,6 +229,7 @@ class SceneWorkflow:
                 skip_filtering=skip_filtering,
                 downscale_masks=ssam_downscale_enabled,
                 mask_scale_ratio=ssam_downscale_ratio,
+                tag_in_path=tag_in_path,
             )
         self.run_dir = Path(run_root)
         self.manifest = manifest if isinstance(manifest, dict) else manifest
