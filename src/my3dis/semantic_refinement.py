@@ -36,6 +36,7 @@ DEFAULT_SEMANTIC_SAM_ROOT = os.environ.get(
 if DEFAULT_SEMANTIC_SAM_ROOT and DEFAULT_SEMANTIC_SAM_ROOT not in sys.path:
     sys.path.insert(0, DEFAULT_SEMANTIC_SAM_ROOT)
 
+_semantic_sam_import_error: Optional[BaseException] = None
 try:  # pragma: no cover - heavy dependency, optional for tests
     from semantic_sam import (  # type: ignore
         build_semantic_sam,
@@ -43,13 +44,17 @@ try:  # pragma: no cover - heavy dependency, optional for tests
         plot_results,
         SemanticSamAutomaticMaskGenerator,
     )
-    from auto_generation_inference import instance_map_to_anns  # type: ignore
 except Exception as exc:  # pragma: no cover - fallback for unit tests
+    _semantic_sam_import_error = exc
+
+if _semantic_sam_import_error is not None:
+    _missing_dependency_error = _semantic_sam_import_error
+
     def _missing_dependency(*_args: Any, **_kwargs: Any) -> Any:
         raise ImportError(
             "Semantic-SAM dependencies not available. "
             "Ensure SEMANTIC_SAM_ROOT is configured correctly."
-        ) from exc
+        ) from _missing_dependency_error
 
     build_semantic_sam = _missing_dependency  # type: ignore
     prepare_image = _missing_dependency  # type: ignore
@@ -61,6 +66,32 @@ except Exception as exc:  # pragma: no cover - fallback for unit tests
 
     def instance_map_to_anns(*_args: Any, **_kwargs: Any) -> Any:  # type: ignore
         _missing_dependency()
+else:
+    try:
+        from auto_generation_inference import instance_map_to_anns  # type: ignore
+    except Exception as exc:  # pragma: no cover - tolerate import-time side effects
+        _auto_generation_import_error = exc
+
+        def instance_map_to_anns(instance_map: np.ndarray) -> List[Dict[str, Any]]:  # type: ignore
+            """Fallback converter when Semantic-SAM helper cannot be imported."""
+            unique_ids = np.unique(instance_map)
+            unique_ids = unique_ids[unique_ids != 0]
+            annotations: List[Dict[str, Any]] = []
+            for instance_id in unique_ids:
+                mask = instance_map == instance_id
+                annotations.append(
+                    {
+                        'segmentation': mask,
+                        'area': int(mask.sum()),
+                    }
+                )
+            if os.environ.get("MY3DIS_PROGRESSIVE_VERBOSE", "").strip() == "1":
+                print(
+                    "⚠️ 使用內建 instance_map_to_anns 回退，"
+                    f"原因：auto_generation_inference 匯入失敗 ({_auto_generation_import_error})",
+                    file=sys.stderr,
+                )
+            return annotations
 
 
 VERBOSE = os.environ.get("MY3DIS_PROGRESSIVE_VERBOSE", "").strip() == "1"
@@ -277,6 +308,26 @@ def bbox_from_mask(seg: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
     return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
 
 
+def _normalize_mask_shape(mask: np.ndarray, target_shape: Optional[Tuple[int, int]] = None) -> np.ndarray:
+    """
+    Ensure a mask is boolean and matches the requested shape.
+
+    Args:
+        mask: Raw segmentation array from Semantic-SAM.
+        target_shape: Desired (H, W); if None the original shape is kept.
+    """
+    mask_array = np.asarray(mask)
+    if mask_array.dtype != np.bool_:
+        mask_array = mask_array > 0
+
+    if target_shape is None or mask_array.shape == target_shape:
+        return mask_array
+
+    mask_img = Image.fromarray(mask_array.astype(np.uint8) * 255, mode="L")
+    mask_img = mask_img.resize((target_shape[1], target_shape[0]), Image.NEAREST)
+    return np.asarray(mask_img) > 127
+
+
 def instance_map_to_color_image(instance_map: np.ndarray) -> Image.Image:
     """Assign deterministic colours to each instance ID for quick inspection."""
     h, w = instance_map.shape
@@ -409,7 +460,18 @@ def progressive_refinement_masks(
     except Exception:
         pass
 
-    plot_results(first_level_masks, original_image_pil, save_path=level_dir)
+    try:
+        plot_results(first_level_masks, original_image_pil, save_path=level_dir)
+    except AttributeError as err:
+        console(
+            f"⚠️ plot_results 失敗，略過可視化輸出：{err}",
+            important=VERBOSE,
+        )
+    except Exception as err:  # pragma: no cover - best effort visualisation
+        console(
+            f"⚠️ plot_results 發生未預期錯誤，略過可視化輸出：{err}",
+            important=VERBOSE,
+        )
 
     refinement_results["levels"][first_level] = {
         "masks": first_level_masks,
@@ -451,6 +513,7 @@ def progressive_refinement_masks(
                     continue
 
                 parent_seg = parent_mask["segmentation"]
+                parent_seg_bool = _normalize_mask_shape(parent_seg, (height, width))
 
                 masked_image = create_masked_image(
                     original_image_pil, parent_seg, background_color=(0, 0, 0)
@@ -488,11 +551,37 @@ def progressive_refinement_masks(
 
                 valid_children: List[Dict[str, Any]] = []
                 for child in child_masks:
+                    seg = child.get("segmentation")
+                    if seg is None:
+                        continue
+                    # Clamp the child mask to its parent so progressive refinement never grows mask extent.
+                    child_seg_bool = _normalize_mask_shape(seg, parent_seg_bool.shape)
+                    intersect_seg = np.logical_and(child_seg_bool, parent_seg_bool)
+
+                    if not intersect_seg.any():
+                        continue
+
+                    # Drop children that collapse back to the full parent region.
+                    if np.array_equal(intersect_seg, parent_seg_bool):
+                        continue
+
+                    trimmed_area = int(intersect_seg.sum())
+                    if trimmed_area < min_area:
+                        continue
+
                     child["parent_unique_id"] = current_masks[parent_idx]["unique_id"]
                     child["unique_id"] = mask_id_counter
                     mask_id_counter += 1
-                    if child.get("area", 0) >= min_area:
-                        valid_children.append(child)
+                    child["segmentation"] = intersect_seg
+                    child["area"] = trimmed_area
+
+                    bbox = bbox_from_mask(intersect_seg)
+                    if bbox is not None:
+                        x1, y1, x2, y2 = bbox
+                        child["bbox"] = [int(x1), int(y1), int(max(0, x2 - x1)), int(max(0, y2 - y1))]
+                        child["bbox_xyxy"] = [int(x1), int(y1), int(x2), int(y2)]
+
+                    valid_children.append(child)
 
                 if len(valid_children) > max_masks_per_level:
                     valid_children = valid_children[:max_masks_per_level]

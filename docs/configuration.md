@@ -42,6 +42,7 @@ experiment:
 - `skip_filtering` – if `true`, bypasses `filter_candidates` after generation.
 - `add_gaps` – synthesise masks for uncovered regions exceeding `fill_area`.
 - `fill_area` – minimum pixel count for gap-fill regions (often aligned with `min_area`).
+- Progressive refinement now clamps every child mask to its parent and drops children identical to the parent mask, preventing spill-over between levels.
 - `append_timestamp` – force timestamped run directories even when reusing outputs.
 - `downscale_masks` / `downscale_ratio` – control optional mask downsampling at persistence time.
 

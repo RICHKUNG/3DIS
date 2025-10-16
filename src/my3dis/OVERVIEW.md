@@ -83,6 +83,7 @@
 - `create_masked_image()` / `prepare_image_from_pil()` generate masked overlays without spilling intermediate files.
 - `setup_output_directories()` / `save_original_image_info()` standardise output layout and preserve source metadata.
 - `bbox_from_mask()` / `instance_map_to_color_image()` provide helper transformations for inspection.
+- Child masks are intersected with their parent segmentation so refinements stay within bounds; duplicates identical to the parent are discarded.
 
 ### `semantic_refinement_cli.py`
 - `parse_args()` covers single-image or scene batches, checkpoint overrides, and gap-fill tuning.

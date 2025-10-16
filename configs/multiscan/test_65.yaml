@@ -1,5 +1,5 @@
 experiment:
-  name: test_1013_test
+  name: test_1016_test
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
@@ -27,27 +27,29 @@ experiment:
     - 2
     - 4
     - 6
-  tag: 246_filter_fill_prop30_mask_repair
+  tag: 246_ssam2_filter_fill10k_prop30_iou06
+  tag_in_path: false
   aggregate_output: false
   output_layout: scene_level
   output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
-  # run_dir: /media/Pluto/richkung/My3DIS/outputs/experiments/test_1009/scene_00065_00/246_filter_fill_prop30
+  # run_dir: /media/Pluto/richkung/My3DIS/outputs/experiments/test_1013_test/scene_00065_00/246_ssam2_filter_fill10k_prop30_iou06
   frames:
     step: 50
 stages:
-  gpu: 0  # a
+  gpu: 0  # aniki
   ssam:
     enabled: true
     ssam_freq: 2
-    min_area: 1000
+    min_area: 500
     stability_threshold: 1.0
     persist_raw: true
     skip_filtering: true
     add_gaps: true
-    fill_area: 5000
+    fill_area: 10000
     append_timestamp: false
     downscale_masks: true
     downscale_ratio: 0.3
+    sam_ckpt: /media/Pluto/Yenhongxuan/Semantic-SAM/ckpts/swinl_only_sam_many2many.pth
   filter:
     enabled: true
     min_area: 500
@@ -60,8 +62,10 @@ stages:
     downscale_masks: true
     downscale_ratio: 0.3
     render_viz: true
+    sam2_cfg: /media/Pluto/Yenhongxuan/Grounded-SAM-2/sam2/configs/sam2.1/sam2.1_hiera_l.yaml
+    sam2_ckpt: /media/Pluto/Yenhongxuan/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt
     comparison_sampling:
-      max_frames: 600
+      max_frames: 300
   report:
     enabled: true
     name: report.md
