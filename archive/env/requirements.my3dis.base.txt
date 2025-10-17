@@ -4,6 +4,8 @@ opencv-python
 pyyaml
 json_tricks
 yacs
+huggingface_hub>=0.23.4
+safetensors>=0.4.5
 scikit-learn
 pandas
 timm==0.4.12

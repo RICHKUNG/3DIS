@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from collections import defaultdict
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -108,6 +109,18 @@ def _filter_new_candidates(
     iou_threshold: float,
 ) -> List[PromptCandidate]:
     return dedup_store.filter_candidates(frame_idx, candidates, iou_threshold)
+
+
+def _sam2_autocast():
+    """Return the recommended autocast context for SAM2 inference."""
+
+    if not torch.cuda.is_available():
+        return nullcontext()
+    try:
+        return torch.autocast("cuda", dtype=torch.bfloat16)
+    except (TypeError, RuntimeError):
+        # Fall back to PyTorch defaults (typically float16) if bfloat16 is unsupported.
+        return torch.autocast("cuda")
 
 
 def _should_use_box_prompt(
@@ -276,7 +289,7 @@ def sam2_tracking(
     frames_with_predictions: Set[int] = set()
     objects_seen: Set[int] = set()
 
-    with torch.inference_mode(), torch.autocast("cuda"):
+    with torch.inference_mode(), _sam2_autocast():
         state = predictor.init_state(video_path=frames_dir)
         sx: Optional[float] = None
         sy: Optional[float] = None

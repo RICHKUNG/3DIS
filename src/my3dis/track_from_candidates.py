@@ -44,12 +44,33 @@ if _SAM2_ROOT_STR not in sys.path:
     sys.path.insert(0, _SAM2_ROOT_STR)
 
 from sam2.build_sam import build_sam2_video_predictor
+try:
+    from sam2.sam2_video_predictor import SAM2VideoPredictor
+except ImportError:  # pragma: no cover - fallback for older SAM2 snapshots
+    SAM2VideoPredictor = None  # type: ignore[assignment]
 
 LOGGER = logging.getLogger("my3dis.track_from_candidates")
 
 DEFAULT_SAM2_ROOT = _SAM2_ROOT_STR
 DEFAULT_SAM2_CFG = str(_DEFAULT_SAM2_CFG_PATH)
 DEFAULT_SAM2_CKPT = str(_DEFAULT_SAM2_CKPT_PATH)
+
+_HF_CONFIG_SENTINELS = {"pretrained", "huggingface", "hf"}
+
+
+def _build_sam2_predictor(sam2_cfg: str, sam2_ckpt: str):
+    use_hf = isinstance(sam2_cfg, str) and sam2_cfg.lower() in _HF_CONFIG_SENTINELS
+    if use_hf:
+        if SAM2VideoPredictor is None:
+            raise RuntimeError(
+                "SAM2VideoPredictor import unavailable; upgrade SAM2 to use Hugging Face checkpoints"
+            )
+        LOGGER.info("Loading SAM2 predictor from Hugging Face identifier %s", sam2_ckpt)
+        return SAM2VideoPredictor.from_pretrained(sam2_ckpt)
+
+    sam2_cfg_resolved = resolve_sam2_config_path(sam2_cfg)
+    LOGGER.info("Loading SAM2 predictor config=%s ckpt=%s", sam2_cfg_resolved, sam2_ckpt)
+    return build_sam2_video_predictor(sam2_cfg_resolved, sam2_ckpt, vos_optimized=True)
 
 
 def resolve_sam2_config_path(config_arg: str) -> str:
@@ -94,6 +115,7 @@ def run_tracking(
         sam2_ckpt = DEFAULT_SAM2_CKPT
     sam2_cfg = os.fspath(sam2_cfg) if isinstance(sam2_cfg, os.PathLike) else sam2_cfg
     sam2_ckpt = os.fspath(sam2_ckpt) if isinstance(sam2_ckpt, os.PathLike) else sam2_ckpt
+    use_hf = isinstance(sam2_cfg, str) and sam2_cfg.lower() in _HF_CONFIG_SENTINELS
 
     configure_logging(log_level)
 
@@ -143,12 +165,12 @@ def run_tracking(
         all_box_prompt=all_box_prompt,
     )
 
-    try:
-        os.chdir(DEFAULT_SAM2_ROOT)
-    except Exception:
-        pass
-    sam2_cfg_resolved = resolve_sam2_config_path(sam2_cfg)
-    predictor = build_sam2_video_predictor(sam2_cfg_resolved, sam2_ckpt)
+    if not use_hf:
+        try:
+            os.chdir(DEFAULT_SAM2_ROOT)
+        except Exception:
+            pass
+    predictor = _build_sam2_predictor(str(sam2_cfg), str(sam2_ckpt))
 
     out_root = ensure_dir(output)
     subset_dir, subset_map = ensure_subset_video(
@@ -245,10 +267,16 @@ def main():
     ap = argparse.ArgumentParser(description="SAM2 tracking from pre-generated candidates")
     ap.add_argument('--data-path', required=True, help='Original frames dir')
     ap.add_argument('--candidates-root', required=True, help='Root containing level_*/filtered')
-    ap.add_argument('--sam2-cfg', default=DEFAULT_SAM2_CFG,
-                    help='SAM2 config YAML or Hydra path (default: sam2.1_hiera_l)')
-    ap.add_argument('--sam2-ckpt', default=DEFAULT_SAM2_CKPT,
-                    help='SAM2 checkpoint path (default: sam2.1_hiera_large.pt)')
+    ap.add_argument(
+        '--sam2-cfg',
+        default=DEFAULT_SAM2_CFG,
+        help='SAM2 config YAML or Hydra path (use "pretrained" to load from Hugging Face)',
+    )
+    ap.add_argument(
+        '--sam2-ckpt',
+        default=DEFAULT_SAM2_CKPT,
+        help='SAM2 checkpoint path or Hugging Face repo id (default: sam2.1_hiera_large.pt)',
+    )
     ap.add_argument('--output', required=True)
     ap.add_argument('--levels', default='2,4,6')
     ap.add_argument('--sam2-max-propagate', type=int, default=None,
