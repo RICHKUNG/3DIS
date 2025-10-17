@@ -5,31 +5,34 @@
 ## Tracking Stage Flow (Per Level)
 
 ```
-run_level_tracking(level, ...) ─────────────────────────────────────────────┐
-  ├─ load_filtered_manifest(level_root)                                    │
-  ├─ frames_meta = filtered.json['frames']                                 │
-  ├─ preview_local_indices = select_preview_indices(...)                   │
-  ├─ candidate_iter = iter_candidate_batches(level_root, frames_meta, ...) │
-  ├─ dedup_store = DedupStore()                                            │
-  ├─ frame_store = FrameResultStore()                                      │
-  └─ sam2_tracking(subset_dir, predictor, candidate_iter, ...)             │
-       ├─ predictor.init_state(video_path=subset_dir)                      │
-       ├─ for each FrameCandidateBatch:                                    │
-       │    ├─ prepared = _prepare_prompt_candidates(batch.candidates)     │
-       │    ├─ filtered = _filter_new_candidates(prepared, dedup_store)    │
-       │    ├─ _add_prompts_to_predictor(predictor, state, filtered, ...)  │
-       │    └─ frame_segments = _propagate_frame_predictions(...)          │
-       │         └─ result: {abs_idx: {obj_id: packed_mask}}               │
-       │              ├─ dedup_store.add_packed(abs_idx, ...)              │
-       │              └─ frame_store.update(abs_idx, frame_name, ...)      │
-       └─ return TrackingArtifacts(object_refs, preview_segments, ...)     │
-
-  ├─ artifacts = persist_level_outputs(..., frame_store, ...)              │
-  │    ├─ build_video_segments_archive(iter_frames(), video_segments.npz)  │
-  │    └─ build_object_segments_archive(object_refs, object_segments.npz)  │
-  ├─ if render_viz:                                                        │
-  │    └─ save_comparison_proposals(viz_dir, base_frames_dir, ...)         │
-  └─ return LevelRunResult(artifacts, comparison, warnings, stats, timer)  │
+run_tracking(...) ──────────────────────────────────────────────────────────────┐
+  ├─ context = prepare_tracking_context(candidates_root, levels, ...)          │
+  ├─ predictor = build_sam2_video_predictor(...)                               │
+  ├─ subset_dir, subset_map = ensure_subset_video(context, data_path, output)  │
+  ├─ long_tail_area = resolve_long_tail_area_threshold(context.manifest, ...)  │
+  └─ for level in context.level_list:                                          │
+       run_level_tracking(level, ...) ───────────────────────────────────┐     │
+         ├─ filtered_manifest = load_filtered_manifest(level_root)       │     │
+         ├─ frames_meta = filtered_manifest['frames']                    │     │
+         ├─ preview_indices = select_preview_indices(...)                │     │
+         ├─ candidate_iter = iter_candidate_batches(...)                 │     │
+         ├─ dedup_store = DedupStore()                                   │     │
+         ├─ frame_store = FrameResultStore()                             │     │
+         └─ sam2_tracking(subset_dir, predictor, candidate_iter, ...)    │     │
+               ├─ state = predictor.init_state(video_path=subset_dir)    │     │
+               ├─ for each FrameCandidateBatch                           │     │
+               │    ├─ prepared = _prepare_prompt_candidates(...)        │     │
+               │    ├─ filtered = _filter_new_candidates(...)            │     │
+               │    ├─ _add_prompts_to_predictor(...)                    │     │
+               │    └─ frame_segments = _propagate_frame_predictions(...)│     │
+               │         └─ {abs_idx: {obj_id: packed_mask}}             │     │
+               │              ├─ dedup_store.add_packed(...)             │     │
+               │              └─ frame_store.update(...)                 │     │
+               └─ return TrackingArtifacts(object_refs, preview_segments, …)   │
+         ├─ artifacts = persist_level_outputs(frame_store, ...)          │     │
+         ├─ if render_viz: save_comparison_proposals(...)                │     │
+         └─ LevelRunResult(artifacts, comparison, warnings, stats, timer)│     │
+  └─ update_manifest(context, level_results, ...)                              │
 ```
 
 ## Step 2-0 – Exports & Shared Helpers
@@ -85,35 +88,32 @@ run_level_tracking(level, ...) ────────────────�
   - `iter_frames()` yields data for archive builders.
   - `iter_preview_segments()` emits reduced preview payloads for reporting/visualisation.
   - `_iter_sorted(items)` ensures deterministic ordering across runs.
-- `TrackingArtifacts` dataclass groups object references, preview segments, and dedup stats for later stages.
 
 ## Step 2-3 – Tracking Context & Manifest Updates
 
 ### `pipeline_context.py`
-- `PipelineContext` holds the filtered manifest, run directory paths, level configuration, and preview sampling parameters.
-- `build_pipeline_context(...)` validates inputs and prepares the context before entering the tracking loop.
-- `select_preview_indices(...)` determines which frames to use for comparison renders based on stride/max sample settings.
-- `update_tracking_manifest(...)` merges tracking outputs back into the manifest (levels, warnings, derived metadata).
-- `summarise_tracking_stats(...)` aggregates per-level statistics for inclusion in workflow summaries.
+- `TrackingContext` dataclass stores manifest metadata, level list, SSAM cadence, subset video paths, and propagation limits.
+- `prepare_tracking_context(...)` loads `manifest.json`, normalises indices, and reconciles `sam2_max_propagate` between CLI and manifest values.
+- `resolve_long_tail_area_threshold(...)` picks the area cut-off for long-tail box prompts, honouring `MY3DIS_LONG_TAIL_AREA`.
+- `ensure_subset_video(...)` recreates the subset frame folder when files are missing or stale, then updates the manifest.
+- `update_manifest(...)` writes tracking outputs (artifact relpaths, comparison summaries, warnings, mask scaling info) back to disk.
 
 ## Step 2-4 – SAM2 Tracking Core
 
 ### `sam2_runner.py`
-- `_prepare_prompt_candidates(...)` converts Semantic-SAM candidates into SAM2 prompts (mask-first with bounding-box fallback).
-- `_filter_new_candidates(...)` drops prompts already seen by the deduplication store.
-- `_add_prompts_to_predictor(predictor, state, candidates, prompt_mode)` pushes prompts into the SAM2 predictor according to the configured mode.
-- `_propagate_frame_predictions(...)` runs forward/backward propagation with cadence limits and collects packed masks.
-- `sam2_tracking(subset_dir, predictor, candidate_iter, ...)` manages SAM2 state, iterates batches, updates stores, and returns `TrackingArtifacts`.
-- `_build_tracking_result(...)` fuses dedup statistics, per-frame records, and preview data into the final `TrackingArtifacts`.
+- `_coerce_mask_bool(...)` and `_prepare_prompt_candidates(...)` turn Semantic-SAM payloads into mask/box prompts with area and bbox metadata.
+- `_filter_new_candidates(...)` defers to `DedupStore` to eliminate overlapping prompts per frame based on IoU.
+- `_should_use_box_prompt(...)` and `_add_prompts_to_predictor(...)` decide between direct mask prompts, bounding boxes for small objects, or box-only mode.
+- `_propagate_frame_predictions(...)` runs forward/backward propagation with optional budgets, packing masks (and downscaling when requested).
+- `sam2_tracking(...)` drives the SAM2 predictor under autocast, keeps per-frame results in `FrameResultStore`, tracks object references, and returns a `TrackingArtifacts` bundle.
 
 ## Step 2-5 – Level Execution & Output Packaging
 
 ### `level_runner.py`
-- `LevelRunResult` dataclass captures artifacts, comparison info, warnings, stats, and timers.
-- `run_level_tracking(...)` orchestrates manifest loading, preview selection, candidate iteration, SAM2 tracking, and persistence.
-- `_build_level_stats(...)` collects high-level metrics (counts, durations, dedup info) for summaries.
-- `_persist_level_outputs(...)` writes NPZ archives, comparison data, and manifest updates.
-- `_render_comparison(...)` delegates to `outputs.save_comparison_proposals` when visualisation is enabled.
+- `LevelRunResult` carries artifacts, comparison metadata, warnings, timing, and summary stats for a level.
+- `run_level_tracking(...)` coordinates candidate loading, preview sampling, SAM2 tracking, persistence, and optional visualisation renders.
+- `persist_level_outputs(...)` packages frame-major/object-major NPZ archives and cleans up temporary frame stores.
+- Comparison rendering is handled through `outputs.save_comparison_proposals(...)`, with warnings surfaced in `LevelRunResult.warnings`.
 
 ## Step 2-6 – Output Encoding & Comparison Visuals
 

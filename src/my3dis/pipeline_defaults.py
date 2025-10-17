@@ -26,6 +26,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 # Semantic-SAM assets -----------------------------------------------------
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_SEMANTIC_SAM_ROOT = Path("/media/Pluto/Yenhongxuan/Semantic-SAM")
 DEFAULT_SEMANTIC_SAM_ROOT = _path_from_env("MY3DIS_SEMANTIC_SAM_ROOT", _DEFAULT_SEMANTIC_SAM_ROOT)
 DEFAULT_SEMANTIC_SAM_CKPT = _path_from_env(

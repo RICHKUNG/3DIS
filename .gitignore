@@ -25,3 +25,10 @@ condaenv.*.requirements.txt
 
 scene_00065_00_superpoint_pixel_locations.json
 Miniconda3-latest-Linux-x86_64.sh
+
+# Local third-party checkouts and temporary toolchains
+third_party/
+fake_cuda/
+
+# Stray version files created during troubleshooting
+=0.1.10

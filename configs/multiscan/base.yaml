@@ -1,19 +1,10 @@
 experiment:
-  name: v1_246_ssam2_filter500_fill10k_prop30_iou06_ds03
+  name: v2_246_ssam2_filter2k_fill10k_prop30_iou05_ds03
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
-  # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00048_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00077_01    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00086_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
-
-  # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00055_00    # replace with last scene name (inclusive) to limit the run
-  scene_start: scene_00055_01  # replace with first scene name (inclusive) to limit the run
+  scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
   scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
-  parallel_scenes: 2
+  parallel_scenes: 1
   levels:
     - 2
     - 4
@@ -27,31 +18,31 @@ experiment:
     step: 50
   # run_dir: /media/Pluto/richkung/My3DIS/outputs/experiments/test_1009_2/scene_00065_00/246_filter_fill_prop30
 stages:
-  gpu: 1  # aniki
+  gpu: 2
   ssam:
     enabled: true
     ssam_freq: 2
-    min_area: 500
+    min_area: 2000
     stability_threshold: 1.0
     persist_raw: true
     skip_filtering: true
     add_gaps: true
-    fill_area: 10000
+    fill_area: 10000 #######################
     append_timestamp: false
     downscale_masks: true
-    downscale_ratio: 0.3
+    downscale_ratio: 0.3 #######################
     sam_ckpt: /media/Pluto/Yenhongxuan/Semantic-SAM/ckpts/swinl_only_sam_many2many.pth
   filter:
     enabled: true
-    min_area: 500
+    min_area: 2000 #######################
     stability_threshold: 1.0
   tracker:
     enabled: true
-    prompt_mode: all_mask
-    max_propagate: 30
-    iou_threshold: 0.6
+    prompt_mode: all_mask #######################
+    max_propagate: 30 #######################
+    iou_threshold: 0.5 #######################
     downscale_masks: true
-    downscale_ratio: 0.3
+    downscale_ratio: 0.3 ########################
     render_viz: true
     sam2_cfg: /media/Pluto/Yenhongxuan/Grounded-SAM-2/sam2/configs/sam2.1/sam2.1_hiera_l.yaml
     sam2_ckpt: /media/Pluto/Yenhongxuan/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt

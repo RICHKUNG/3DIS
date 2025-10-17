@@ -48,6 +48,7 @@ My3DIS links Semantic-SAM candidate generation with SAM2 mask propagation to bui
    export MY3DIS_SAM2_CKPT=/path/to/sam2_weights.pt
    export MY3DIS_DATASET_ROOT=/data/multiscan
    export MY3DIS_OUTPUT_ROOT=/results/my3dis
+   export MY3DIS_LONG_TAIL_AREA=1800  # optional: force box prompts for masks below this area
    ```
 4. When running Python modules directly from the checkout, prepend `PYTHONPATH=src` or `export PYTHONPATH=$(pwd)/src`.
 
@@ -80,6 +81,7 @@ Key CLI options:
 - `--dry-run` validates the configuration without executing stages.
 - `--output <path>` overrides `experiment.output_root` at runtime.
 - `--memory-events /path/to/memory.events` turns on OOM detection (per cgroup).
+- `--skip-viz` on `python -m my3dis.track_from_candidates` (or `my3dis-sam2`) skips comparison renders when you only need NPZ outputs.
 
 ## Configuration
 - `configs/multiscan/base.yaml` is the canonical template for MultiScan sweeps. Important fields:
@@ -115,6 +117,7 @@ Each run produces a scene-level directory under `experiment.output_root/<scene>/
 - `src/my3dis/workflow/WORKFLOW_GUIDE.md` – YAML orchestration internals.
 - `src/my3dis/tracking/TRACKING_GUIDE.md` – SAM2 tracking implementation details.
 - `Agent.md` – ongoing project log and rationale.
+All stage CLIs are also available through console scripts exposed by the package (`my3dis-ssam`, `my3dis-filter`, `my3dis-sam2`, `my3dis-workflow`, …); legacy module paths remain functional via lightweight compatibility wrappers.
 
 ## Troubleshooting
 - Set `PYTHONPATH=src` whenever running modules without installing the package.

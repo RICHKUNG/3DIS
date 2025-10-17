@@ -1,16 +1,8 @@
-```python
-"""
-Semantic-SAM 適配器
-重新命名自 ssam_progressive_adapter.py，更簡潔的名稱
+"""Compatibility adapter exposing the legacy Semantic-SAM progressive helpers."""
 
-Author: Rich Kung
-Updated: 2025-01-XX
-"""
+from __future__ import annotations
 
-# 更新導入
-from .semantic_refinement import progressive_refinement_masks
+from . import ssam_progressive_adapter as _adapter_impl
+from .ssam_progressive_adapter import *  # noqa: F401,F403
 
-def generate_with_progressive(frames_dir, selected_frames, sam_ckpt_path, levels, ...):
-    """包裝 progressive_refinement_masks，逐幀產生各層候選並補上 gap-fill 遮罩"""
-    # ...existing code...
-```
+__all__ = getattr(_adapter_impl, "__all__", [name for name in globals() if not name.startswith("_")])

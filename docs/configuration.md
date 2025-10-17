@@ -52,7 +52,7 @@ experiment:
 
 ### SAM2 Tracker (`stages.tracker`)
 - `enabled` – toggle tracking entirely (useful for Semantic-SAM-only runs).
-- `prompt_mode` – `all_mask`, `mask_first_box_fallback`, `box_only`, etc. (see `track_from_candidates.py` for supported values).
+- `prompt_mode` – `all_mask` (mask prompts everywhere), `lt_bbox`/`long_tail` (box prompts for small objects only), or `all_bbox`/`all` (force boxes for every prompt). The CLI exposes the same behaviour via `--long-tail-box-prompt` / `--all-box-prompt`.
 - `max_propagate` – cap forward/backward propagation steps per prompt.
 - `iou_threshold` – deduplication IoU threshold.
 - `downscale_masks` / `downscale_ratio` – persist SAM2 masks at lower resolution (filenames gain `_scale{ratio}x`).
@@ -85,6 +85,7 @@ MY3DIS_SAM2_CKPT
 MY3DIS_DATASET_ROOT
 MY3DIS_DATA_PATH
 MY3DIS_OUTPUT_ROOT
+MY3DIS_LONG_TAIL_AREA
 ```
 
 CLI arguments override environment variables, which in turn override YAML defaults.
