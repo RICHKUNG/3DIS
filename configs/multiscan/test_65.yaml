@@ -1,5 +1,5 @@
 experiment:
-  name: test_1016_test
+  name: test_1019_VOS_B
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
@@ -20,8 +20,8 @@ experiment:
   # scene_start: scene_00091_00  # replace with first scene name (inclusive) to limit the run
   # scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
 
-  scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
-  scene_end: scene_00005_00    # replace with last scene name (inclusive) to limit the run
+  scene_start: scene_00005_01  # replace with first scene name (inclusive) to limit the run
+  scene_end: scene_00005_01    # replace with last scene name (inclusive) to limit the run
   parallel_scenes: 1
   levels:
     - 2
@@ -36,7 +36,7 @@ experiment:
   frames:
     step: 50
 stages:
-  gpu: 0  # aniki
+  gpu: 1  # aniki
   ssam:
     enabled: true
     ssam_freq: 2

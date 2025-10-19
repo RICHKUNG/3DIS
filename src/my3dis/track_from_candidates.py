@@ -148,6 +148,8 @@ def run_tracking(
     except Exception:
         pass
     sam2_cfg_resolved = resolve_sam2_config_path(sam2_cfg)
+    # predictor = build_sam2_video_predictor(sam2_cfg_resolved, sam2_ckpt, vos_optimized=True)
+    # print("我有用VOS版本的SAM2了！")
     predictor = build_sam2_video_predictor(sam2_cfg_resolved, sam2_ckpt)
 
     out_root = ensure_dir(output)

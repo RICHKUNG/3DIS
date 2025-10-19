@@ -1,5 +1,5 @@
 experiment:
-  name: v1_246_ssam2_filter500_fill10k_prop30_iou06_ds03
+  name: v2_246_ssam2_filter500_fill3k_prop30_iou07_ds03
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
@@ -9,16 +9,16 @@ experiment:
   # scene_start: scene_00086_00  # replace with first scene name (inclusive) to limit the run
   # scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
 
-  # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00055_00    # replace with last scene name (inclusive) to limit the run
-  scene_start: scene_00055_01  # replace with first scene name (inclusive) to limit the run
+  scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
+  # # scene_end: scene_00055_00    # replace with last scene name (inclusive) to limit the run
+  # scene_start: scene_00055_01  # replace with first scene name (inclusive) to limit the run
   scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
-  parallel_scenes: 2
+  parallel_scenes: 1
   levels:
     - 2
     - 4
     - 6
-  tag: 246_ssam2_filter_fill10k_prop30_iou06
+  tag: tag
   tag_in_path: false
   aggregate_output: false
   output_layout: scene_level
@@ -36,7 +36,7 @@ stages:
     persist_raw: true
     skip_filtering: true
     add_gaps: true
-    fill_area: 10000
+    fill_area: 3000
     append_timestamp: false
     downscale_masks: true
     downscale_ratio: 0.3
