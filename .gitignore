@@ -1,6 +1,12 @@
+# Dump directory (archived/deprecated files)
+dump/
+
+CLAUDE.md
+
 # Generated experiment outputs and caches
 outputs/
 _progressive_tmp/
+.tmp_npz/
 
 # Python notebook and interpreter caches
 __pycache__/
@@ -13,15 +19,34 @@ stages.filter.enabled=true/
 # Experiment and workflow logs
 logs/
 *.log
+nohup.out
 
 # Local environment exports
 condaenv.*.requirements.txt
+conda_env_create.log
 
 # Generated reports and binaries
 *.out
 
+# NFS lock files
+.nfs*
+
+# Temporary development files
+test_*.py
+tmp_*.log
+
 # Large generated artifacts
 *_superpoint_pixel_locations.json
-
 scene_00065_00_superpoint_pixel_locations.json
 Miniconda3-latest-Linux-x86_64.sh
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

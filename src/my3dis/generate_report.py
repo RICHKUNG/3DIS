@@ -2,10 +2,10 @@
 """Generate Markdown summary for a My3DIS experiment run."""
 from __future__ import annotations
 
+# Ensure src/ is in path for direct execution (inline to avoid circular import)
 if __package__ is None or __package__ == '':
     import sys
     from pathlib import Path
-
     project_root = Path(__file__).resolve().parents[2]
     src_path = project_root / 'src'
     if str(src_path) not in sys.path:

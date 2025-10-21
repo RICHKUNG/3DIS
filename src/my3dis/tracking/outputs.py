@@ -477,15 +477,12 @@ def save_comparison_proposals(
                     if isinstance(first_mask, np.ndarray):
                         H, W = first_mask.shape[:2]
                     elif isinstance(first_mask, dict):
+                        from my3dis.common_utils import normalize_shape_tuple
                         shape_hint = first_mask.get(PACKED_SHAPE_KEY) or first_mask.get('shape')
-                        if isinstance(shape_hint, np.ndarray):
-                            shape_seq = shape_hint.tolist()
-                        elif isinstance(shape_hint, (list, tuple)):
-                            shape_seq = list(shape_hint)
-                        else:
-                            shape_seq = None
-                        if shape_seq and len(shape_seq) >= 2:
-                            H, W = int(shape_seq[-2]), int(shape_seq[-1])
+                        if shape_hint is not None:
+                            shape_seq = normalize_shape_tuple(shape_hint)
+                            if len(shape_seq) >= 2:
+                                H, W = shape_seq[-2], shape_seq[-1]
 
             frame_path = resolve_frame_path(f_idx)
             if frame_path is None:

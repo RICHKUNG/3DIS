@@ -14,9 +14,11 @@ My3DIS links Semantic-SAM candidate generation with SAM2 mask propagation to bui
 - `docs/` – focused guides such as `docs/downstream_mask_loading.md`.
 - `scripts/` – helper CLIs for batch orchestration and maintenance.
 - `src/my3dis/` – pipeline implementation with submodule guides under `workflow/` and `tracking/`.
-- `outputs/` – run artifacts (created at runtime, safe to ignore in git).
-- `logs/` – global history (`workflow_history.csv`) and script PID map entries.
-- `env/` & `archive/env/` – current export of environment packages and frozen snapshots.
+- `env/` – current environment specifications (`current_env.yaml`, `pip_requirements.txt`, `conda_requirements.txt`).
+- `outputs/` – run artifacts (created at runtime, gitignored).
+- `logs/` – global history (`workflow_history.csv`, `run_pid_map.csv`) and per-run logs under `scene_workers/`.
+- `archive/` – frozen historical environment snapshots and experiment backups.
+- `dump/` – deprecated/temporary files archived during cleanup (can be deleted after verification).
 
 ## Requirements
 - **Hardware:** NVIDIA GPU with sufficient VRAM for Semantic-SAM and SAM2 (tested on 24 GB). The tracker publishes downscaled overlays by default to reduce memory pressure.
@@ -31,8 +33,8 @@ My3DIS links Semantic-SAM candidate generation with SAM2 mask propagation to bui
    conda create -n Semantic-SAM python=3.10
    conda create -n SAM2 python=3.10
 
-   conda run -n Semantic-SAM pip install -r requirements.txt
-   conda run -n SAM2 pip install -r requirements.txt
+   conda run -n Semantic-SAM pip install -r env/pip_requirements.txt
+   conda run -n SAM2 pip install -r env/pip_requirements.txt
    ```
 2. Install sibling repositories:
    ```bash
@@ -72,9 +74,11 @@ Useful flags:
 ### Option B – YAML orchestrator
 The orchestrator handles multi-scene experiments, parallelism, and stage toggles.
 ```bash
+# Recommended: use the module directly
 python -m my3dis.run_workflow --config configs/multiscan/base.yaml
-# or use the repo wrapper
-PYTHONPATH=src python run_workflow.py --config configs/multiscan/base.yaml
+
+# Or with explicit PYTHONPATH
+PYTHONPATH=src python3 src/my3dis/run_workflow.py --config configs/multiscan/base.yaml
 ```
 Key CLI options:
 - `--dry-run` validates the configuration without executing stages.

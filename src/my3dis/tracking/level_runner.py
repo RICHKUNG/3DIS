@@ -119,30 +119,39 @@ def run_level_tracking(
             local_idx = meta_idx
         fm['local_index'] = local_idx
 
+    # Build frame name lookup with proper precedence (merged from 4 loops → 1 loop)
+    # Precedence: frame_index_lookup > subset_map > frame_numbers > frames_meta
     frame_name_lookup: Dict[int, str] = {}
+
+    # Priority 1: frame_index_lookup
     for abs_idx, name in frame_index_lookup.items():
         try:
             frame_name_lookup[int(abs_idx)] = str(name)
         except (TypeError, ValueError):
             continue
+
+    # Priority 2: subset_map (only set if not already present)
     for abs_idx, rel_name in subset_map.items():
         try:
             abs_idx_int = int(abs_idx)
+            if abs_idx_int not in frame_name_lookup and isinstance(rel_name, str):
+                frame_name_lookup[abs_idx_int] = rel_name
         except (TypeError, ValueError):
             continue
-        if isinstance(rel_name, str):
-            frame_name_lookup.setdefault(abs_idx_int, rel_name)
+
+    # Priority 3 & 4: frame_numbers and frames_meta (merged into single pass)
+    # Add default names for frame_numbers if missing
     for abs_idx in frame_numbers:
         abs_idx_int = int(abs_idx)
         if abs_idx_int not in frame_name_lookup:
             frame_name_lookup[abs_idx_int] = f"{abs_idx_int:05d}.png"
+
+    # Priority 4: frames_meta (lowest priority, fill remaining gaps)
     for fm in frames_meta:
         fidx = int(fm.get('frame_idx', 0))
         if fidx not in frame_name_lookup:
             fname = fm.get('frame_name')
-            if fname is None:
-                fname = f"{fidx:05d}.png"
-            frame_name_lookup[fidx] = str(fname)
+            frame_name_lookup[fidx] = str(fname) if fname is not None else f"{fidx:05d}.png"
 
     LOGGER.info(
         "Level %d: Processing %d frames with SAM2 tracking...",

@@ -261,6 +261,7 @@ class TrackingStageConfig:
         data_path: str,
         candidates_root: str,
         output_root: str,
+        manifest: Optional[Dict[str, Any]] = None,
     ) -> TrackingStageConfig:
         """Create configuration from YAML config dict with full validation.
 
@@ -270,6 +271,7 @@ class TrackingStageConfig:
             data_path: Scene data path
             candidates_root: Candidates directory from SSAM stage
             output_root: Output root directory
+            manifest: Optional manifest from SSAM stage for default values
 
         Returns:
             Validated TrackingStageConfig object
@@ -280,7 +282,7 @@ class TrackingStageConfig:
         from .scenes import resolve_levels
 
         # Validate and parse levels
-        levels = resolve_levels(stage_cfg, None, experiment_cfg.get('levels'))
+        levels = resolve_levels(stage_cfg, manifest, experiment_cfg.get('levels'))
 
         # Validate SAM2 configuration
         sam2_cfg_raw = stage_cfg.get('sam2_cfg') or experiment_cfg.get('sam2_cfg')
@@ -327,25 +329,70 @@ class TrackingStageConfig:
         # Validate IoU threshold
         iou_threshold = float(stage_cfg.get('iou_threshold', 0.6))
 
-        # Validate mask scaling
-        mask_scale_ratio = float(stage_cfg.get('downscale_ratio',
-                                              stage_cfg.get('mask_scale_ratio', 1.0)))
+        # Validate mask scaling (use manifest default if available)
+        try:
+            mask_ratio_default = float(manifest.get('mask_scale_ratio', 1.0)) if manifest else 1.0
+        except (TypeError, ValueError):
+            mask_ratio_default = 1.0
 
-        # Prompt modes
-        prompt_mode = stage_cfg.get('prompt_mode', 'mask')
-        long_tail_box_prompt = prompt_mode == 'long_tail_box'
-        all_box_prompt = prompt_mode == 'all_box' or prompt_mode == 'box'
+        downscale_enabled = bool(stage_cfg.get('downscale_masks', mask_ratio_default < 1.0))
+        downscale_ratio = stage_cfg.get(
+            'downscale_ratio', mask_ratio_default if mask_ratio_default < 1.0 else 0.3
+        )
+        try:
+            downscale_ratio = float(downscale_ratio)
+        except (TypeError, ValueError) as exc:
+            raise WorkflowConfigError(f'Invalid tracker.downscale_ratio={downscale_ratio!r}') from exc
+
+        mask_scale_ratio = downscale_ratio if downscale_enabled else 1.0
+        if mask_scale_ratio <= 0.0 or mask_scale_ratio > 1.0:
+            raise WorkflowConfigError('tracker.downscale_ratio must be in (0, 1] when downscale_masks is true')
+
+        # Prompt modes with alias support
+        prompt_mode_raw = str(stage_cfg.get('prompt_mode', 'all_mask')).lower()
+        prompt_aliases = {
+            'none': 'all_mask',
+            'all_mask': 'all_mask',
+            'long_tail': 'lt_bbox',
+            'lt_bbox': 'lt_bbox',
+            'all': 'all_bbox',
+            'all_bbox': 'all_bbox',
+        }
+        if prompt_mode_raw not in prompt_aliases:
+            raise WorkflowConfigError(f'Unknown tracker.prompt_mode={prompt_mode_raw}')
+        prompt_mode = prompt_aliases[prompt_mode_raw]
+        long_tail_box_prompt = prompt_mode == 'lt_bbox'
+        all_box_prompt = prompt_mode == 'all_bbox'
 
         # Visualization
         render_viz = bool(stage_cfg.get('render_viz', True))
 
-        comparison_cfg = stage_cfg.get('comparison_sampling', {})
-        if isinstance(comparison_cfg, dict):
-            comparison_sample_stride = comparison_cfg.get('stride')
-            comparison_max_samples = comparison_cfg.get('max_frames')
-        else:
-            comparison_sample_stride = None
-            comparison_max_samples = None
+        # Comparison sampling configuration with validation
+        comparison_sample_stride: Optional[int] = None
+        comparison_max_samples: Optional[int] = None
+        comparison_cfg = stage_cfg.get('comparison_sampling')
+        if comparison_cfg is not None:
+            if not isinstance(comparison_cfg, dict):
+                raise WorkflowConfigError('tracker.comparison_sampling must be a mapping')
+            if 'stride' in comparison_cfg:
+                try:
+                    comparison_sample_stride = int(comparison_cfg['stride'])
+                except (TypeError, ValueError):
+                    raise WorkflowConfigError(
+                        f"Invalid tracker.comparison_sampling.stride={comparison_cfg['stride']!r}"
+                    )
+                if comparison_sample_stride <= 0:
+                    raise WorkflowConfigError('tracker.comparison_sampling.stride must be > 0')
+            if 'max_frames' in comparison_cfg:
+                try:
+                    max_frames_val = int(comparison_cfg['max_frames'])
+                except (TypeError, ValueError):
+                    raise WorkflowConfigError(
+                        f"Invalid tracker.comparison_sampling.max_frames={comparison_cfg['max_frames']!r}"
+                    )
+                if max_frames_val < 0:
+                    raise WorkflowConfigError('tracker.comparison_sampling.max_frames must be >= 0')
+                comparison_max_samples = max_frames_val if max_frames_val > 0 else None
 
         return cls(
             data_path=Path(data_path).expanduser(),

@@ -2,11 +2,10 @@
 Tracking-only stage: read filtered candidates saved by generate_candidates.py
 and run SAM2 masklet propagation. Designed to run in a SAM2-capable env.
 """
-
+# Ensure src/ is in path for direct execution (inline to avoid circular import)
 if __package__ is None or __package__ == '':
     import sys
     from pathlib import Path
-
     project_root = Path(__file__).resolve().parents[2]
     src_path = project_root / 'src'
     if str(src_path) not in sys.path:

@@ -2,16 +2,14 @@
 """命令列入口，負責調用 My3DIS 工作流程模組。"""
 from __future__ import annotations
 
+# Ensure src/ is in path for direct execution (must be inline to avoid circular import)
 if __package__ is None or __package__ == '':
-    import sys as _sys
-    import pathlib as _pathlib
-
-    _project_root = _pathlib.Path(__file__).resolve().parents[2]
-    _src_path = _project_root / 'src'
-    if str(_src_path) not in _sys.path:
-        _sys.path.insert(0, str(_src_path))
-    if str(_project_root) not in _sys.path:
-        _sys.path.insert(0, str(_project_root))
+    import sys
+    from pathlib import Path
+    project_root = Path(__file__).resolve().parents[2]
+    src_path = project_root / 'src'
+    if str(src_path) not in sys.path:
+        sys.path.insert(0, str(src_path))
 
 import argparse
 import csv
@@ -26,7 +24,13 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from oom_monitor import memory_watch_context
+# Optional OOM monitoring (gracefully handle if not installed)
+try:
+    from oom_monitor import memory_watch_context
+    HAS_OOM_MONITOR = True
+except ImportError:
+    HAS_OOM_MONITOR = False
+    memory_watch_context = None
 
 from my3dis.torch_compat import patch_torch_compat
 
@@ -216,17 +220,16 @@ def main() -> int:
         print(json.dumps(preview, indent=2, sort_keys=True))
         return 0
 
-    monitor_enabled = not args.no_oom_watch
+    monitor_enabled = not args.no_oom_watch and HAS_OOM_MONITOR
     oom_log_path = Path(args.oom_log).expanduser()
 
-    monitor_context = (
-        memory_watch_context(
+    if monitor_enabled and memory_watch_context is not None:
+        monitor_context = memory_watch_context(
             poll_interval=float(max(0.5, args.oom_watch_poll)),
             log_path=oom_log_path,
         )
-        if monitor_enabled
-        else nullcontext([])
-    )
+    else:
+        monitor_context = nullcontext([])
 
     workflow_started_at = _now_local_iso()
     started_monotonic = time.perf_counter()

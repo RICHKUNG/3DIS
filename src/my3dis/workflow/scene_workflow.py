@@ -260,111 +260,46 @@ class SceneWorkflow:
         )
 
     def _run_tracker_stage(self) -> None:
+        """Execute SAM2 tracking stage using TrackingStageConfig (refactored for clarity)."""
         stage_cfg = self._stage_cfg('tracker')
         if not stage_cfg.get('enabled', True):
             return
 
         from my3dis.track_from_candidates import run_tracking as run_candidate_tracking
-
-        manifest = self._ensure_manifest() or {}
-        levels = resolve_levels(stage_cfg, manifest, self.experiment_cfg.get('levels'))
-        max_propagate = stage_cfg.get('max_propagate')
-        iou_threshold = float(stage_cfg.get('iou_threshold', 0.6))
-        prompt_mode_raw = str(stage_cfg.get('prompt_mode', 'all_mask')).lower()
-        prompt_aliases = {
-            'none': 'all_mask',
-            'all_mask': 'all_mask',
-            'long_tail': 'lt_bbox',
-            'lt_bbox': 'lt_bbox',
-            'all': 'all_bbox',
-            'all_bbox': 'all_bbox',
-        }
-        if prompt_mode_raw not in prompt_aliases:
-            raise WorkflowConfigError(f'Unknown tracker.prompt_mode={prompt_mode_raw}')
-        prompt_mode = prompt_aliases[prompt_mode_raw]
-        all_box = prompt_mode == 'all_bbox'
-        long_tail_box = prompt_mode == 'lt_bbox'
-
-        try:
-            mask_ratio_default = float(manifest.get('mask_scale_ratio', 1.0)) if manifest else 1.0
-        except (TypeError, ValueError):
-            mask_ratio_default = 1.0
-        downscale_enabled = bool(stage_cfg.get('downscale_masks', mask_ratio_default < 1.0))
-        downscale_ratio = stage_cfg.get(
-            'downscale_ratio', mask_ratio_default if mask_ratio_default < 1.0 else 0.3
-        )
-        try:
-            downscale_ratio = float(downscale_ratio)
-        except (TypeError, ValueError) as exc:
-            raise WorkflowConfigError(f'Invalid tracker.downscale_ratio={downscale_ratio!r}') from exc
-        mask_scale_ratio = downscale_ratio if downscale_enabled else 1.0
-        if mask_scale_ratio <= 0.0 or mask_scale_ratio > 1.0:
-            raise WorkflowConfigError('tracker.downscale_ratio must be in (0, 1] when downscale_masks is true')
-
-        sam2_cfg = stage_cfg.get('sam2_cfg') or self.experiment_cfg.get('sam2_cfg')
-        sam2_ckpt = stage_cfg.get('sam2_ckpt') or self.experiment_cfg.get('sam2_ckpt')
-        render_viz = bool(stage_cfg.get('render_viz', True))
-
-        comparison_sample_stride: Optional[int] = None
-        comparison_max_samples: Optional[int] = None
-        comparison_cfg = stage_cfg.get('comparison_sampling')
-        if comparison_cfg is not None:
-            if not isinstance(comparison_cfg, dict):
-                raise WorkflowConfigError('tracker.comparison_sampling must be a mapping')
-            if 'stride' in comparison_cfg:
-                try:
-                    comparison_sample_stride = int(comparison_cfg['stride'])
-                except (TypeError, ValueError):
-                    raise WorkflowConfigError(
-                        f"Invalid tracker.comparison_sampling.stride={comparison_cfg['stride']!r}"
-                    )
-                if comparison_sample_stride <= 0:
-                    raise WorkflowConfigError('tracker.comparison_sampling.stride must be > 0')
-            if 'max_frames' in comparison_cfg:
-                try:
-                    max_frames_val = int(comparison_cfg['max_frames'])
-                except (TypeError, ValueError):
-                    raise WorkflowConfigError(
-                        f"Invalid tracker.comparison_sampling.max_frames={comparison_cfg['max_frames']!r}"
-                    )
-                if max_frames_val < 0:
-                    raise WorkflowConfigError('tracker.comparison_sampling.max_frames must be >= 0')
-                comparison_max_samples = max_frames_val if max_frames_val > 0 else None
+        from my3dis.workflow.stage_config import TrackingStageConfig
 
         run_dir = self._ensure_run_dir()
+
+        # Use TrackingStageConfig for validation and parameter preparation
+        manifest = self._ensure_manifest() or {}
+        tracking_config = TrackingStageConfig.from_yaml_config(
+            stage_cfg=stage_cfg,
+            experiment_cfg=self.experiment_cfg,
+            data_path=self.data_path,
+            candidates_root=str(run_dir),
+            output_root=str(run_dir),
+            manifest=manifest,
+        )
+
         print('Stage Tracker: SAM2 追蹤與遮罩匯出')
         with StageRecorder(self.summary, 'tracker', self._stage_gpu_env):
-            run_candidate_tracking(
-                data_path=self.data_path,
-                candidates_root=str(run_dir),
-                output=str(run_dir),
-                levels=list_to_csv(levels),
-                sam2_cfg=sam2_cfg,
-                sam2_ckpt=sam2_ckpt,
-                sam2_max_propagate=max_propagate,
-                iou_threshold=iou_threshold,
-                long_tail_box_prompt=long_tail_box,
-                all_box_prompt=all_box,
-                mask_scale_ratio=mask_scale_ratio,
-                comparison_sample_stride=comparison_sample_stride,
-                comparison_max_samples=comparison_max_samples,
-                render_viz=render_viz,
-            )
+            # Use to_legacy_kwargs() for backward compatibility
+            run_candidate_tracking(**tracking_config.to_legacy_kwargs())
 
         stage_summary = self._stage_summary('tracker')
         stage_summary.update(
             {
                 'params': {
-                    'levels': levels,
-                    'max_propagate': max_propagate,
-                    'iou_threshold': iou_threshold,
-                    'prompt_mode': prompt_mode,
-                    'downscale_masks': downscale_enabled,
-                    'downscale_ratio': mask_scale_ratio,
-                    'render_viz': render_viz,
+                    'levels': tracking_config.levels,
+                    'max_propagate': tracking_config.sam2_max_propagate,
+                    'iou_threshold': tracking_config.iou_threshold,
+                    'long_tail_box_prompt': tracking_config.long_tail_box_prompt,
+                    'all_box_prompt': tracking_config.all_box_prompt,
+                    'downscale_ratio': tracking_config.mask_scale_ratio,
+                    'render_viz': tracking_config.render_viz,
                     'comparison_sampling': {
-                        'stride': comparison_sample_stride,
-                        'max_frames': comparison_max_samples,
+                        'stride': tracking_config.comparison_sample_stride,
+                        'max_frames': tracking_config.comparison_max_samples,
                     },
                 }
             }

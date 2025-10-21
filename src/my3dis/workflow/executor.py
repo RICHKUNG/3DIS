@@ -22,7 +22,14 @@ from .utils import now_local_iso, now_local_stamp
 
 from my3dis.common_utils import ENTRY_LOG_FORMAT, configure_entry_log_format
 
-from oom_monitor.memory_events import MemoryEventsReader, OOMEvent
+# Optional OOM monitoring (gracefully handle if not installed)
+try:
+    from oom_monitor.memory_events import MemoryEventsReader, OOMEvent
+    HAS_OOM_MONITOR = True
+except ImportError:
+    HAS_OOM_MONITOR = False
+    MemoryEventsReader = None
+    OOMEvent = None
 
 LOGGER = logging.getLogger(__name__)
 
@@ -233,10 +240,10 @@ def _resolve_path_override(env_var: str, configured: Optional[str]) -> Optional[
 
 def _prepare_memory_event_readers(
     paths: Optional[Sequence[Path | str]],
-) -> Tuple[List[MemoryEventsReader], List[Path]]:
-    readers: List[MemoryEventsReader] = []
+) -> Tuple[List, List[Path]]:
+    readers: List = []
     missing: List[Path] = []
-    if not paths:
+    if not paths or not HAS_OOM_MONITOR or MemoryEventsReader is None:
         return readers, missing
     for raw in paths:
         path = Path(raw)
@@ -253,8 +260,10 @@ def _prepare_memory_event_readers(
     return readers, missing
 
 
-def _read_memory_snapshots(readers: Sequence[MemoryEventsReader]) -> Dict[Path, Dict[str, int]]:
+def _read_memory_snapshots(readers: Sequence) -> Dict[Path, Dict[str, int]]:
     snapshot: Dict[Path, Dict[str, int]] = {}
+    if not HAS_OOM_MONITOR:
+        return snapshot
     for reader in readers:
         try:
             snapshot[reader.path] = reader.read()
@@ -264,21 +273,39 @@ def _read_memory_snapshots(readers: Sequence[MemoryEventsReader]) -> Dict[Path, 
 
 
 def _detect_memory_events(
-    readers: Sequence[MemoryEventsReader],
+    readers: Sequence,
     previous: Dict[Path, Dict[str, int]],
     current: Dict[Path, Dict[str, int]],
-) -> List[OOMEvent]:
-    events: List[OOMEvent] = []
+) -> List:
+    events: List = []
+    if not HAS_OOM_MONITOR:
+        return events
     for reader in readers:
         events.extend(reader.detect_oom_events(previous.get(reader.path), current.get(reader.path, {})))
     return events
 
 
-def _format_oom_events(events: Sequence[OOMEvent]) -> str:
+def _format_oom_events(events: Sequence) -> str:
     parts = []
+    if not HAS_OOM_MONITOR or not events:
+        return ""
     for event in events:
         parts.append(f"{event.path.name}:{event.field}+{event.delta}")
     return ", ".join(parts)
+
+
+def _format_job_error(job: _SceneJob, payload: Dict[str, Any]) -> str:
+    """Format error message from failed isolated subprocess (DRY helper)."""
+    message = (
+        f"Scene {job.scene} failed in isolated subprocess "
+        f"{payload.get('exc_type')}: {payload.get('exc_message')}"
+    ).strip()
+    exitcode = payload.get('exitcode')
+    if exitcode is not None:
+        message = f"{message} (exitcode={exitcode})"
+    if payload.get('traceback'):
+        message = f"{message}\n{payload['traceback']}"
+    return message
 
 
 def execute_workflow(
@@ -480,16 +507,8 @@ def execute_workflow(
                     if ok:
                         summaries_ordered[job.index] = payload
                     else:
-                        message = (
-                            f"Scene {job.scene} failed in isolated subprocess "
-                            f"{payload.get('exc_type')}: {payload.get('exc_message')}"
-                        ).strip()
-                        exitcode = payload.get('exitcode')
-                        if exitcode is not None:
-                            message = f"{message} (exitcode={exitcode})"
-                        if payload.get('traceback'):
-                            message = f"{message}\n{payload['traceback']}"
-                        scene_errors.append((job, WorkflowRuntimeError(message)))
+                        error_msg = _format_job_error(job, payload)
+                        scene_errors.append((job, WorkflowRuntimeError(error_msg)))
 
                     if memory_readers:
                         current_snapshot = _read_memory_snapshots(memory_readers)
@@ -520,16 +539,7 @@ def execute_workflow(
                             if ok:
                                 summaries_ordered[job.index] = payload
                             else:
-                                message = (
-                                    f"Scene {job.scene} failed in isolated subprocess "
-                                    f"{payload.get('exc_type')}: {payload.get('exc_message')}"
-                                ).strip()
-                                exitcode = payload.get('exitcode')
-                                if exitcode is not None:
-                                    message = f"{message} (exitcode={exitcode})"
-                                if payload.get('traceback'):
-                                    message = f"{message}\n{payload['traceback']}"
-                                raise WorkflowRuntimeError(message)
+                                raise WorkflowRuntimeError(_format_job_error(job, payload))
                         else:
                             summaries_ordered[job.index] = _run_scene_job(job)
                         if memory_readers:
@@ -555,16 +565,7 @@ def execute_workflow(
                         if ok:
                             summaries_ordered[job.index] = payload
                         else:
-                            message = (
-                                f"Scene {job.scene} failed in isolated subprocess "
-                                f"{payload.get('exc_type')}: {payload.get('exc_message')}"
-                            ).strip()
-                            exitcode = payload.get('exitcode')
-                            if exitcode is not None:
-                                message = f"{message} (exitcode={exitcode})"
-                            if payload.get('traceback'):
-                                message = f"{message}\n{payload['traceback']}"
-                            raise WorkflowRuntimeError(message)
+                            raise WorkflowRuntimeError(_format_job_error(job, payload))
                     else:
                         summaries_ordered[job.index] = _run_scene_job(job)
                     if memory_readers:

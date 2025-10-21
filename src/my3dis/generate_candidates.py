@@ -3,10 +3,10 @@ Generate per-level Semantic-SAM mask candidates for selected frames.
 Runs only the Semantic-SAM part to allow using a different environment (e.g., Semantic-SAM env).
 Outputs match the structure expected by run_pipeline/track_from_candidates.
 """
+# Ensure src/ is in path for direct execution (inline to avoid circular import)
 if __package__ is None or __package__ == '':
     import sys
     from pathlib import Path
-
     project_root = Path(__file__).resolve().parents[2]
     src_path = project_root / 'src'
     if str(src_path) not in sys.path:
@@ -325,6 +325,147 @@ def configure_logging(explicit_level: Optional[int] = None) -> int:
     return level
 
 
+def _validate_and_prepare_params(
+    *,
+    fill_area: Optional[int],
+    min_area: int,
+    ssam_freq: Any,
+    mask_scale_ratio: Any,
+    downscale_masks: bool,
+) -> Tuple[int, int, float]:
+    """Validate and prepare generation parameters (DRY helper).
+
+    Returns:
+        (fill_area, ssam_freq, mask_scale_ratio)
+    """
+    if fill_area is None:
+        fill_area = min_area
+    try:
+        fill_area = int(fill_area)
+    except (TypeError, ValueError):
+        LOGGER.warning("Invalid fill_area=%r; defaulting to min_area=%d", fill_area, min_area)
+        fill_area = int(min_area)
+    fill_area = max(0, fill_area)
+
+    try:
+        ssam_freq = max(1, int(ssam_freq))
+    except (TypeError, ValueError):
+        LOGGER.warning("Invalid ssam_freq=%r; defaulting to 1", ssam_freq)
+        ssam_freq = 1
+
+    try:
+        mask_scale_ratio = float(mask_scale_ratio)
+    except (TypeError, ValueError):
+        LOGGER.warning("Invalid mask_scale_ratio=%r; defaulting to 1.0", mask_scale_ratio)
+        mask_scale_ratio = 1.0
+    if not downscale_masks:
+        mask_scale_ratio = 1.0
+    elif mask_scale_ratio <= 0.0 or mask_scale_ratio > 1.0:
+        raise ValueError('mask_scale_ratio must be within (0, 1] when downscale_masks is true')
+    if mask_scale_ratio < 1.0:
+        LOGGER.info("Downscaling SSAM masks by ratio %.3f before persistence", mask_scale_ratio)
+
+    return fill_area, ssam_freq, mask_scale_ratio
+
+
+def _select_frames(
+    frames_dir: str,
+    frames: str,
+    ssam_freq: int,
+) -> Tuple[List[str], List[int], List[str], List[int], List[str], List[int]]:
+    """Select frames for processing based on range and frequency.
+
+    Returns:
+        (all_frames, selected_indices, selected, ssam_local_indices, ssam_frames, ssam_absolute_indices)
+    """
+    start_idx, end_idx, step = parse_range(frames)
+    start_idx = max(0, start_idx)
+
+    all_frames = sorted(
+        [f for f in os.listdir(frames_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))],
+        key=numeric_frame_sort_key,
+    )
+    if end_idx < 0:
+        range_end = len(all_frames)
+    else:
+        range_end = min(end_idx, len(all_frames))
+    selected_indices = list(range(start_idx, range_end, step))
+    selected = [all_frames[i] for i in selected_indices]
+
+    # 選擇需要進行 Semantic-SAM 分割的幀（按 ssam_freq 間隔）
+    ssam_local_indices = list(range(0, len(selected), ssam_freq))
+    ssam_frames = [selected[i] for i in ssam_local_indices]
+    ssam_absolute_indices = [selected_indices[i] for i in ssam_local_indices]
+
+    return all_frames, selected_indices, selected, ssam_local_indices, ssam_frames, ssam_absolute_indices
+
+
+def _build_output_folder_name(
+    *,
+    run_timestamp: str,
+    level_list: List[int],
+    ssam_freq: int,
+    sam2_max_propagate: Optional[int],
+    min_area: int,
+    fill_area: int,
+    add_gaps: bool,
+    downscale_masks: bool,
+    mask_scale_ratio: float,
+    experiment_tag: Optional[str],
+    tag_in_path: bool,
+) -> str:
+    """Build automated folder name with important parameters."""
+    levels_str = "L" + "_".join(str(x) for x in level_list)
+    ssam_str = f"ssam{ssam_freq}"
+
+    parts = [run_timestamp, levels_str, ssam_str]
+
+    if sam2_max_propagate is not None:
+        parts.append(f"propmax{sam2_max_propagate}")
+
+    if min_area != 300:
+        parts.append(f"area{min_area}")
+    if fill_area != min_area:
+        parts.append(f"fill{fill_area}")
+
+    if add_gaps:
+        parts.append("gaps")
+
+    if downscale_masks and mask_scale_ratio < 1.0:
+        ratio_str = f"{mask_scale_ratio:.3f}".rstrip('0').rstrip('.')
+        parts.append(f"scale{ratio_str}x")
+
+    if experiment_tag and tag_in_path:
+        parts.append(experiment_tag)
+
+    return "_".join(parts)
+
+
+def _detect_scene_metadata(frames_path: Path) -> Tuple[Optional[str], Optional[Path], Optional[Path]]:
+    """Detect scene name and paths from frames directory.
+
+    Returns:
+        (scene_name, scene_root, dataset_root)
+    """
+    try:
+        frames_path = frames_path.resolve()
+    except FileNotFoundError:
+        frames_path = frames_path.absolute()
+
+    scene_name = None
+    scene_root = None
+    dataset_root = None
+    for parent in [frames_path] + list(frames_path.parents):
+        name = parent.name
+        if name.startswith('scene_'):
+            scene_name = name
+            scene_root = parent
+            dataset_root = parent.parent
+            break
+
+    return scene_name, scene_root, dataset_root
+
+
 def run_generation(
     *,
     data_path: str,
@@ -355,52 +496,23 @@ def run_generation(
     configure_logging(log_level)
     start_time = time.perf_counter()
 
-    frames_dir = data_path
-    if fill_area is None:
-        fill_area = min_area
-    try:
-        fill_area = int(fill_area)
-    except (TypeError, ValueError):
-        LOGGER.warning("Invalid fill_area=%r; defaulting to min_area=%d", fill_area, min_area)
-        fill_area = int(min_area)
-    fill_area = max(0, fill_area)
-    level_list = parse_levels(levels)
-    start_idx, end_idx, step = parse_range(frames)
-    start_idx = max(0, start_idx)
-
-    try:
-        ssam_freq = max(1, int(ssam_freq))
-    except (TypeError, ValueError):
-        LOGGER.warning("Invalid ssam_freq=%r; defaulting to 1", ssam_freq)
-        ssam_freq = 1
-
-    try:
-        mask_scale_ratio = float(mask_scale_ratio)
-    except (TypeError, ValueError):
-        LOGGER.warning("Invalid mask_scale_ratio=%r; defaulting to 1.0", mask_scale_ratio)
-        mask_scale_ratio = 1.0
-    if not downscale_masks:
-        mask_scale_ratio = 1.0
-    elif mask_scale_ratio <= 0.0 or mask_scale_ratio > 1.0:
-        raise ValueError('mask_scale_ratio must be within (0, 1] when downscale_masks is true')
-    if mask_scale_ratio < 1.0:
-        LOGGER.info("Downscaling SSAM masks by ratio %.3f before persistence", mask_scale_ratio)
-
-    all_frames = sorted(
-        [f for f in os.listdir(frames_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))],
-        key=numeric_frame_sort_key,
+    # Validate and prepare parameters
+    fill_area, ssam_freq, mask_scale_ratio = _validate_and_prepare_params(
+        fill_area=fill_area,
+        min_area=min_area,
+        ssam_freq=ssam_freq,
+        mask_scale_ratio=mask_scale_ratio,
+        downscale_masks=downscale_masks,
     )
-    if end_idx < 0:
-        range_end = len(all_frames)
-    else:
-        range_end = min(end_idx, len(all_frames))
-    selected_indices = list(range(start_idx, range_end, step))
-    selected = [all_frames[i] for i in selected_indices]
 
-    # 選擇需要進行 Semantic-SAM 分割的幀（按 ssam_freq 間隔）
-    ssam_local_indices = list(range(0, len(selected), ssam_freq))
-    ssam_frames = [selected[i] for i in ssam_local_indices]
-    ssam_absolute_indices = [selected_indices[i] for i in ssam_local_indices]
+    # Parse levels and select frames
+    frames_dir = data_path
+    level_list = parse_levels(levels)
+    all_frames, selected_indices, selected, ssam_local_indices, ssam_frames, ssam_absolute_indices = _select_frames(
+        frames_dir=frames_dir,
+        frames=frames,
+        ssam_freq=ssam_freq,
+    )
 
     LOGGER.info(
         "Semantic-SAM candidate generation started (levels=%s, frames=%s, ssam_freq=%d)",
@@ -415,36 +527,7 @@ def run_generation(
         len(selected),
     )
 
-    # 建立自動化的資料夾名稱，包含重要參數
-    def build_folder_name(run_timestamp: str) -> str:
-        # 重要參數
-        levels_str = "L" + "_".join(str(x) for x in level_list)
-        ssam_str = f"ssam{ssam_freq}"
-
-        # 可選參數
-        parts = [run_timestamp, levels_str, ssam_str]
-
-        if sam2_max_propagate is not None:
-            parts.append(f"propmax{sam2_max_propagate}")
-
-        if min_area != 300:
-            parts.append(f"area{min_area}")
-        if fill_area != min_area:
-            parts.append(f"fill{fill_area}")
-
-        if add_gaps:
-            parts.append("gaps")
-
-        if downscale_masks and mask_scale_ratio < 1.0:
-            ratio_str = f"{mask_scale_ratio:.3f}".rstrip('0').rstrip('.')
-            parts.append(f"scale{ratio_str}x")
-
-        # 如果有自定義標籤，加到最後
-        if experiment_tag and tag_in_path:
-            parts.append(experiment_tag)
-
-        return "_".join(parts)
-
+    # Build output directory
     run_timestamp: Optional[str]
     if no_timestamp:
         if experiment_tag and tag_in_path:
@@ -454,29 +537,29 @@ def run_generation(
         run_timestamp = None
     else:
         run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        folder_name = build_folder_name(run_timestamp)
+        folder_name = _build_output_folder_name(
+            run_timestamp=run_timestamp,
+            level_list=level_list,
+            ssam_freq=ssam_freq,
+            sam2_max_propagate=sam2_max_propagate,
+            min_area=min_area,
+            fill_area=fill_area,
+            add_gaps=add_gaps,
+            downscale_masks=downscale_masks,
+            mask_scale_ratio=mask_scale_ratio,
+            experiment_tag=experiment_tag,
+            tag_in_path=tag_in_path,
+        )
         run_root = ensure_dir(os.path.join(output, folder_name))
 
-    # 建立全量取樣的 subset，供 downstream / tracker 直接使用
+    # Build subset video for downstream stages
     subset_dir, subset_map = build_subset_video(
         frames_dir, selected, selected_indices, run_root
     )
-    frames_path = Path(frames_dir).expanduser()
-    try:
-        frames_path = frames_path.resolve()
-    except FileNotFoundError:
-        frames_path = frames_path.absolute()
 
-    scene_name = None
-    scene_root = None
-    dataset_root = None
-    for parent in [frames_path] + list(frames_path.parents):
-        name = parent.name
-        if name.startswith('scene_'):
-            scene_name = name
-            scene_root = parent
-            dataset_root = parent.parent
-            break
+    # Detect scene metadata
+    frames_path = Path(frames_dir).expanduser()
+    scene_name, scene_root, dataset_root = _detect_scene_metadata(frames_path)
 
     manifest = {
         'mode': 'candidates_only',

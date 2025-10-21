@@ -104,19 +104,10 @@ def infer_relative_scale(mask_entry: Any) -> Optional[float]:
     if packed_shape is None or orig_shape is None:
         return None
 
-    if isinstance(packed_shape, np.ndarray):
-        packed = [int(v) for v in packed_shape.flatten().tolist()]
-    elif isinstance(packed_shape, (list, tuple)):
-        packed = [int(v) for v in packed_shape]
-    else:
-        packed = [int(packed_shape)]
+    from my3dis.common_utils import normalize_shape_tuple
 
-    if isinstance(orig_shape, np.ndarray):
-        original = [int(v) for v in orig_shape.flatten().tolist()]
-    elif isinstance(orig_shape, (list, tuple)):
-        original = [int(v) for v in orig_shape]
-    else:
-        original = [int(orig_shape)]
+    packed = list(normalize_shape_tuple(packed_shape))
+    original = list(normalize_shape_tuple(orig_shape))
 
     if len(packed) >= 2 and len(original) >= 2:
         h_ratio = packed[-2] / original[-2] if original[-2] else None

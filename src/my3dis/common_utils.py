@@ -31,6 +31,41 @@ def ensure_dir(path: str | Path) -> str:
     return str(resolved)
 
 
+def normalize_shape_tuple(shape: Union[np.ndarray, List, Tuple, int]) -> Tuple[int, ...]:
+    """
+    Normalize various shape representations to a tuple of integers.
+
+    This utility handles shape coercion from:
+    - NumPy arrays (from JSON/NPZ loading)
+    - Python lists
+    - Tuples (ensures int conversion)
+    - Scalar integers (returns (n,))
+
+    Args:
+        shape: Shape in various formats
+
+    Returns:
+        Tuple of integers representing the shape
+
+    Examples:
+        >>> normalize_shape_tuple(np.array([1080, 1920]))
+        (1080, 1920)
+        >>> normalize_shape_tuple([512, 512])
+        (512, 512)
+        >>> normalize_shape_tuple((100, 200))
+        (100, 200)
+        >>> normalize_shape_tuple(1000)
+        (1000,)
+    """
+    if isinstance(shape, np.ndarray):
+        return tuple(int(v) for v in shape.flat)
+    elif isinstance(shape, (list, tuple)):
+        return tuple(int(v) for v in shape)
+    else:
+        # Scalar case
+        return (int(shape),)
+
+
 def format_duration(seconds: float) -> str:
     """Render duration as mm:ss or HH:MM:SS when hours present."""
     total_seconds = max(0.0, float(seconds))
@@ -124,15 +159,7 @@ def unpack_binary_mask(entry: object) -> np.ndarray:
         return array
 
     payload = dict(entry)
-    shape = payload[PACKED_SHAPE_KEY]
-    if isinstance(shape, np.ndarray):
-        shape = tuple(int(v) for v in shape.tolist())
-    elif isinstance(shape, list):
-        shape = tuple(int(v) for v in shape)
-    elif isinstance(shape, tuple):
-        shape = tuple(int(v) for v in shape)
-    else:
-        shape = (int(shape),)
+    shape = normalize_shape_tuple(payload[PACKED_SHAPE_KEY])
 
     total = int(np.prod(shape))
 

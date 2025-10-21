@@ -1,3 +1,0 @@
-Requirement already satisfied: iopath in /home/rich/miniconda3/envs/My3DIS/lib/python3.10/site-packages (0.1.9)
-Requirement already satisfied: tqdm in /home/rich/miniconda3/envs/My3DIS/lib/python3.10/site-packages (from iopath) (4.67.1)
-Requirement already satisfied: portalocker in /home/rich/miniconda3/envs/My3DIS/lib/python3.10/site-packages (from iopath) (3.2.0)

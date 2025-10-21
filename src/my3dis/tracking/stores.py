@@ -64,17 +64,32 @@ class DedupStore:
         return resize_mask_to_shape(mask, target_shape).astype(np.bool_)
 
     def _max_iou(self, entry: _DedupEntry, candidate: np.ndarray) -> float:
+        """Compute maximum IoU between candidate and all existing masks (vectorized)."""
         if not entry.masks:
             return 0.0
+
         cand = self._resize(candidate, entry.target_shape)
-        ious: List[float] = []
-        for existing in entry.masks:
-            inter = np.logical_and(existing, cand).sum()
-            union = np.logical_or(existing, cand).sum()
-            if union == 0:
-                continue
-            ious.append(float(inter) / float(union))
-        return max(ious) if ious else 0.0
+
+        # Vectorized IoU computation: stack all masks and compute in batch
+        # Shape: (num_masks, H, W)
+        existing_stack = np.stack(entry.masks, axis=0)
+
+        # Broadcast candidate to match stack shape: (1, H, W) → (num_masks, H, W)
+        cand_broadcast = cand[np.newaxis, :, :]
+
+        # Compute intersection and union for all masks at once
+        # Shape: (num_masks,)
+        inter = np.logical_and(existing_stack, cand_broadcast).sum(axis=(1, 2))
+        union = np.logical_or(existing_stack, cand_broadcast).sum(axis=(1, 2))
+
+        # Avoid division by zero
+        valid = union > 0
+        if not valid.any():
+            return 0.0
+
+        # Compute IoU only for valid masks
+        ious = inter[valid].astype(float) / union[valid].astype(float)
+        return float(ious.max())
 
     def has_overlap(self, frame_idx: int, mask: np.ndarray, threshold: float) -> bool:
         entry = self._frames.get(frame_idx)
