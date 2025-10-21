@@ -157,80 +157,33 @@ class SceneWorkflow:
             self.manifest = load_manifest(run_dir)
             return
 
-        from my3dis.generate_candidates import (
-            DEFAULT_SEMANTIC_SAM_CKPT as _DEFAULT_SEMANTIC_SAM_CKPT,
-            run_generation as run_candidate_generation,
+        from my3dis.generate_candidates import run_generation as run_candidate_generation
+        from .stage_config import SSAMStageConfig
+
+        # Optimized: Centralized configuration validation (replaces 50+ lines of scattered validation)
+        config = SSAMStageConfig.from_yaml_config(
+            stage_cfg=stage_cfg,
+            experiment_cfg=self.experiment_cfg,
+            data_path=self.data_path,
+            output_root=self.output_root,
         )
 
-        levels = resolve_levels(stage_cfg, None, self.experiment_cfg.get('levels'))
-        frames_str = stage_frames_string(stage_cfg, self.experiment_cfg)
-        try:
-            ssam_freq = int(stage_cfg.get('ssam_freq', 1))
-        except (TypeError, ValueError) as exc:
-            raise WorkflowConfigError(f"invalid stages.ssam.ssam_freq: {stage_cfg.get('ssam_freq')!r}") from exc
-        min_area = int(stage_cfg.get('min_area', 300))
-        fill_area_cfg = stage_cfg.get('fill_area')
-        if fill_area_cfg is None:
-            fill_area = min_area
-        else:
-            try:
-                fill_area = int(fill_area_cfg)
-            except (TypeError, ValueError) as exc:
-                raise WorkflowConfigError(f'invalid stages.ssam.fill_area: {fill_area_cfg!r}') from exc
-        fill_area = max(0, fill_area)
-        stability = float(stage_cfg.get('stability_threshold', 0.9))
-        persist_raw = bool(stage_cfg.get('persist_raw', True))
-        skip_filtering = bool(stage_cfg.get('skip_filtering', False))
-        add_gaps = bool(stage_cfg.get('add_gaps', False))
-        append_timestamp = stage_cfg.get('append_timestamp', True)
-        experiment_tag = stage_cfg.get('experiment_tag') or self.experiment_cfg.get('tag')
-        tag_in_path_raw = stage_cfg.get('tag_in_path')
-        if tag_in_path_raw is None:
-            tag_in_path_raw = self.experiment_cfg.get('tag_in_path')
-        tag_in_path = self._resolve_bool_flag(tag_in_path_raw, True)
-        ssam_downscale_enabled = bool(stage_cfg.get('downscale_masks', False))
-        ssam_downscale_ratio = stage_cfg.get('downscale_ratio', stage_cfg.get('mask_scale_ratio', 1.0))
-        try:
-            ssam_downscale_ratio = float(ssam_downscale_ratio)
-        except (TypeError, ValueError) as exc:
-            raise WorkflowConfigError(
-                f'invalid stages.ssam.downscale_ratio: {ssam_downscale_ratio!r}'
-            ) from exc
-
-        sam_ckpt_cfg = stage_cfg.get('sam_ckpt') or self.experiment_cfg.get('sam_ckpt')
-        if sam_ckpt_cfg:
-            sam_ckpt_path = Path(str(sam_ckpt_cfg)).expanduser()
-        else:
-            sam_ckpt_path = Path(_DEFAULT_SEMANTIC_SAM_CKPT)
-        if not sam_ckpt_path.exists():
-            raise WorkflowConfigError(
-                f'Semantic-SAM checkpoint not found at {sam_ckpt_path}. '
-                'Set stages.ssam.sam_ckpt or experiment.sam_ckpt to a valid file path.'
-            )
-        sam_ckpt = str(sam_ckpt_path)
+        # Extract values for summary logging
+        levels = config.levels
+        frames_str = f'{config.frames_start}:{config.frames_end}:{config.frames_step}'
+        ssam_freq = config.ssam_freq
+        min_area = config.min_area
+        fill_area = config.fill_area
+        stability = config.stability_threshold
+        persist_raw = config.persist_raw
+        skip_filtering = config.skip_filtering
+        ssam_downscale_enabled = config.downscale_masks
+        ssam_downscale_ratio = config.mask_scale_ratio
 
         print('Stage SSAM: Semantic-SAM 採樣與候選輸出')
         with StageRecorder(self.summary, 'ssam', self._stage_gpu_env):
-            run_root, manifest = run_candidate_generation(
-                data_path=self.data_path,
-                levels=list_to_csv(levels),
-                frames=frames_str,
-                sam_ckpt=sam_ckpt,
-                output=self.output_root,
-                min_area=min_area,
-                fill_area=fill_area,
-                stability_threshold=stability,
-                add_gaps=add_gaps,
-                no_timestamp=not append_timestamp,
-                ssam_freq=ssam_freq,
-                sam2_max_propagate=stage_cfg.get('sam2_max_propagate'),
-                experiment_tag=experiment_tag,
-                persist_raw=persist_raw,
-                skip_filtering=skip_filtering,
-                downscale_masks=ssam_downscale_enabled,
-                mask_scale_ratio=ssam_downscale_ratio,
-                tag_in_path=tag_in_path,
-            )
+            # Use legacy kwargs for backward compatibility during migration
+            run_root, manifest = run_candidate_generation(**config.to_legacy_kwargs())
         self.run_dir = Path(run_root)
         self.manifest = manifest if isinstance(manifest, dict) else manifest
 
