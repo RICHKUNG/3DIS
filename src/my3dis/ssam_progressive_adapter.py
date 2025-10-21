@@ -39,10 +39,7 @@ if DEFAULT_SEMANTIC_SAM_ROOT not in sys.path:
 
 # Import Semantic-SAM modules
 from semantic_sam import build_semantic_sam, prepare_image  # noqa: E402
-from .progressive_refinement_core import progressive_refinement_masks
-from my3dis.progressive_refinement import (
-    setup_output_directories,      # noqa: E402
-)
+from .semantic_refinement import progressive_refinement_masks, setup_output_directories
 
 
 LOGGER = logging.getLogger("my3dis.ssam_progressive")

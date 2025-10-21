@@ -1,5 +1,5 @@
 experiment:
-  name: test_1019_VOS_B
+  name: test_1021_Claude
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run

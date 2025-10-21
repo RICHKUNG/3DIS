@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /media/Pluto/richkung/My3DIS -type f ( -name \"*test*.py\" -o -name \"test_*.py\" ))"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

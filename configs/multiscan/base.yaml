@@ -2,16 +2,7 @@ experiment:
   name: v2_246_ssam2_filter500_fill3k_prop30_iou07_ds03
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
-  # scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00044_01    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00048_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00077_01    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00086_00  # replace with first scene name (inclusive) to limit the run
-  # scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
-
   scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
-  # # scene_end: scene_00055_00    # replace with last scene name (inclusive) to limit the run
-  # scene_start: scene_00055_01  # replace with first scene name (inclusive) to limit the run
   scene_end: scene_00098_02    # replace with last scene name (inclusive) to limit the run
   parallel_scenes: 1
   levels:
