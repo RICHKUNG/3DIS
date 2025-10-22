@@ -480,6 +480,7 @@ def run_generation(
     no_timestamp: bool = False,
     log_level: Optional[int] = None,
     ssam_freq: int = 1,
+    max_masks_per_level: int = 2000,
     sam2_max_propagate: int = None,
     experiment_tag: str = None,
     persist_raw: bool = False,
@@ -635,6 +636,10 @@ def run_generation(
         fill_area=fill_area,
         enable_gap_fill=bool(add_gaps),
         mask_scale_ratio=mask_scale_ratio,
+        max_masks_per_level=max_masks_per_level,
+        save_root=run_root,
+        persist_outputs=False,
+        save_relations=True,
     )
 
     level_infos: List[Dict[str, Any]] = []

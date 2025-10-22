@@ -48,6 +48,9 @@ class SSAMStageConfig:
     # Sampling frequency
     ssam_freq: int = 1
 
+    # Progressive refinement control
+    max_masks_per_level: int = 2000
+
     # Output control
     persist_raw: bool = True
     skip_filtering: bool = False
@@ -121,6 +124,24 @@ class SSAMStageConfig:
             ) from exc
         ssam_freq = max(1, ssam_freq)
 
+        # Validate max_masks_per_level
+        # Special value: 0 or -1 means unlimited (no upper limit)
+        max_masks_cfg = stage_cfg.get('max_masks_per_level')
+        if max_masks_cfg is None:
+            max_masks_per_level = 2000  # Default value
+        else:
+            try:
+                max_masks_per_level = int(max_masks_cfg)
+            except (TypeError, ValueError) as exc:
+                raise WorkflowConfigError(
+                    f"invalid stages.ssam.max_masks_per_level: {max_masks_cfg!r}"
+                ) from exc
+            # Allow 0 or -1 to represent unlimited (no cap)
+            if max_masks_per_level > 0:
+                max_masks_per_level = max(1, max_masks_per_level)
+            elif max_masks_per_level < 0:
+                max_masks_per_level = 0  # Normalize negative values to 0 for "unlimited"
+
         # Validate filtering parameters
         min_area = int(stage_cfg.get('min_area', 300))
 
@@ -182,6 +203,7 @@ class SSAMStageConfig:
             downscale_masks=downscale_masks,
             mask_scale_ratio=ssam_downscale_ratio,
             ssam_freq=ssam_freq,
+            max_masks_per_level=max_masks_per_level,
             persist_raw=bool(stage_cfg.get('persist_raw', True)),
             skip_filtering=bool(stage_cfg.get('skip_filtering', False)),
             no_timestamp=not append_timestamp,
@@ -210,6 +232,7 @@ class SSAMStageConfig:
             'no_timestamp': self.no_timestamp,
             'log_level': self.log_level,
             'ssam_freq': self.ssam_freq,
+            'max_masks_per_level': self.max_masks_per_level,
             'sam2_max_propagate': self.sam2_max_propagate,
             'experiment_tag': self.experiment_tag,
             'persist_raw': self.persist_raw,

@@ -395,11 +395,22 @@ def execute_workflow(
             )
             parallel_scenes = 1
         parallel_scenes = max(1, parallel_scenes)
+
+        # Check force_parallel flag to allow parallel execution without OOM monitoring
+        force_parallel = bool(experiment_cfg.get('force_parallel', False))
+
         if parallel_scenes > 1 and memory_event_paths is not None and not memory_readers:
-            LOGGER.warning(
-                "Parallel execution requested but OOM monitoring is unavailable; forcing sequential scene scheduling",
-            )
-            parallel_scenes = 1
+            if force_parallel:
+                LOGGER.warning(
+                    "Parallel execution enabled without OOM monitoring (force_parallel=true). "
+                    "Note: Out-of-memory events will not be detected."
+                )
+            else:
+                LOGGER.warning(
+                    "Parallel execution requested but OOM monitoring is unavailable; forcing sequential scene scheduling. "
+                    "Set experiment.force_parallel=true to override this safety check."
+                )
+                parallel_scenes = 1
 
         jobs: List[_SceneJob] = []
         for index, scene_name in enumerate(scenes_list):

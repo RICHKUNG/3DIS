@@ -2,7 +2,7 @@
 """命令列入口，負責調用 My3DIS 工作流程模組。"""
 from __future__ import annotations
 
-# Ensure src/ is in path for direct execution (must be inline to avoid circular import)
+# Ensure src/ and project_root are in path for direct execution (must be inline to avoid circular import)
 if __package__ is None or __package__ == '':
     import sys
     from pathlib import Path
@@ -10,6 +10,9 @@ if __package__ is None or __package__ == '':
     src_path = project_root / 'src'
     if str(src_path) not in sys.path:
         sys.path.insert(0, str(src_path))
+    # Add project_root for oom_monitor module
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
 
 import argparse
 import csv

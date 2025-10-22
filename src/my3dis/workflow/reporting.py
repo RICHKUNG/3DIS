@@ -1,26 +1,12 @@
-#!/usr/bin/env python3
-"""Aggregate stage timings for experiment scenes and emit a markdown report with output statistics."""
+"""Reporting utilities for workflow stages."""
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Any
-
-
-# Update this list to change the default experiment directories processed when no arguments are provided.
-DEFAULT_BASES = ["/media/Pluto/richkung/My3DIS/outputs/experiments/v2_135_ssam2_filter2k_fill10k_prop30_iou06_ds03",
-                "/media/Pluto/richkung/My3DIS/outputs/experiments/v2_135_ssam2_filter2k_fill10k_prop50_iou06_ds03",
-                "/media/Pluto/richkung/My3DIS/outputs/experiments/v2_135_ssam2_filter500_fill3k_prop30_iou06_ds03",
-                "/media/Pluto/richkung/My3DIS/outputs/experiments/v2_246_ssam2_filter2k_fill10k_prop10_iou06_ds03",
-                "/media/Pluto/richkung/My3DIS/outputs/experiments/v2_246_ssam2_filter2k_fill10k_prop30_iou05_ds03",
-                "/media/Pluto/richkung/My3DIS/outputs/experiments/v2_246_ssam2_filter2k_fill10k_prop30_iou06_ds03",
-                "/media/Pluto/richkung/My3DIS/outputs/experiments/v2_246_ssam2_filter2k_fill10k_prop50_iou06_ds03",
-                "/media/Pluto/richkung/My3DIS/outputs/experiments/v2_246_ssam2_filter500_fill3k_prop30_iou06_ds03",
-                "/media/Pluto/richkung/My3DIS/outputs/experiments/v2_246_ssam2_filter500_fill3k_prop30_iou07_ds03"]
+from typing import Any, Dict, Iterable, List, Optional
 
 
 @dataclass
@@ -71,8 +57,7 @@ def load_scene_stats(scene_dir: Path) -> Optional[SceneStats]:
     try:
         with relations_path.open("r", encoding="utf-8") as fh:
             relations = json.load(fh)
-    except Exception as exc:  # pylint: disable=broad-except
-        print(f"[WARN] Failed to read {relations_path}: {exc}", file=sys.stderr)
+    except Exception:  # pylint: disable=broad-except
         return None
 
     stats = SceneStats()
@@ -126,8 +111,7 @@ def load_scene_timing(scene_dir: Path) -> SceneTiming:
     try:
         with summary_path.open("r", encoding="utf-8") as fh:
             summary = json.load(fh)
-    except Exception as exc:  # pylint: disable=broad-except
-        print(f"[WARN] Failed to read {summary_path}: {exc}", file=sys.stderr)
+    except Exception:  # pylint: disable=broad-except
         return SceneTiming(scene_dir.name, True, "N/A", {}, None)
 
     timings = summary.get("timings") or {}
@@ -220,7 +204,7 @@ def render_stats_table(scenes: Iterable[SceneTiming]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def build_report(base_path: Path) -> str:
+def build_experiment_report(base_path: Path) -> str:
     """Generate the markdown report for every scene under base_path."""
     scene_dirs = sorted(
         (path for path in base_path.iterdir() if path.is_dir()),
@@ -242,40 +226,16 @@ def build_report(base_path: Path) -> str:
     return "\n".join(report_parts)
 
 
-def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Generate a Markdown table summarising scene stage timings."
-    )
-    parser.add_argument(
-        "base_dirs",
-        nargs="*",
-        default=list(DEFAULT_BASES),
-        help=(
-            "One or more experiment directories containing scene folders "
-            f"(default: {', '.join(DEFAULT_BASES)})"
-        ),
-    )
-    return parser.parse_args(argv)
+def generate_experiment_check_report(experiment_dir: Path) -> Path:
+    """Generate check.md report for an experiment directory.
 
+    Args:
+        experiment_dir: Path to experiment directory (e.g., outputs/experiments/exp_name/)
 
-def main(argv: Optional[List[str]] = None) -> int:
-    args = parse_args(argv)
-    exit_code = 0
-
-    for base_dir in args.base_dirs:
-        base_path = Path(base_dir).resolve()
-        if not base_path.is_dir():
-            print(f"[ERROR] Base directory not found: {base_path}", file=sys.stderr)
-            exit_code = 1
-            continue
-
-        report = build_report(base_path)
-        output_path = base_path / "check.md"
-        output_path.write_text(report, encoding="utf-8")
-        print(f"Wrote {output_path}")
-
-    return exit_code
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    Returns:
+        Path to generated check.md file
+    """
+    report = build_experiment_report(experiment_dir)
+    output_path = experiment_dir / "check.md"
+    output_path.write_text(report, encoding="utf-8")
+    return output_path

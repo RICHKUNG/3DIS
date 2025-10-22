@@ -81,6 +81,23 @@ def _semantic_sam_workdir():
                 LOGGER.warning("Failed to restore working directory to %s: %s", previous_cwd, exc)
 
 
+def _save_progressive_relations(
+    all_results: List[Dict[str, Any]],
+    save_root: str,
+    levels: List[int],
+) -> None:
+    """Save parent-child relations from progressive refinement results."""
+    from my3dis.relation_index import save_ssam_relations
+
+    # Merge all frame results (they should have consistent tree structure)
+    if not all_results:
+        return
+
+    # Use the first result as template (tree structure should be identical across frames)
+    representative_result = all_results[0]['results']
+    save_ssam_relations(representative_result, save_root, levels)
+
+
 def _extract_gap_components(segs: List[np.ndarray], fill_area: int) -> List[np.ndarray]:
     """Return boolean masks for uncovered regions above the fill_area threshold."""
     valid = [np.asarray(seg, dtype=bool) for seg in segs if seg is not None]
@@ -174,11 +191,29 @@ def generate_with_progressive(
     min_area: int = 300,
     fill_area: Optional[int] = None,
     save_root: str = None,
-    persist_outputs: bool = False,
+    persist_outputs: bool = True,
+    save_relations: bool = True,
     enable_gap_fill: bool = True,
     mask_scale_ratio: float = 1.0,
+    max_masks_per_level: int = 2000,
+    verbose: bool = False,
 ) -> Iterable[Tuple[int, str, Dict[int, List[Dict[str, Any]]]]]:
     """Yield per-level candidates per frame using progressive_refinement.
+
+    Args:
+        frames_dir: Directory containing input image frames.
+        selected_frames: List of frame filenames to process.
+        sam_ckpt_path: Path to Semantic-SAM checkpoint file.
+        levels: List of progressive refinement levels (e.g., [2, 4, 6]).
+        min_area: Minimum mask area in pixels for filtering.
+        fill_area: Minimum area for gap-fill components (or None to disable).
+        save_root: Root directory for saving relations and intermediate outputs.
+        persist_outputs: If True, save per-frame intermediate outputs (not recommended for large datasets).
+        save_relations: If True, save parent-child tree to relations/ directory.
+        enable_gap_fill: If True, generate gap-fill masks for uncovered regions.
+        mask_scale_ratio: Ratio for downscaling masks (0.0-1.0, where 1.0 = no scaling).
+        max_masks_per_level: Maximum number of masks to keep per level during progressive refinement.
+        verbose: If True, show Semantic-SAM output; if False, suppress stdout/stderr during inference.
 
     Yields:
         Tuple[int, str, Dict[int, List[Dict[str, Any]]]]: (frame_index, frame_name, {level: [candidate_dicts]})
@@ -209,6 +244,9 @@ def generate_with_progressive(
 
     base_level = min(levels) if levels else None
 
+    # Storage for collecting all results (for relation saving)
+    all_results: List[Dict[str, Any]] = []
+
     for f_idx, fname in enumerate(selected_frames):
         image_path = os.path.join(frames_dir, fname)
 
@@ -221,7 +259,7 @@ def generate_with_progressive(
                         level_sequence=levels,
                         output_dirs=output_dirs,
                         min_area=min_area,
-                        max_masks_per_level=2000,
+                        max_masks_per_level=max_masks_per_level,
                         save_viz=False,
                     )
 
@@ -238,7 +276,7 @@ def generate_with_progressive(
                 print(buf_err.getvalue(), file=sys.stderr, end="")
                 raise
 
-        if persist_outputs:
+        if persist_outputs and save_root is not None:
             image_out = ensure_dir(os.path.join(save_root, f"pr_{os.path.splitext(fname)[0]}"))
             out_dirs = setup_output_directories(image_out)
             results = run_progressive(out_dirs)
@@ -317,4 +355,12 @@ def generate_with_progressive(
                 })
             frame_payload[L] = frame_cands
 
+        # Store results for relation saving
+        if save_relations and save_root is not None:
+            all_results.append({'results': results, 'frame_idx': f_idx, 'frame_name': fname})
+
         yield f_idx, fname, frame_payload
+
+    # After all frames processed, save relations if requested
+    if save_relations and save_root is not None and all_results:
+        _save_progressive_relations(all_results, save_root, levels)

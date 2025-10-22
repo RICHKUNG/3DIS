@@ -441,7 +441,8 @@ def progressive_refinement_masks(
         mask_id_counter += 1
 
     first_level_masks = [m for m in first_level_masks if m.get("area", 0) >= min_area]
-    if len(first_level_masks) > max_masks_per_level:
+    # Apply max_masks limit (0 means unlimited)
+    if max_masks_per_level > 0 and len(first_level_masks) > max_masks_per_level:
         first_level_masks = first_level_masks[:max_masks_per_level]
 
     console(f"✨ Level {first_level}: {len(first_level_masks)} 個有效 mask")
@@ -583,7 +584,8 @@ def progressive_refinement_masks(
 
                     valid_children.append(child)
 
-                if len(valid_children) > max_masks_per_level:
+                # Apply max_masks limit (0 means unlimited)
+                if max_masks_per_level > 0 and len(valid_children) > max_masks_per_level:
                     valid_children = valid_children[:max_masks_per_level]
 
                 if save_viz and valid_children:
@@ -622,7 +624,8 @@ def progressive_refinement_masks(
         next_level_all_masks = [
             m for m in next_level_all_masks if m.get("area", 0) >= min_area
         ]
-        if len(next_level_all_masks) > max_masks_per_level:
+        # Apply max_masks limit (0 means unlimited)
+        if max_masks_per_level > 0 and len(next_level_all_masks) > max_masks_per_level:
             next_level_all_masks = next_level_all_masks[:max_masks_per_level]
 
         next_level_dir = os.path.join(levels_root, f"level_{next_level}")

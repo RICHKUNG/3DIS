@@ -1,10 +1,11 @@
 experiment:
-  name: test_1021_Claude_4
+  name: test_1022_3
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
-  scene_start: scene_00005_01  # replace with first scene name (inclusive) to limit the run
+  scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
   scene_end: scene_00005_01    # replace with last scene name (inclusive) to limit the run
-  parallel_scenes: 1
+  parallel_scenes: 2
+  force_parallel: false  # Test if OOM monitoring works now
   levels:
     - 2
     - 4
@@ -18,7 +19,7 @@ experiment:
   frames:
     step: 50
 stages:
-  gpu: 1  # aniki
+  gpu: 0  # aniki
   ssam:
     enabled: true
     ssam_freq: 2
@@ -31,6 +32,7 @@ stages:
     append_timestamp: false
     downscale_masks: true
     downscale_ratio: 0.3
+    max_masks_per_level: -1  # Maximum masks to keep per level during progressive refinement
     sam_ckpt: /media/Pluto/Yenhongxuan/Semantic-SAM/ckpts/swinl_only_sam_many2many.pth
   filter:
     enabled: true

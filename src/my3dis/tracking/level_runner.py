@@ -246,6 +246,22 @@ def run_level_tracking(
         os.path.basename(artifacts['object_segments']) if artifacts.get('object_segments') else 'n/a',
     )
 
+    # Build relation index for this level
+    with level_timer.track('persist.index'):
+        from my3dis.relation_index import build_level_index
+
+        level_output_root = os.path.join(out_root, f'level_{level}')
+        index_path = build_level_index(
+            level=level,
+            level_root=level_output_root,
+            video_segments_path=artifacts.get('video_segments'),
+            object_segments_path=artifacts.get('object_segments'),
+            candidates_manifest=os.path.join(level_root, 'filtered', 'filtered.json'),
+            mask_scale_ratio=mask_scale_ratio,
+        )
+        artifacts['index'] = os.path.relpath(index_path, out_root)
+        LOGGER.info("Level %d index saved → %s", level, index_path)
+
     filtered_preview: List[Optional[List[Dict[str, Any]]]] = [None] * len(frame_numbers)
     for meta_idx, local_idx in zip(preview_meta_indices, preview_local_indices):
         if not (0 <= meta_idx < len(frames_meta)):

@@ -346,9 +346,36 @@ class SceneWorkflow:
             artifacts_entry = self._stage_summary('report').setdefault('artifacts', {})
             artifacts_entry['timings'] = str(timings_path)
 
+        # Generate check.md summary if parent experiment directory exists
+        generate_check_report = bool(stage_cfg.get('generate_check_report', False))
+        if generate_check_report and run_dir.parent.is_dir():
+            try:
+                from .reporting import generate_experiment_check_report
+                check_path = generate_experiment_check_report(run_dir.parent)
+                artifacts_entry = self._stage_summary('report').setdefault('artifacts', {})
+                artifacts_entry['experiment_check'] = str(check_path.relative_to(run_dir.parent))
+                print(f'Generated experiment check report: {check_path}')
+            except Exception as exc:
+                import logging
+                LOGGER = logging.getLogger(__name__)
+                LOGGER.warning("Failed to generate experiment check report: %s", exc)
+
     def _finalize(self) -> None:
         run_dir = self._ensure_run_dir()
         manifest = self._ensure_manifest()
+
+        # Build cross-level relations if all stages completed successfully
+        levels = self.experiment_cfg.get('levels', [])
+        if levels and manifest:
+            try:
+                from my3dis.relation_index import build_cross_level_relations
+                relations_path = build_cross_level_relations(run_dir, levels)
+                artifacts_entry = self.summary.setdefault('artifacts', {})
+                artifacts_entry['relations'] = str(relations_path.relative_to(run_dir))
+            except Exception as exc:
+                import logging
+                LOGGER = logging.getLogger(__name__)
+                LOGGER.warning("Failed to build cross-level relations: %s", exc, exc_info=True)
 
         self.summary['generated_at'] = now_local_iso()
         self.summary['run_dir'] = str(run_dir)
