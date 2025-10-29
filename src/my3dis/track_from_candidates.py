@@ -86,6 +86,12 @@ def run_tracking(
     comparison_sample_stride: Optional[int] = None,
     comparison_max_samples: Optional[int] = None,
     render_viz: bool = True,
+    build_sam2_tree: bool = False,
+    sam2_tree_containment_threshold: float = 0.95,
+    sam2_tree_temporal_overlap_threshold: float = 0.3,
+    visualize_sam2_tree: bool = False,
+    tree_viz_min_children: int = 1,
+    tree_viz_max_families: Optional[int] = None,
 ) -> str:
     if not sam2_cfg:
         sam2_cfg = DEFAULT_SAM2_CFG
@@ -93,6 +99,12 @@ def run_tracking(
         sam2_ckpt = DEFAULT_SAM2_CKPT
     sam2_cfg = os.fspath(sam2_cfg) if isinstance(sam2_cfg, os.PathLike) else sam2_cfg
     sam2_ckpt = os.fspath(sam2_ckpt) if isinstance(sam2_ckpt, os.PathLike) else sam2_ckpt
+
+    # Set PyTorch CUDA allocator configuration to reduce OOM issues
+    # Use expandable_segments to avoid memory fragmentation
+    if 'PYTORCH_CUDA_ALLOC_CONF' not in os.environ:
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+        LOGGER.info("Set PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to reduce OOM risk")
 
     configure_logging(log_level)
 
@@ -233,6 +245,135 @@ def run_tracking(
         render_viz=render_viz,
     )
 
+    # Build SAM2-based tree if requested
+    if build_sam2_tree:
+        LOGGER.info("Building SAM2-based containment tree...")
+        tree_start = time.perf_counter()
+
+        try:
+            from my3dis.sam2_tree_builder import build_sam2_containment_tree
+
+            tree_path = build_sam2_containment_tree(
+                run_dir=out_root,
+                levels=level_list,
+                containment_threshold=sam2_tree_containment_threshold,
+                temporal_overlap_threshold=sam2_tree_temporal_overlap_threshold,
+                output_filename='sam2_tree.json',
+            )
+
+            tree_elapsed = time.perf_counter() - tree_start
+            LOGGER.info(
+                "✅ SAM2 tree built in %s → %s",
+                format_duration_precise(tree_elapsed),
+                tree_path
+            )
+
+            # Visualize tree if requested
+            if visualize_sam2_tree:
+                LOGGER.info("Generating SAM2 tree visualizations...")
+                viz_start = time.perf_counter()
+
+                try:
+                    from pathlib import Path
+                    import sys
+                    # Add scripts directory to path to import visualization module
+                    scripts_dir = Path(__file__).parent.parent.parent / 'scripts'
+                    if str(scripts_dir) not in sys.path:
+                        sys.path.insert(0, str(scripts_dir))
+
+                    from visualize_family_trees import (
+                        load_sam2_tree, find_families, load_npz_manifest,
+                        find_best_frame_for_family, visualize_family, get_frame_list
+                    )
+
+                    scene_root = Path(out_root)
+                    output_dir = scene_root / 'family_viz'
+                    output_dir.mkdir(parents=True, exist_ok=True)
+
+                    # Load tree
+                    tree_data = load_sam2_tree(tree_path)
+                    levels_list = tree_data['meta']['levels']
+
+                    # Find families
+                    families = find_families(tree_data)
+                    families = [f for f in families if len(f['children']) >= tree_viz_min_children]
+
+                    if tree_viz_max_families:
+                        families = families[:tree_viz_max_families]
+
+                    if families:
+                        LOGGER.info("Found %d families to visualize", len(families))
+
+                        # Load NPZ manifests
+                        level_data = {}
+                        level_video_npz = {}
+                        for level in levels_list:
+                            obj_npz_path = scene_root / f"level_{level}" / f"object_segments_L{level:02d}.npz"
+                            LOGGER.info("Loading NPZ manifest for L%d: %s", level, obj_npz_path)
+
+                            if obj_npz_path.exists():
+                                try:
+                                    obj_frames, linked_video = load_npz_manifest(obj_npz_path)
+                                    level_data[level] = obj_frames
+                                    LOGGER.info("  ✓ Loaded %d objects for L%d", len(obj_frames), level)
+
+                                    video_npz_path = scene_root / f"level_{level}" / f"video_segments_L{level:02d}.npz"
+                                    if video_npz_path.exists():
+                                        level_video_npz[level] = video_npz_path
+                                except Exception as load_exc:
+                                    LOGGER.error("  ✗ Failed to load NPZ for L%d: %s", level, load_exc, exc_info=True)
+                            else:
+                                LOGGER.warning("  ⚠ NPZ not found for L%d: %s", level, obj_npz_path)
+
+                        # Verify all levels are loaded
+                        missing_levels = set(levels_list) - set(level_data.keys())
+                        if missing_levels:
+                            LOGGER.error("Missing level_data for levels: %s", missing_levels)
+                            raise RuntimeError(f"Failed to load NPZ manifests for levels: {missing_levels}")
+
+                        # Visualize each family
+                        viz_count = 0
+                        for i, family in enumerate(families, 1):
+                            best_frame = find_best_frame_for_family(family, level_data, level_video_npz)
+                            if best_frame is None:
+                                continue
+
+                            output_name = f"family_L{family['level']}_obj{family['obj_id']:04d}_frame{best_frame:06d}.jpg"
+                            output_path = output_dir / output_name
+
+                            try:
+                                visualize_family(
+                                    family,
+                                    best_frame,
+                                    scene_root,
+                                    Path(data_path),
+                                    output_path,
+                                    level_video_npz,
+                                    levels=levels_list,
+                                )
+                                viz_count += 1
+                            except Exception as viz_exc:
+                                LOGGER.warning("Failed to visualize family %d: %s", family['obj_id'], viz_exc)
+
+                        viz_elapsed = time.perf_counter() - viz_start
+                        LOGGER.info(
+                            "✅ Generated %d/%d tree visualizations in %s → %s",
+                            viz_count, len(families),
+                            format_duration_precise(viz_elapsed),
+                            output_dir
+                        )
+                    else:
+                        LOGGER.info("No families found matching criteria (min_children=%d)", tree_viz_min_children)
+
+                except ImportError as imp_exc:
+                    LOGGER.error("Failed to import visualization modules: %s", imp_exc)
+                except Exception as viz_exc:
+                    LOGGER.error("Failed to generate tree visualizations: %s", viz_exc, exc_info=True)
+
+        except Exception as exc:
+            LOGGER.error("Failed to build SAM2 tree: %s", exc, exc_info=True)
+            LOGGER.warning("Continuing without SAM2 tree")
+
     LOGGER.info("Tracking results saved at %s", out_root)
     LOGGER.info(
         "Tracking completed in %s",
@@ -264,6 +405,12 @@ def main():
                     help='Downscale masks before persistence (e.g., 0.3 keeps 30% resolution)')
     ap.add_argument('--skip-viz', action='store_true',
                     help='Disable all additional visualization renders to keep outputs minimal')
+    ap.add_argument('--build-sam2-tree', action='store_true',
+                    help='Build containment-based tree from SAM2 tracked objects')
+    ap.add_argument('--sam2-tree-containment-threshold', type=float, default=0.95,
+                    help='Minimum avg containment for parent-child relationship (default: 0.95)')
+    ap.add_argument('--sam2-tree-temporal-overlap-threshold', type=float, default=0.3,
+                    help='Minimum temporal overlap ratio for considering parent-child (default: 0.3)')
     args = ap.parse_args()
 
     run_tracking(
@@ -279,6 +426,9 @@ def main():
         all_box_prompt=args.all_box_prompt,
         mask_scale_ratio=args.mask_scale_ratio,
         render_viz=not args.skip_viz,
+        build_sam2_tree=args.build_sam2_tree,
+        sam2_tree_containment_threshold=args.sam2_tree_containment_threshold,
+        sam2_tree_temporal_overlap_threshold=args.sam2_tree_temporal_overlap_threshold,
     )
 
 

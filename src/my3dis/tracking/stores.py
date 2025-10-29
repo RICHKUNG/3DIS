@@ -38,8 +38,29 @@ class DedupStore:
         self._max_dim = max(1, int(max_dim))
         self._frames: Dict[int, _DedupEntry] = {}
 
-    def _compute_target_shape(self, shape: Tuple[int, int]) -> Tuple[int, int]:
-        h, w = shape
+    def _compute_target_shape(self, shape: Tuple[int, ...]) -> Tuple[int, int]:
+        # Handle multi-dimensional shapes by taking the last 2 dimensions (H, W)
+        # This handles cases like (1, H, W) or (H, W, 1) from unpacked masks
+        if len(shape) < 2:
+            raise ValueError(f"Shape must have at least 2 dimensions, got {shape}")
+
+        # For 2D: use as-is
+        # For 3D+: assume last 2 dims are (H, W) and squeeze out singleton dims
+        if len(shape) == 2:
+            h, w = shape
+        else:
+            # Filter out singleton dimensions and take last 2 non-singleton dims
+            non_singleton = [d for d in shape if d > 1]
+            if len(non_singleton) >= 2:
+                h, w = non_singleton[-2:]
+            elif len(non_singleton) == 1:
+                # Edge case: only one non-singleton dim (e.g., (1, 100, 1))
+                # Fall back to last 2 dims regardless
+                h, w = shape[-2:]
+            else:
+                # All dims are 1 (e.g., (1, 1, 1))
+                h, w = shape[-2:]
+
         longest = max(h, w)
         if longest <= self._max_dim:
             return h, w
@@ -48,7 +69,7 @@ class DedupStore:
         new_w = max(1, int(round(w * ratio)))
         return new_h, new_w
 
-    def _ensure_entry(self, frame_idx: int, mask_shape: Tuple[int, int]) -> _DedupEntry:
+    def _ensure_entry(self, frame_idx: int, mask_shape: Tuple[int, ...]) -> _DedupEntry:
         entry = self._frames.get(frame_idx)
         if entry is not None:
             return entry
@@ -99,6 +120,11 @@ class DedupStore:
 
     def add_mask(self, frame_idx: int, mask: np.ndarray) -> None:
         arr = np.asarray(mask, dtype=np.bool_)
+        # Ensure 2D by squeezing out singleton dimensions
+        if arr.ndim > 2:
+            arr = np.squeeze(arr)
+        if arr.ndim != 2:
+            raise ValueError(f"Mask must be 2D after squeezing, got shape {arr.shape}")
         entry = self._ensure_entry(frame_idx, arr.shape)
         entry.masks.append(self._resize(arr, entry.target_shape))
 

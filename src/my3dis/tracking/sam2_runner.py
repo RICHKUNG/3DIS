@@ -60,6 +60,9 @@ def _coerce_mask_bool(mask: Any) -> Optional[np.ndarray]:
         arr = arr.astype(np.bool_)
     if arr.ndim > 2:
         arr = np.squeeze(arr)
+    # After squeeze, if still >2D, take first channel (e.g., RGB mask → single channel)
+    if arr.ndim > 2:
+        arr = arr[:, :, 0] if arr.shape[2] <= 4 else arr[0, :, :]
     if arr.ndim != 2:
         return None
     return arr

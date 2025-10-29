@@ -2,7 +2,7 @@
 dump/
 
 CLAUDE.md
-
+docs/
 # Generated experiment outputs and caches
 outputs/
 _progressive_tmp/

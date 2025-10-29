@@ -280,12 +280,28 @@ def build_cross_level_relations(
     paths: Dict[int, List[int]] = {}
 
     # Collect tree.json from each level
+    # Try multiple locations: run_dir/relations/ (new) and level_dir/relations/ (legacy)
     for level in sorted(levels):
         level_dir = run_dir / f'level_{level}'
-        tree_path = level_dir / 'relations' / 'tree.json'
 
-        if not tree_path.exists():
-            LOGGER.warning("Missing tree.json for level %d at %s", level, tree_path)
+        # Priority 1: Per-level tree in run_dir/relations/ (new layout)
+        tree_path_new = run_dir / 'relations' / f'tree_L{level}.json'
+
+        # Priority 2: Per-level tree in level_dir/relations/ (legacy layout)
+        tree_path_legacy = level_dir / 'relations' / 'tree.json'
+
+        tree_path = None
+        if tree_path_new.exists():
+            tree_path = tree_path_new
+            LOGGER.debug("Found tree for level %d at %s", level, tree_path)
+        elif tree_path_legacy.exists():
+            tree_path = tree_path_legacy
+            LOGGER.debug("Found legacy tree for level %d at %s", level, tree_path)
+        else:
+            LOGGER.warning(
+                "Missing tree.json for level %d (tried: %s, %s)",
+                level, tree_path_new, tree_path_legacy
+            )
             continue
 
         with tree_path.open('r', encoding='utf-8') as f:
@@ -379,28 +395,48 @@ def build_cross_level_relations(
             collect_descendants(obj_id, level)
             node['descendant_count'] = len(descendants)
 
+    # Compute statistics for v3.0 format
+    total_objects = len(paths)
+    roots = sum(1 for level_objs in hierarchy.values()
+                for obj in level_objs.values()
+                if obj.get('parent') is None)
+    families = sum(1 for level_objs in hierarchy.values()
+                   for obj in level_objs.values()
+                   if obj.get('children'))
+    max_depth = max((len(path) for path in paths.values()), default=0)
+
     relations_path = run_dir / 'relations.json'
     payload = {
+        'schema_version': '3.0',  # ← Add explicit version
         'meta': {
-            'scene': run_dir.parent.name,
+            'scene_id': run_dir.parent.name,
+            'experiment': run_dir.parent.name,  # Same as scene for single scenes
             'run_name': run_dir.name,
             'levels': sorted(levels),
             'generated_at': datetime.now(timezone.utc).isoformat(),
+            'generator': 'my3dis.relation_index.build_cross_level_relations',
         },
         'hierarchy': {
             str(lv): {str(oid): node for oid, node in nodes.items()}
             for lv, nodes in sorted(hierarchy.items())
         },
         'paths': {str(oid): path for oid, path in sorted(paths.items())},
+        'statistics': {  # ← Add statistics section
+            'total_objects': total_objects,
+            'roots': roots,
+            'families': families,
+            'max_depth': max_depth
+        }
     }
 
     with relations_path.open('w', encoding='utf-8') as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
 
     LOGGER.info(
-        "Wrote cross-level relations: %d levels, %d objects → %s",
+        "Wrote cross-level relations (v3.0): %d levels, %d objects, %d families → %s",
         len(levels),
         len(paths),
+        families,
         relations_path,
     )
     return relations_path

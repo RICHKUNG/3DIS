@@ -68,28 +68,79 @@ def load_object_masks_from_tracking(
     """
     Load all object masks from tracking outputs.
 
-    Supports two layouts:
-    - New: level_X/tracking/video_segments*.npz
-    - Old (v2): level_X/video_segments*.npz
+    Supports multiple file naming conventions and manifest references:
+    - New: level_X/video_segments_L{X}.npz
+    - Old: level_X/video_segments_scale{ratio}x.npz
+    - Legacy: level_X/video_segments*.npz
+    - Also checks manifest's linked_video field
 
     Returns:
         {object_id: {frame_idx: mask_array}}
     """
-    # Try new layout first
+    import zipfile
+
+    # Extract level number from directory name
+    level = None
+    if 'level_' in level_dir.name:
+        try:
+            level = int(level_dir.name.split('_')[1])
+        except (ValueError, IndexError):
+            pass
+
+    # Build search patterns in priority order
+    patterns = []
+    if level is not None:
+        patterns.append(f'video_segments_L{level:02d}.npz')  # Level-specific
+    patterns.append(f'video_segments_scale{mask_scale_ratio}x.npz')  # Scale-specific
+    patterns.append('video_segments*.npz')  # Glob fallback
+
+    # Check object_segments manifest for linked_video reference
+    if level is not None:
+        object_seg_candidates = list(level_dir.glob(f'object_segments_L{level:02d}.npz'))
+        if not object_seg_candidates:
+            object_seg_candidates = list(level_dir.glob('object_segments*.npz'))
+
+        if object_seg_candidates:
+            try:
+                with zipfile.ZipFile(object_seg_candidates[0], 'r') as zf:
+                    if 'manifest.json' in zf.namelist():
+                        manifest_data = zf.read('manifest.json')
+                        manifest = json.loads(manifest_data.decode('utf-8'))
+                        linked_video = manifest.get('meta', {}).get('linked_video')
+                        if linked_video:
+                            # Insert manifest reference at highest priority
+                            patterns.insert(0, linked_video)
+                            LOGGER.debug("Found linked_video in manifest: %s", linked_video)
+            except Exception as e:
+                LOGGER.debug("Could not read object_segments manifest: %s", e)
+
+    # Search in both tracking/ subdirectory and level directory
     tracking_dir = level_dir / 'tracking'
-    search_dirs = [tracking_dir, level_dir]
+    search_dirs = [level_dir, tracking_dir]  # Check level_dir first (new layout)
 
     video_seg_path = None
-    for search_dir in search_dirs:
-        if not search_dir.exists():
-            continue
-        candidates = list(search_dir.glob('video_segments*.npz'))
-        if candidates:
-            video_seg_path = candidates[0]
+    for pattern in patterns:
+        for search_dir in search_dirs:
+            if not search_dir.exists():
+                continue
+
+            # Handle both literal filenames and glob patterns
+            if '*' in pattern:
+                candidates = list(search_dir.glob(pattern))
+            else:
+                literal_path = search_dir / pattern
+                candidates = [literal_path] if literal_path.exists() else []
+
+            if candidates:
+                video_seg_path = candidates[0]
+                LOGGER.debug("Matched pattern '%s' → %s", pattern, video_seg_path)
+                break
+
+        if video_seg_path:
             break
 
     if video_seg_path is None:
-        LOGGER.warning("No video_segments found in %s or %s/tracking", level_dir, level_dir)
+        LOGGER.warning("No video_segments found in %s (tried patterns: %s)", level_dir, patterns)
         return {}
 
     LOGGER.info("Loading masks from %s", video_seg_path)

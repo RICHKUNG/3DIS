@@ -1,0 +1,72 @@
+# Production-like test configuration (matches base.yaml workflow behavior)
+# Only difference: limited scene range for faster testing
+
+experiment:
+  name: test_1026_3_th06
+  dataset_root: /media/public_dataset2/multiscan
+  scenes: null
+  scene_start: scene_00005_00  # Test with small scene range
+  scene_end: scene_00005_01    # 4 scenes for testing
+  parallel_scenes: 1
+  force_parallel: true  # Match base.yaml: bypass OOM monitoring
+  levels:
+    - 2
+    - 4
+    - 6
+  tag: tag
+  tag_in_path: false
+  aggregate_output: false
+  output_layout: scene_level
+  output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
+  frames:
+    step: 50
+
+stages:
+  gpu: 1  # Match base.yaml GPU selection
+  ssam:
+    enabled: true
+    ssam_freq: 2
+    min_area: 500
+    stability_threshold: 1.0
+    persist_raw: true
+    skip_filtering: true
+    add_gaps: true
+    fill_area: 5000  # Match base.yaml: 5k instead of 10k
+    append_timestamp: false
+    downscale_masks: true
+    downscale_ratio: 0.3  # Match base.yaml: full resolution
+    max_masks_per_level: -1
+    sam_ckpt: /media/Pluto/Yenhongxuan/Semantic-SAM/ckpts/swinl_only_sam_many2many.pth
+  filter:
+    enabled: true
+    min_area: 500
+    stability_threshold: 1.0
+  tracker:
+    enabled: true
+    prompt_mode: all_mask
+    max_propagate: 30
+    iou_threshold: 0.6
+    downscale_masks: true
+    downscale_ratio: 0.3  # Match base.yaml: full resolution
+    render_viz: true
+    sam2_cfg: /media/Pluto/Yenhongxuan/Grounded-SAM-2/sam2/configs/sam2.1/sam2.1_hiera_l.yaml
+    sam2_ckpt: /media/Pluto/Yenhongxuan/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt
+    comparison_sampling:
+      max_frames: 300
+    # SAM2-based tree building (matches base.yaml parameters)
+    build_sam2_tree: true
+    sam2_tree:
+      containment_threshold: 0.6     # Match base.yaml: stricter threshold
+      temporal_overlap_threshold: 0.3  # Match base.yaml: require temporal overlap
+    # SAM2 tree visualization
+    visualize_sam2_tree: true          # Generate family tree visualizations
+    tree_viz:
+      min_children: 1                  # Minimum children to visualize a family
+      max_families: null               # Maximum families to visualize (null = all)
+  report:
+    enabled: true
+    name: report.md
+    max_width: 640
+    record_timings: true
+    timing_output: stage_timings.json
+    generate_check_report: true

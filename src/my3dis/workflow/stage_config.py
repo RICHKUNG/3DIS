@@ -273,6 +273,16 @@ class TrackingStageConfig:
     long_tail_box_prompt: bool = False
     all_box_prompt: bool = False
 
+    # SAM2 tree building (configured via stages.tracker.build_sam2_tree and stages.tracker.sam2_tree in YAML)
+    build_sam2_tree: bool = False
+    sam2_tree_containment_threshold: float = 0.95
+    sam2_tree_temporal_overlap_threshold: float = 0.3
+
+    # SAM2 tree visualization (configured via stages.tracker.visualize_sam2_tree and stages.tracker.tree_viz in YAML)
+    visualize_sam2_tree: bool = False
+    tree_viz_min_children: int = 1
+    tree_viz_max_families: Optional[int] = None
+
     # Logging
     log_level: Optional[int] = None
 
@@ -417,6 +427,25 @@ class TrackingStageConfig:
                     raise WorkflowConfigError('tracker.comparison_sampling.max_frames must be >= 0')
                 comparison_max_samples = max_frames_val if max_frames_val > 0 else None
 
+        # SAM2 tree building configuration
+        build_sam2_tree = bool(stage_cfg.get('build_sam2_tree', False))
+        sam2_tree_config = stage_cfg.get('sam2_tree', {})
+        sam2_tree_containment_threshold = float(sam2_tree_config.get('containment_threshold', 0.95))
+        sam2_tree_temporal_overlap_threshold = float(sam2_tree_config.get('temporal_overlap_threshold', 0.3))
+
+        # Validate thresholds
+        if not (0.0 <= sam2_tree_containment_threshold <= 1.0):
+            raise WorkflowConfigError('tracker.sam2_tree.containment_threshold must be in [0, 1]')
+        if not (0.0 <= sam2_tree_temporal_overlap_threshold <= 1.0):
+            raise WorkflowConfigError('tracker.sam2_tree.temporal_overlap_threshold must be in [0, 1]')
+
+        # SAM2 tree visualization configuration
+        visualize_sam2_tree = bool(stage_cfg.get('visualize_sam2_tree', False))
+        tree_viz_config = stage_cfg.get('tree_viz', {})
+        tree_viz_min_children = int(tree_viz_config.get('min_children', 1))
+        tree_viz_max_families_raw = tree_viz_config.get('max_families')
+        tree_viz_max_families = int(tree_viz_max_families_raw) if tree_viz_max_families_raw is not None else None
+
         return cls(
             data_path=Path(data_path).expanduser(),
             candidates_root=Path(candidates_root).expanduser(),
@@ -432,6 +461,12 @@ class TrackingStageConfig:
             comparison_max_samples=comparison_max_samples,
             long_tail_box_prompt=long_tail_box_prompt,
             all_box_prompt=all_box_prompt,
+            build_sam2_tree=build_sam2_tree,
+            sam2_tree_containment_threshold=sam2_tree_containment_threshold,
+            sam2_tree_temporal_overlap_threshold=sam2_tree_temporal_overlap_threshold,
+            visualize_sam2_tree=visualize_sam2_tree,
+            tree_viz_min_children=tree_viz_min_children,
+            tree_viz_max_families=tree_viz_max_families,
         )
 
     def to_legacy_kwargs(self) -> Dict[str, Any]:
@@ -454,6 +489,12 @@ class TrackingStageConfig:
             'comparison_sample_stride': self.comparison_sample_stride,
             'comparison_max_samples': self.comparison_max_samples,
             'render_viz': self.render_viz,
+            'build_sam2_tree': self.build_sam2_tree,
+            'sam2_tree_containment_threshold': self.sam2_tree_containment_threshold,
+            'sam2_tree_temporal_overlap_threshold': self.sam2_tree_temporal_overlap_threshold,
+            'visualize_sam2_tree': self.visualize_sam2_tree,
+            'tree_viz_min_children': self.tree_viz_min_children,
+            'tree_viz_max_families': self.tree_viz_max_families,
         }
 
 

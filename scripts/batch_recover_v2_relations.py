@@ -66,10 +66,22 @@ def find_v2_experiment_runs(experiments_root: Path) -> List[Path]:
 
 def check_needs_recovery(run_dir: Path) -> bool:
     """Check if run directory needs relation recovery."""
-    # If relations.json already exists, skip
+    # If relations.json already exists and has data, skip
     relations_json = run_dir / 'relations.json'
     if relations_json.exists():
-        return False
+        try:
+            import json
+            with relations_json.open('r') as f:
+                data = json.load(f)
+
+            # Check both old and new formats
+            if 'objects' in data and len(data['objects']) > 0:
+                return False  # Old format with data
+            elif 'hierarchy' in data and any(len(v) > 0 for v in data['hierarchy'].values()):
+                return False  # New format with data
+            # If relations.json exists but is empty, needs recovery
+        except Exception:
+            pass  # If can't read, assume needs recovery
 
     # Check if any level has tree.json
     for level_dir in run_dir.glob('level_*'):

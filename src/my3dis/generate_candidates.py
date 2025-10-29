@@ -639,7 +639,7 @@ def run_generation(
         max_masks_per_level=max_masks_per_level,
         save_root=run_root,
         persist_outputs=False,
-        save_relations=True,
+        save_relations=False,  # Disabled: use SAM2 tree instead of SSAM tree
     )
 
     level_infos: List[Dict[str, Any]] = []

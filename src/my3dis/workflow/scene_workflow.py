@@ -7,7 +7,7 @@ import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from my3dis.common_utils import RAW_DIR_NAME, list_to_csv
 from my3dis.filter_candidates import run_filtering
@@ -150,11 +150,71 @@ class SceneWorkflow:
             reuse_run_dir = self.experiment_cfg.get('run_dir')
             if not reuse_run_dir:
                 raise WorkflowConfigError('SSAM stage disabled but experiment.run_dir not provided')
-            run_dir = Path(str(reuse_run_dir)).expanduser()
-            if not run_dir.exists():
-                raise WorkflowConfigError(f'Provided run_dir {run_dir} does not exist')
-            self.run_dir = run_dir
-            self.manifest = load_manifest(run_dir)
+            run_dir_candidate = Path(str(reuse_run_dir)).expanduser()
+            if not run_dir_candidate.exists():
+                raise WorkflowConfigError(f'Provided run_dir {run_dir_candidate} does not exist')
+
+            def _add_candidate(path: Optional[Path], *, seen: Set[str], targets: List[Path]) -> None:
+                if path is None:
+                    return
+                try:
+                    path_str = str(path)
+                except Exception:
+                    return
+                if path_str in seen:
+                    return
+                seen.add(path_str)
+                targets.append(path)
+
+            candidates: List[Path] = []
+            seen_paths: Set[str] = set()
+            _add_candidate(run_dir_candidate, seen=seen_paths, targets=candidates)
+
+            if not (run_dir_candidate.is_dir() and (run_dir_candidate / 'manifest.json').exists()):
+                experiment_meta_raw = self.summary.get('experiment')
+                experiment_meta = experiment_meta_raw if isinstance(experiment_meta_raw, dict) else {}
+                scene_raw = experiment_meta.get('scene')
+                scene_name = scene_raw.strip() if isinstance(scene_raw, str) and scene_raw.strip() else None
+                tag_raw = self.experiment_cfg.get('tag')
+                tag = tag_raw.strip() if isinstance(tag_raw, str) and tag_raw.strip() else None
+                output_root_path = Path(self.output_root)
+
+                if scene_name:
+                    _add_candidate(run_dir_candidate / scene_name, seen=seen_paths, targets=candidates)
+                    if tag:
+                        _add_candidate(run_dir_candidate / scene_name / tag, seen=seen_paths, targets=candidates)
+
+                _add_candidate(output_root_path, seen=seen_paths, targets=candidates)
+
+                if scene_name:
+                    _add_candidate(output_root_path / scene_name, seen=seen_paths, targets=candidates)
+
+                if tag:
+                    _add_candidate(output_root_path / tag, seen=seen_paths, targets=candidates)
+                    if scene_name:
+                        _add_candidate(output_root_path / scene_name / tag, seen=seen_paths, targets=candidates)
+
+            resolved_run_dir: Optional[Path] = None
+            for candidate in candidates:
+                if candidate.is_dir() and (candidate / 'manifest.json').exists():
+                    resolved_run_dir = candidate
+                    break
+
+            if resolved_run_dir is None:
+                raise WorkflowConfigError(
+                    'Unable to reuse SSAM outputs: manifest.json not found under '
+                    f'{run_dir_candidate}'
+                )
+
+            manifest = load_manifest(resolved_run_dir)
+            if manifest is None:
+                raise WorkflowConfigError(
+                    'Unable to reuse SSAM outputs: failed to load manifest.json under '
+                    f'{resolved_run_dir}'
+                )
+
+            self.run_dir = resolved_run_dir
+            self.manifest = manifest
             return
 
         from my3dis.generate_candidates import run_generation as run_candidate_generation
@@ -364,18 +424,8 @@ class SceneWorkflow:
         run_dir = self._ensure_run_dir()
         manifest = self._ensure_manifest()
 
-        # Build cross-level relations if all stages completed successfully
-        levels = self.experiment_cfg.get('levels', [])
-        if levels and manifest:
-            try:
-                from my3dis.relation_index import build_cross_level_relations
-                relations_path = build_cross_level_relations(run_dir, levels)
-                artifacts_entry = self.summary.setdefault('artifacts', {})
-                artifacts_entry['relations'] = str(relations_path.relative_to(run_dir))
-            except Exception as exc:
-                import logging
-                LOGGER = logging.getLogger(__name__)
-                LOGGER.warning("Failed to build cross-level relations: %s", exc, exc_info=True)
+        # NOTE: SSAM tree generation removed - use SAM2 tree instead (built during tracking stage)
+        # The SAM2 tree provides more accurate hierarchies based on actual tracked objects
 
         self.summary['generated_at'] = now_local_iso()
         self.summary['run_dir'] = str(run_dir)
