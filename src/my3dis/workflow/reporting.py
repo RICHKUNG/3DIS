@@ -49,17 +49,85 @@ def format_seconds(seconds: Optional[float]) -> str:
 
 
 def load_scene_stats(scene_dir: Path) -> Optional[SceneStats]:
-    """Load output statistics from relations.json and level indices."""
+    """Load output statistics from family_tree.json (new format) or relations.json (legacy)."""
+    # Try new format first (family_tree.json)
+    family_tree_path = scene_dir / "relations" / "family_tree.json"
+    if family_tree_path.is_file():
+        try:
+            with family_tree_path.open("r", encoding="utf-8") as fh:
+                family_tree = json.load(fh)
+            return _load_stats_from_family_tree(family_tree, scene_dir)
+        except Exception:  # pylint: disable=broad-except
+            pass  # Fall back to legacy format
+
+    # Fall back to legacy format (relations.json)
     relations_path = scene_dir / "relations.json"
-    if not relations_path.is_file():
-        return None
+    if relations_path.is_file():
+        try:
+            with relations_path.open("r", encoding="utf-8") as fh:
+                relations = json.load(fh)
+            return _load_stats_from_legacy_relations(relations, scene_dir)
+        except Exception:  # pylint: disable=broad-except
+            pass
 
-    try:
-        with relations_path.open("r", encoding="utf-8") as fh:
-            relations = json.load(fh)
-    except Exception:  # pylint: disable=broad-except
-        return None
+    return None
 
+
+def _load_stats_from_family_tree(family_tree: Dict[str, Any], scene_dir: Path) -> SceneStats:
+    """Extract statistics from new family_tree.json format."""
+    stats = SceneStats()
+
+    # Extract from statistics section
+    tree_stats = family_tree.get("statistics", {})
+    stats.objects_per_level = tree_stats.get("objects_per_level", {})
+    stats.total_objects = tree_stats.get("total_objects", 0)
+    stats.total_families = tree_stats.get("total_families", 0)
+    stats.orphan_objects = tree_stats.get("orphan_count", 0)
+
+    # Calculate max depth by examining family hierarchies
+    objects = family_tree.get("objects", {})
+    depths = {}
+    for obj_id_str, obj_info in objects.items():
+        obj_id = int(obj_id_str)
+        depth = _calculate_object_depth(obj_id, objects)
+        depths[obj_id] = depth
+    stats.max_depth = max(depths.values(), default=0)
+
+    # Load frame counts from level indices (same as legacy)
+    for level_key in stats.objects_per_level.keys():
+        # Extract level number from "L2", "L4", etc.
+        level_str = level_key[1:]  # Remove 'L' prefix
+        index_path = scene_dir / f"level_{level_str}" / "index.json"
+        if index_path.is_file():
+            try:
+                with index_path.open("r", encoding="utf-8") as fh:
+                    index_data = json.load(fh)
+                    # Count unique frames from all objects
+                    frames_set = set()
+                    for obj_data in index_data.get("objects", {}).values():
+                        frames_set.update(obj_data.get("frames", []))
+                    stats.frames_per_level[level_key] = len(frames_set)
+            except Exception:  # pylint: disable=broad-except
+                pass
+
+    return stats
+
+
+def _calculate_object_depth(obj_id: int, objects: Dict[str, Any]) -> int:
+    """Calculate depth of object in hierarchy (root = 1, child = 2, etc.)."""
+    obj_info = objects.get(str(obj_id))
+    if obj_info is None:
+        return 0
+
+    parent_id = obj_info.get("parent_id")
+    if parent_id is None:
+        return 1  # Root object
+
+    return 1 + _calculate_object_depth(parent_id, objects)
+
+
+def _load_stats_from_legacy_relations(relations: Dict[str, Any], scene_dir: Path) -> SceneStats:
+    """Extract statistics from legacy relations.json format."""
     stats = SceneStats()
     hierarchy = relations.get("hierarchy", {})
 

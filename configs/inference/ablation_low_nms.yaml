@@ -1,0 +1,50 @@
+# Ablation: Lower NMS threshold for preserving more multi-instances
+
+strategy: independent
+
+retrieval:
+  temperature: 0.2
+  min_similarity: 0.2
+  top_k_per_level: 50
+  object_levels: [L2, L4]
+  part_levels: [L4, L6]
+
+pairing:
+  containment_threshold: 0.5
+  scale_range: [0.01, 0.9]
+  use_geometric_score: true
+  use_tree_pruning: true
+
+nms:
+  iou_threshold: 0.25           # Lower threshold (was 0.35)
+  use_soft_nms: true            # Enable soft NMS
+  soft_nms_sigma: 0.5
+  centroid_distance_ratio: 0.3  # Higher ratio (was 0.2)
+  keep_top_k: 200
+
+scoring:
+  method: weighted_sum
+  weights:
+    object: 0.4
+    part: 0.4
+    geometric: 0.2
+  temperature: 1.0
+  hierarchy_bonus: 0.05
+
+formatter:
+  use_part_mask: true
+  min_mask_size: 10
+
+independent:
+  object_levels: [L2, L4]
+  part_levels: [L4, L6]
+  top_k_per_level: 50
+  retrieval_threshold: 0.3
+
+hierarchical:
+  coarse_top_k: 100
+  object_top_k: 50
+  part_top_k: 30
+  coarse_threshold: 0.2
+  refinement_threshold: 0.3
+  refinement_margin: 0.1

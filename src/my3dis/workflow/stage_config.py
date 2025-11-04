@@ -37,6 +37,7 @@ class SSAMStageConfig:
     min_area: int = 300
     fill_area: int = 300
     stability_threshold: float = 0.9
+    cascade_filtering: bool = True  # Enable parent-aware cascade filtering
 
     # Gap-fill
     add_gaps: bool = False
@@ -157,7 +158,19 @@ class SSAMStageConfig:
                 ) from exc
         fill_area = max(0, fill_area)
 
-        stability = float(stage_cfg.get('stability_threshold', 0.9))
+        # Handle stability_threshold (can be None to disable stability filtering)
+        stability_cfg = stage_cfg.get('stability_threshold', 0.9)
+        if stability_cfg is None:
+            stability = None
+        else:
+            try:
+                stability = float(stability_cfg)
+            except (TypeError, ValueError) as exc:
+                raise WorkflowConfigError(
+                    f'invalid stages.ssam.stability_threshold: {stability_cfg!r}'
+                ) from exc
+
+        cascade_filtering = bool(stage_cfg.get('cascade_filtering', True))
 
         # Validate downscaling
         downscale_masks = bool(stage_cfg.get('downscale_masks', False))
@@ -199,6 +212,7 @@ class SSAMStageConfig:
             min_area=min_area,
             fill_area=fill_area,
             stability_threshold=stability,
+            cascade_filtering=cascade_filtering,
             add_gaps=bool(stage_cfg.get('add_gaps', False)),
             downscale_masks=downscale_masks,
             mask_scale_ratio=ssam_downscale_ratio,
@@ -228,6 +242,7 @@ class SSAMStageConfig:
             'min_area': self.min_area,
             'fill_area': self.fill_area,
             'stability_threshold': self.stability_threshold,
+            'cascade_filtering': self.cascade_filtering,
             'add_gaps': self.add_gaps,
             'no_timestamp': self.no_timestamp,
             'log_level': self.log_level,

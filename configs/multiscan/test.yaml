@@ -2,12 +2,12 @@
 # Only difference: limited scene range for faster testing
 
 experiment:
-  name: test_1026_3_th06
+  name: test_1104_ssam4_filter100_fill50_3
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   scene_start: scene_00005_00  # Test with small scene range
-  scene_end: scene_00005_01    # 4 scenes for testing
-  parallel_scenes: 1
+  scene_end: scene_00006_01    # 4 scenes for testing
+  parallel_scenes: 2
   force_parallel: true  # Match base.yaml: bypass OOM monitoring
   levels:
     - 2
@@ -22,25 +22,26 @@ experiment:
     step: 50
 
 stages:
-  gpu: 1  # Match base.yaml GPU selection
+  gpu: 0
   ssam:
     enabled: true
-    ssam_freq: 2
-    min_area: 500
-    stability_threshold: 1.0
+    ssam_freq: 4
+    min_area: 100
+    stability_threshold: null  # Don't use stability filtering at SSAM stage (Phase 2.2)
     persist_raw: true
     skip_filtering: true
     add_gaps: true
-    fill_area: 5000  # Match base.yaml: 5k instead of 10k
+    fill_area: 50  # Match base.yaml: 5k instead of 10k
     append_timestamp: false
     downscale_masks: true
     downscale_ratio: 0.3  # Match base.yaml: full resolution
-    max_masks_per_level: -1
+    max_masks_per_level: 5000  # Limit for testing
+    cascade_filtering: true  # Enable cascade filtering (Phase 2.2)
     sam_ckpt: /media/Pluto/Yenhongxuan/Semantic-SAM/ckpts/swinl_only_sam_many2many.pth
   filter:
     enabled: true
-    min_area: 500
-    stability_threshold: 1.0
+    min_area: 100
+    stability_threshold: 1.0  # Post-SSAM filtering (not currently used)
   tracker:
     enabled: true
     prompt_mode: all_mask
@@ -53,16 +54,17 @@ stages:
     sam2_ckpt: /media/Pluto/Yenhongxuan/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt
     comparison_sampling:
       max_frames: 300
-    # SAM2-based tree building (matches base.yaml parameters)
-    build_sam2_tree: true
-    sam2_tree:
-      containment_threshold: 0.6     # Match base.yaml: stricter threshold
-      temporal_overlap_threshold: 0.3  # Match base.yaml: require temporal overlap
-    # SAM2 tree visualization
-    visualize_sam2_tree: true          # Generate family tree visualizations
-    tree_viz:
-      min_children: 1                  # Minimum children to visualize a family
-      max_families: null               # Maximum families to visualize (null = all)
+    # ========================================================================
+    # Family Tree Building & Visualization Configuration
+    # ========================================================================
+    visualize_families: true         # Enable for test runs to verify output
+    family_viz:
+      num_families: 200                # Fewer families for faster testing
+      max_frames_per_family: 2       # Fewer frames per family
+      output_subdir: visualizations
+      random_seed: 42
+      min_levels: 2
+    # ========================================================================
   report:
     enabled: true
     name: report.md

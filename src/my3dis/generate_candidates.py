@@ -476,6 +476,7 @@ def run_generation(
     min_area: int = 300,
     fill_area: Optional[int] = None,
     stability_threshold: float = 0.9,
+    cascade_filtering: bool = True,
     add_gaps: bool = False,
     no_timestamp: bool = False,
     log_level: Optional[int] = None,
@@ -637,6 +638,8 @@ def run_generation(
         enable_gap_fill=bool(add_gaps),
         mask_scale_ratio=mask_scale_ratio,
         max_masks_per_level=max_masks_per_level,
+        cascade_filtering=cascade_filtering,
+        stability_threshold=stability_threshold if cascade_filtering else None,
         save_root=run_root,
         persist_outputs=False,
         save_relations=False,  # Disabled: use SAM2 tree instead of SSAM tree

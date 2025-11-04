@@ -86,6 +86,8 @@ class SceneWorkflow:
             self._run_ssam_stage()
             self._run_filter_stage()
             self._run_tracker_stage()
+            self._run_family_tree_stage()
+            self._run_family_viz_stage()
             self._run_report_stage()
             self._finalize()
         return self.summary
@@ -380,6 +382,186 @@ class SceneWorkflow:
         ]
         if tracker_warnings:
             stage_summary.setdefault('warnings', []).extend(tracker_warnings)
+
+    def _run_family_tree_stage(self) -> None:
+        """Generate unified family tree from per-level provenance trees."""
+        stage_cfg = self._stage_cfg('tracker')
+        if not stage_cfg.get('enabled', True):
+            return
+
+        run_dir = self._ensure_run_dir()
+
+        # Check if provenance trees exist
+        relations_dir = run_dir / 'relations'
+        if not relations_dir.exists():
+            return
+
+        # Find all provenance tree files
+        provenance_trees = list(relations_dir.glob('provenance_tree_L*.json'))
+        if not provenance_trees:
+            return
+
+        print('Stage Family Tree: 生成統一家族樹')
+
+        try:
+            from my3dis.family_tree_builder import build_family_tree, save_family_tree
+
+            # Get levels from experiment config
+            levels = self.experiment_cfg.get('levels', [2, 4, 6])
+            mask_scale_ratio = stage_cfg.get('downscale_ratio', 0.3)
+
+            with StageRecorder(self.summary, 'family_tree', self._stage_gpu_env):
+                family_tree = build_family_tree(
+                    str(run_dir),
+                    levels=levels,
+                    mask_scale_ratio=mask_scale_ratio,
+                )
+
+                output_path = relations_dir / 'family_tree.json'
+                save_family_tree(family_tree, str(output_path))
+
+                stage_summary = self._stage_summary('family_tree')
+                stage_summary['artifacts'] = {
+                    'family_tree': str(output_path.relative_to(run_dir))
+                }
+                stage_summary['statistics'] = family_tree.get('statistics', {})
+
+                print(f'  ✓ Family tree saved: {output_path.relative_to(run_dir)}')
+                stats = family_tree.get('statistics', {})
+                print(f'    - Total objects: {stats.get("total_objects", 0)}')
+                print(f'    - Total families: {stats.get("total_families", 0)}')
+                print(f'    - Orphans: {stats.get("orphan_count", 0)}')
+
+        except Exception as e:
+            print(f'  Warning: Failed to build family tree: {e}')
+            stage_summary = self._stage_summary('family_tree')
+            stage_summary.setdefault('warnings', []).append({
+                'message': f'Failed to build family tree: {e}',
+                'stage': 'family_tree',
+            })
+
+    def _run_family_viz_stage(self) -> None:
+        """Generate family visualizations (side-by-side L2/L4/L6 rendering)."""
+        stage_cfg = self._stage_cfg('tracker')
+        if not stage_cfg.get('enabled', True):
+            return
+
+        # Check if visualization is enabled
+        if not stage_cfg.get('visualize_families', False):
+            return
+
+        run_dir = self._ensure_run_dir()
+        family_tree_path = run_dir / 'relations' / 'family_tree.json'
+
+        if not family_tree_path.exists():
+            print('  Warning: family_tree.json not found, skipping visualization')
+            return
+
+        print('Stage Family Visualization: 生成家族比較圖')
+
+        try:
+            import random
+            import sys
+            from pathlib import Path as P
+
+            # Add scripts to path for importing visualization module
+            scripts_path = P(__file__).parent.parent.parent.parent / 'scripts'
+            if str(scripts_path) not in sys.path:
+                sys.path.insert(0, str(scripts_path))
+
+            from visualize_families import (
+                FamilyTreeQuery,
+                generate_color_map,
+                load_frame_image,
+                visualize_family,
+            )
+
+            # Get configuration
+            viz_cfg = stage_cfg.get('family_viz', {})
+            num_families = viz_cfg.get('num_families', 10)
+            max_frames = viz_cfg.get('max_frames_per_family', 3)
+            output_subdir = viz_cfg.get('output_subdir', 'visualizations')
+            random_seed = viz_cfg.get('random_seed', 42)
+            min_levels = viz_cfg.get('min_levels', 2)
+
+            output_dir = run_dir / output_subdir
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            with StageRecorder(self.summary, 'family_viz', self._stage_gpu_env):
+                # Load query interface
+                query = FamilyTreeQuery(str(family_tree_path))
+
+                # Filter families with multiple levels
+                families = query.tree.get('families', [])
+                valid_families = [
+                    family for family in families
+                    if len(family.get('levels', {})) >= min_levels
+                ]
+
+                if not valid_families:
+                    print(f'  No families with >= {min_levels} levels found')
+                    stage_summary = self._stage_summary('family_viz')
+                    stage_summary['status'] = 'skipped'
+                    stage_summary['reason'] = f'No families with >= {min_levels} levels'
+                    return
+
+                print(f'  Found {len(valid_families)} families with >= {min_levels} levels')
+
+                # Sample families
+                random.seed(random_seed)
+                num_to_sample = min(num_families, len(valid_families)) if num_families else len(valid_families)
+                selected_families = random.sample(valid_families, num_to_sample)
+
+                print(f'  Visualizing {num_to_sample} families...')
+
+                # Visualize each family
+                total_images = 0
+                for i, family in enumerate(selected_families, 1):
+                    family_members = family['members']
+                    output_paths = visualize_family(
+                        query,
+                        family_members,
+                        self.data_path,
+                        str(output_dir),
+                        i,
+                        max_frames,
+                    )
+                    total_images += len(output_paths)
+
+                stage_summary = self._stage_summary('family_viz')
+                stage_summary['artifacts'] = {
+                    'visualization_dir': str(output_dir.relative_to(run_dir))
+                }
+                stage_summary['statistics'] = {
+                    'families_visualized': num_to_sample,
+                    'total_images': total_images,
+                    'families_available': len(valid_families),
+                }
+                stage_summary['params'] = {
+                    'num_families': num_families,
+                    'max_frames_per_family': max_frames,
+                    'min_levels': min_levels,
+                    'random_seed': random_seed,
+                }
+
+                print(f'  ✓ Generated {total_images} visualization images')
+                print(f'    Output: {output_dir.relative_to(run_dir)}')
+
+        except ImportError as e:
+            print(f'  Warning: Failed to import visualization module: {e}')
+            print(f'    This may require additional dependencies (cv2, numpy)')
+            stage_summary = self._stage_summary('family_viz')
+            stage_summary.setdefault('warnings', []).append({
+                'message': f'Import error: {e}',
+                'stage': 'family_viz',
+            })
+        except Exception as e:
+            print(f'  Warning: Failed to generate visualizations: {e}')
+            stage_summary = self._stage_summary('family_viz')
+            stage_summary.setdefault('warnings', []).append({
+                'message': f'Visualization error: {e}',
+                'stage': 'family_viz',
+            })
 
     def _run_report_stage(self) -> None:
         stage_cfg = self._stage_cfg('report')

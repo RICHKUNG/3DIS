@@ -141,16 +141,72 @@ class DedupStore:
         frame_idx: int,
         candidates: List["PromptCandidate"],
         threshold: float,
-    ) -> List["PromptCandidate"]:
+    ) -> Tuple[List["PromptCandidate"], List[Tuple["PromptCandidate", int]]]:
+        """
+        Filter candidates based on IoU deduplication.
+
+        Returns:
+            accepted: List of candidates that passed dedup
+            rejected: List of (candidate, matched_mask_index) tuples for rejected candidates
+        """
         accepted: List["PromptCandidate"] = []
+        rejected: List[Tuple["PromptCandidate", int]] = []
+
         for cand in candidates:
             seg = cand.seg_for_iou
-            if seg is not None and self.has_overlap(frame_idx, seg, threshold):
-                continue
+            if seg is not None:
+                # Find overlapping mask index
+                match_idx = self.find_overlapping_mask_index(frame_idx, seg, threshold)
+                if match_idx is not None:
+                    rejected.append((cand, match_idx))
+                    continue
+
             accepted.append(cand)
             if seg is not None:
                 self.add_mask(frame_idx, seg)
-        return accepted
+
+        return accepted, rejected
+
+    def find_overlapping_mask_index(
+        self, frame_idx: int, mask: np.ndarray, threshold: float
+    ) -> Optional[int]:
+        """
+        Find the index of existing mask that overlaps with given mask.
+
+        Args:
+            frame_idx: Frame index to check
+            mask: Mask to compare against existing masks
+            threshold: IoU threshold for overlap detection
+
+        Returns:
+            int: Index of overlapping mask in the frame's mask list
+            None: No overlapping mask found
+        """
+        entry = self._frames.get(frame_idx)
+        if entry is None or not entry.masks:
+            return None
+
+        mask_bool = np.asarray(mask, dtype=np.bool_)
+        resized = self._resize(mask_bool, entry.target_shape)
+
+        existing_stack = np.stack(entry.masks, axis=0)
+        cand_broadcast = resized[np.newaxis, :, :]
+
+        inter = np.logical_and(existing_stack, cand_broadcast).sum(axis=(1, 2))
+        union = np.logical_or(existing_stack, cand_broadcast).sum(axis=(1, 2))
+
+        valid = union > 0
+        if not valid.any():
+            return None
+
+        ious = np.zeros(len(entry.masks))
+        ious[valid] = inter[valid].astype(float) / union[valid].astype(float)
+
+        max_idx = int(ious.argmax())
+        if ious[max_idx] > float(threshold):
+            return max_idx
+
+        return None
 
 
 class FrameResultStore:

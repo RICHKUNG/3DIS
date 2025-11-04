@@ -24,6 +24,7 @@ from typing import Dict, Iterable, List, Optional
 
 import numpy as np
 
+from my3dis.cascade_filter import CascadeFilter
 from my3dis.common_utils import (
     PACKED_MASK_KEY,
     PACKED_SHAPE_KEY,
@@ -39,18 +40,32 @@ class FilterStats:
     frames: int = 0
     kept: int = 0
     dropped: int = 0
+    area_rejected: int = 0
+    stability_rejected: int = 0
+    cascade_rejected: int = 0
 
-    def add_frame(self, kept_count: int, dropped_count: int) -> None:
+    def add_frame(self, kept_count: int, dropped_count: int,
+                  area_rej: int = 0, stab_rej: int = 0, casc_rej: int = 0) -> None:
         self.frames += 1
         self.kept += kept_count
         self.dropped += dropped_count
+        self.area_rejected += area_rej
+        self.stability_rejected += stab_rej
+        self.cascade_rejected += casc_rej
 
     def to_dict(self) -> Dict[str, int]:
-        return {
+        result = {
             'frames': self.frames,
             'kept': self.kept,
             'dropped': self.dropped,
         }
+        if self.area_rejected > 0 or self.stability_rejected > 0 or self.cascade_rejected > 0:
+            result['breakdown'] = {
+                'area_rejected': self.area_rejected,
+                'stability_rejected': self.stability_rejected,
+                'cascade_rejected': self.cascade_rejected,
+            }
+        return result
 
 
 def bbox_from_mask(mask: np.ndarray) -> Optional[List[int]]:
@@ -67,6 +82,7 @@ def filter_level(
     level_root: str,
     min_area: int,
     stability_threshold: float,
+    use_cascade: bool = False,
     verbose: bool = True,
 ) -> FilterStats:
     stats = FilterStats()
@@ -76,6 +92,23 @@ def filter_level(
         if verbose:
             print(f"No raw frames found in {level_root} — skipping")
         return stats
+
+    # Check if data supports cascade filtering
+    supports_cascade = False
+    cascade_warned = False
+    if use_cascade:
+        # Check first frame for unique_id presence
+        first_payload = archive.load_frame(raw_frames[0])
+        if first_payload and first_payload.get('meta'):
+            first_candidates = first_payload['meta'].get('candidates', [])
+            if first_candidates and any('unique_id' in c for c in first_candidates):
+                supports_cascade = True
+            else:
+                if verbose:
+                    print(f"  WARNING: Cascade filtering requested but data lacks unique_id/parent_unique_id")
+                    print(f"           Falling back to traditional filtering")
+                    print(f"           Re-run SSAM stage with cascade_filtering=true to enable")
+                cascade_warned = True
 
     filtered_dir = ensure_dir(os.path.join(level_root, 'filtered'))
     frames_meta: List[Dict[str, object]] = []
@@ -91,23 +124,19 @@ def filter_level(
         has_mask = payload.get('has_mask')
 
         candidates: List[Dict[str, object]] = meta.get('candidates', [])  # type: ignore[assignment]
-        kept_items: List[Dict[str, object]] = []
-        dropped_count = 0
-        local_id = 0
 
+        # Prepare candidates with area and stability
+        enriched_candidates = []
         for cand in candidates:
-            stability = float(cand.get('stability_score', 1.0))
-            area_meta = cand.get('area')
             raw_index = cand.get('raw_index')
             if raw_index is None:
-                dropped_count += 1
                 continue
             try:
                 ri = int(raw_index)
             except (TypeError, ValueError):
-                dropped_count += 1
                 continue
 
+            # Load mask
             mask_arr = None
             if mask_stack is not None and 0 <= ri < len(mask_stack):
                 if has_mask is None or bool(has_mask[ri]):
@@ -125,35 +154,109 @@ def filter_level(
                     mask_arr = unpack_binary_mask(mask_payload)
 
             if mask_arr is None:
-                dropped_count += 1
                 continue
 
+            # Calculate area
             area = int(mask_arr.sum())
-            if area == 0 and area_meta is not None:
-                area = int(area_meta)
+            if area == 0 and cand.get('area') is not None:
+                area = int(cand.get('area'))
 
-            if area < min_area or stability < stability_threshold:
-                dropped_count += 1
-                continue
+            # Enrich candidate with computed values
+            enriched = dict(cand)
+            enriched['computed_area'] = area
+            enriched['mask_array'] = mask_arr
+            enriched['stability'] = float(cand.get('stability_score', 1.0))
+            enriched_candidates.append(enriched)
 
-            bbox = bbox_from_mask(mask_arr)
-            if bbox is None:
-                dropped_count += 1
-                continue
+        # Apply filtering (cascade or traditional)
+        if supports_cascade and use_cascade:
+            # Prepare masks for cascade filter
+            cascade_masks = []
+            for ec in enriched_candidates:
+                cascade_masks.append({
+                    'unique_id': ec.get('unique_id'),
+                    'parent_unique_id': ec.get('parent_unique_id'),
+                    'area': ec['computed_area'],
+                    'stability': ec['stability'],
+                })
 
-            item = {
-                k: v
-                for k, v in cand.items()
-                if k not in {'segmentation', 'raw_index'}
-            }
-            item['id'] = local_id
-            item['area'] = area
-            item['bbox_xyxy'] = bbox
-            item['mask'] = encode_mask(mask_arr)
-            kept_items.append(item)
-            local_id += 1
+            # Apply cascade filter
+            cascade_filter = CascadeFilter(
+                min_area=float(min_area),
+                stability_threshold=float(stability_threshold),
+            )
+            _, rejection_reasons = cascade_filter.filter_masks(cascade_masks)
 
-        stats.add_frame(len(kept_items), dropped_count)
+            # Count rejection types
+            area_rej_count = sum(1 for r in rejection_reasons.values() if r.startswith('area_too_small'))
+            stab_rej_count = sum(1 for r in rejection_reasons.values() if r.startswith('low_stability'))
+            casc_rej_count = sum(1 for r in rejection_reasons.values() if r.startswith('parent_filtered'))
+
+            # Filter out rejected candidates
+            kept_items = []
+            local_id = 0
+            for ec in enriched_candidates:
+                unique_id = ec.get('unique_id')
+                if unique_id in rejection_reasons:
+                    continue  # Rejected by cascade filter
+
+                # Build output item
+                bbox = bbox_from_mask(ec['mask_array'])
+                if bbox is None:
+                    continue
+
+                item = {
+                    k: v
+                    for k, v in ec.items()
+                    if k not in {'segmentation', 'raw_index', 'mask_array', 'computed_area'}
+                }
+                item['id'] = local_id
+                item['area'] = ec['computed_area']
+                item['bbox_xyxy'] = bbox
+                item['mask'] = encode_mask(ec['mask_array'])
+                kept_items.append(item)
+                local_id += 1
+
+            dropped_count = len(enriched_candidates) - len(kept_items)
+            stats.add_frame(len(kept_items), dropped_count, area_rej_count, stab_rej_count, casc_rej_count)
+        else:
+            # Traditional filtering (no cascade)
+            kept_items = []
+            local_id = 0
+            area_rej_count = 0
+            stab_rej_count = 0
+
+            for ec in enriched_candidates:
+                area = ec['computed_area']
+                stability = ec['stability']
+
+                # Apply thresholds
+                if area < min_area:
+                    area_rej_count += 1
+                    continue
+                if stability < stability_threshold:
+                    stab_rej_count += 1
+                    continue
+
+                bbox = bbox_from_mask(ec['mask_array'])
+                if bbox is None:
+                    continue
+
+                item = {
+                    k: v
+                    for k, v in ec.items()
+                    if k not in {'segmentation', 'raw_index', 'mask_array', 'computed_area'}
+                }
+                item['id'] = local_id
+                item['area'] = area
+                item['bbox_xyxy'] = bbox
+                item['mask'] = encode_mask(ec['mask_array'])
+                kept_items.append(item)
+                local_id += 1
+
+            dropped_count = len(enriched_candidates) - len(kept_items)
+            stats.add_frame(len(kept_items), dropped_count, area_rej_count, stab_rej_count, 0)
+
         frames_meta.append(
             {
                 'frame_idx': int(meta.get('frame_idx', frame_idx)),
@@ -175,6 +278,7 @@ def run_filtering(
     levels: Optional[List[int]] = None,
     min_area: int,
     stability_threshold: float,
+    use_cascade: bool = False,
     update_manifest: bool,
     quiet: bool = False,
 ) -> Dict[int, Dict[str, int]]:
@@ -202,18 +306,21 @@ def run_filtering(
             print(f"Level {level} directory missing at {level_root}", file=sys.stderr)
             continue
         if not quiet:
-            print(f"Filtering level {level} (min_area={min_area}, stability>={stability_threshold})")
+            cascade_str = " (cascade)" if use_cascade else ""
+            print(f"Filtering level {level}{cascade_str} (min_area={min_area}, stability>={stability_threshold})")
         stats = filter_level(
             level_root=level_root,
             min_area=min_area,
             stability_threshold=stability_threshold,
+            use_cascade=use_cascade,
             verbose=not quiet,
         )
         stats_summary[level] = stats.to_dict()
         if not quiet:
-            print(
-                f"  Level {level}: kept {stats.kept} masks over {stats.frames} frames; dropped {stats.dropped}"
-            )
+            msg = f"  Level {level}: kept {stats.kept} masks over {stats.frames} frames; dropped {stats.dropped}"
+            if stats.cascade_rejected > 0:
+                msg += f" (cascade: {stats.cascade_rejected})"
+            print(msg)
 
     if update_manifest and os.path.exists(manifest_path):
         try:
@@ -227,6 +334,7 @@ def run_filtering(
                 'applied': True,
                 'min_area': int(min_area),
                 'stability_threshold': float(stability_threshold),
+                'use_cascade': use_cascade,
                 'ts_epoch': int(time.time()),
                 'stats': stats_summary,
             }
@@ -243,6 +351,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--levels', default=None, help='Comma separated levels; defaults to manifest levels')
     parser.add_argument('--min-area', type=int, default=300)
     parser.add_argument('--stability-threshold', type=float, default=0.9)
+    parser.add_argument('--cascade', action='store_true',
+                        help='Enable cascade filtering (requires unique_id/parent_unique_id in data)')
     parser.add_argument('--update-manifest', action='store_true', help='Write filtering config back to manifest.json')
     parser.add_argument('--quiet', action='store_true', help='Suppress per-level logs')
     return parser.parse_args()
@@ -266,6 +376,7 @@ def main() -> int:
             levels=levels,
             min_area=args.min_area,
             stability_threshold=args.stability_threshold,
+            use_cascade=args.cascade,
             update_manifest=args.update_manifest,
             quiet=args.quiet,
         )

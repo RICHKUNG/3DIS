@@ -23,6 +23,7 @@ from PIL import Image
 from tqdm import tqdm
 
 from .common_utils import parse_levels, parse_range
+from .cascade_filter import CascadeFilter
 
 # ---------------------------------------------------------------------------
 # Semantic-SAM integration helpers
@@ -354,18 +355,26 @@ def progressive_refinement_masks(
     level_sequence: List[int],
     output_dirs: Dict[str, str],
     *,
+    ssam_frame_idx: int = 0,
     min_area: int = 50,
     max_masks_per_level: int = 200,
     save_viz: bool = False,
     fill_area: Optional[int] = None,
     gap_fill_enabled: bool = True,
     similarity_threshold: float = 0.95,
+    cascade_filtering: bool = True,  # Phase 2.2: Enable parent-aware filtering
+    stability_threshold: Optional[float] = None,  # Optional stability threshold for cascade
 ) -> Dict[str, Any]:
     """
     Run the multi-level refinement pipeline and persist structured outputs.
+
+    Args:
+        cascade_filtering: Enable parent-aware filtering (Phase 2.2) - prevents orphans
+        stability_threshold: Minimum stability score for cascade filter (None = no filter)
     """
     _ = gap_fill_enabled  # kept for signature compatibility, not used here
     _ = similarity_threshold
+    # cascade_filtering and stability_threshold are used in Phase 2.2
     if fill_area is None:
         fill_area = min_area
 
@@ -415,8 +424,16 @@ def progressive_refinement_masks(
         "levels": {},
     }
     tree_relations: Dict[int, List[Dict[str, Any]]] = {}
-    id_to_node: Dict[int, Dict[str, Any]] = {}
-    mask_id_counter = 1
+    id_to_node: Dict[str, Dict[str, Any]] = {}
+
+    # Use dict to track sequence counter per level
+    level_seq_counters = {level: 1 for level in level_sequence}
+
+    def make_unique_id(level: int) -> str:
+        """Generate globally unique composite ID: {frame:04d}_{level}_{seq:04d}"""
+        seq = level_seq_counters[level]
+        level_seq_counters[level] += 1
+        return f"{ssam_frame_idx:04d}_{level}_{seq:04d}"
 
     first_level = level_sequence[0]
     console(f"\n🎯 Level {first_level} (原圖)")
@@ -434,11 +451,13 @@ def progressive_refinement_masks(
 
     tree_relations[first_level] = []
     for mask in first_level_masks:
-        node = {"id": mask_id_counter, "parent": None, "children": []}
+        uid = make_unique_id(first_level)
+        node = {"id": uid, "parent": None, "children": []}
         tree_relations[first_level].append(node)
-        id_to_node[mask_id_counter] = node
-        mask["unique_id"] = mask_id_counter
-        mask_id_counter += 1
+        id_to_node[uid] = node
+        mask["unique_id"] = uid
+        mask["ssam_frame_idx"] = ssam_frame_idx
+        mask["level"] = first_level
 
     first_level_masks = [m for m in first_level_masks if m.get("area", 0) >= min_area]
     # Apply max_masks limit (0 means unlimited)
@@ -450,10 +469,10 @@ def progressive_refinement_masks(
     level_dir = os.path.join(levels_root, f"level_{first_level}")
     os.makedirs(level_dir, exist_ok=True)
     instance_map_unique = np.zeros((height, width), dtype=np.int32)
-    for m in first_level_masks:
+    for viz_idx, m in enumerate(first_level_masks, start=1):
         if "segmentation" in m:
             seg = m["segmentation"]
-            instance_map_unique[(seg) & (instance_map_unique == 0)] = m["unique_id"]
+            instance_map_unique[(seg) & (instance_map_unique == 0)] = viz_idx
     np.save(os.path.join(level_dir, "instance_map.npy"), instance_map_unique)
     try:
         instance_img = instance_map_to_color_image(instance_map_unique)
@@ -570,11 +589,28 @@ def progressive_refinement_masks(
                     if trimmed_area < min_area:
                         continue
 
-                    child["parent_unique_id"] = current_masks[parent_idx]["unique_id"]
-                    child["unique_id"] = mask_id_counter
-                    mask_id_counter += 1
+                    parent_uid = current_masks[parent_idx]["unique_id"]
+                    child_uid = make_unique_id(next_level)
+
+                    child["parent_unique_id"] = parent_uid
+                    child["unique_id"] = child_uid
+                    child["ssam_frame_idx"] = ssam_frame_idx
+                    child["level"] = next_level
+
+                    # Record lineage (ancestor chain)
+                    parent_lineage = current_masks[parent_idx].get("lineage", [])
+                    child["lineage"] = parent_lineage + [parent_uid]
+
                     child["segmentation"] = intersect_seg
                     child["area"] = trimmed_area
+
+                    # Preserve stability_score from original Semantic-SAM output (Phase 2.2)
+                    if "stability_score" in child:
+                        # Keep existing stability_score
+                        pass
+                    else:
+                        # Inherit from parent if available, otherwise default to 1.0
+                        child["stability_score"] = current_masks[parent_idx].get("stability_score", 1.0)
 
                     bbox = bbox_from_mask(intersect_seg)
                     if bbox is not None:
@@ -593,10 +629,10 @@ def progressive_refinement_masks(
                     parent_dir = os.path.join(parent_child_level_dir, f"P{parent_uid}")
                     os.makedirs(parent_dir, exist_ok=True)
                     parent_instance_map = np.zeros((height, width), dtype=np.int32)
-                    for c in valid_children:
+                    for viz_idx, c in enumerate(valid_children, start=1):
                         if c.get("segmentation") is not None:
                             seg = c["segmentation"]
-                            parent_instance_map[(seg) & (parent_instance_map == 0)] = c["unique_id"]
+                            parent_instance_map[(seg) & (parent_instance_map == 0)] = viz_idx
                     np.save(
                         os.path.join(parent_dir, f"children_instance_map.npy"),
                         parent_instance_map,
@@ -631,10 +667,10 @@ def progressive_refinement_masks(
         next_level_dir = os.path.join(levels_root, f"level_{next_level}")
         os.makedirs(next_level_dir, exist_ok=True)
         instance_map_unique = np.zeros((height, width), dtype=np.int32)
-        for mask in next_level_all_masks:
+        for viz_idx, mask in enumerate(next_level_all_masks, start=1):
             if mask.get("segmentation") is not None:
                 seg = mask["segmentation"]
-                instance_map_unique[(seg) & (instance_map_unique == 0)] = mask["unique_id"]
+                instance_map_unique[(seg) & (instance_map_unique == 0)] = viz_idx
         np.save(os.path.join(next_level_dir, "instance_map.npy"), instance_map_unique)
         try:
             instance_img = instance_map_to_color_image(instance_map_unique)
@@ -678,6 +714,66 @@ def progressive_refinement_masks(
         )
 
     level_pbar.close()
+
+    # =========================================================================
+    # CASCADE FILTERING (Phase 2.2)
+    # =========================================================================
+    # Apply cascade filtering if enabled - this respects parent-child relationships
+    # and prevents orphan creation from filtered parents with accepted children
+    if cascade_filtering:
+        console("\n🔍 Applying cascade filtering...")
+
+        # Collect all masks across all levels
+        all_masks_for_filtering: List[Dict[str, Any]] = []
+        for level in level_sequence:
+            level_masks = refinement_results["levels"].get(level, {}).get("masks", [])
+            all_masks_for_filtering.extend(level_masks)
+
+        # Apply cascade filter
+        cascade_filter = CascadeFilter(
+            min_area=float(min_area) if min_area is not None else None,
+            stability_threshold=float(stability_threshold) if stability_threshold is not None else None,
+        )
+
+        filtered_masks, rejection_reasons = cascade_filter.filter_masks(all_masks_for_filtering)
+        cascade_stats = cascade_filter.get_statistics(len(all_masks_for_filtering), rejection_reasons)
+
+        # Update refinement_results with filtered masks (grouped by level)
+        filtered_by_level: Dict[int, List[Dict[str, Any]]] = {lvl: [] for lvl in level_sequence}
+        for mask in filtered_masks:
+            mask_level = mask.get("level")
+            if mask_level in filtered_by_level:
+                filtered_by_level[mask_level].append(mask)
+
+        for level in level_sequence:
+            refinement_results["levels"][level] = {
+                "masks": filtered_by_level[level],
+                "mask_count": len(filtered_by_level[level]),
+            }
+
+        # Add cascade filtering metadata to results
+        refinement_results["cascade_filtering"] = {
+            "enabled": True,
+            "statistics": cascade_stats,
+            "rejection_reasons": rejection_reasons,  # For debugging
+        }
+
+        console(
+            f"✅ Cascade filtering complete: {cascade_stats['passed']}/{cascade_stats['total_input']} masks passed "
+            f"({cascade_stats['rejection_rate']:.1%} rejected)\n"
+            f"   - Area rejected: {cascade_stats['breakdown'].get('area_rejected', 0)}\n"
+            f"   - Stability rejected: {cascade_stats['breakdown'].get('stability_rejected', 0)}\n"
+            f"   - Cascade rejected: {cascade_stats['breakdown'].get('cascade_rejected', 0)}",
+            important=True,
+        )
+    else:
+        # Cascade filtering disabled - add empty metadata
+        refinement_results["cascade_filtering"] = {
+            "enabled": False,
+            "statistics": None,
+            "rejection_reasons": {},
+        }
+        console("⚠️  Cascade filtering disabled (may create orphans)", important=True)
 
     first_level_dir = os.path.join(levels_root, f"level_{first_level}")
     with open(os.path.join(first_level_dir, "tree.json"), "w", encoding="utf-8") as f:

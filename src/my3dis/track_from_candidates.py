@@ -179,6 +179,13 @@ def run_tracking(
     level_results: List[LevelRunResult] = []
     overall_timer = TimingAggregator()
 
+    # Create shared ProvenanceTracker for cross-level parent lookup
+    # This tracker accumulates SSAM → SAM2 mappings across all levels,
+    # enabling Level 4+ objects to find their Level 2 parents
+    from my3dis.tracking.provenance_tracker import ProvenanceTracker
+    shared_provenance_tracker = ProvenanceTracker()
+    LOGGER.info("Created shared ProvenanceTracker for cross-level parent tracking")
+
     for level in level_list:
         result = run_level_tracking(
             level=level,
@@ -200,6 +207,7 @@ def run_tracking(
             comparison_max_samples=comparison_max_samples,
             render_viz=render_viz,
             out_root=out_root,
+            shared_provenance_tracker=shared_provenance_tracker,
         )
         level_results.append(result)
         overall_timer.merge(result.timer)

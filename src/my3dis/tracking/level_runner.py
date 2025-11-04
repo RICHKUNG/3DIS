@@ -94,6 +94,7 @@ def run_level_tracking(
     comparison_max_samples: Optional[int],
     render_viz: bool,
     out_root: str,
+    shared_provenance_tracker: Optional['ProvenanceTracker'] = None,
 ) -> LevelRunResult:
     """Execute SAM2 tracking for a single level and persist results."""
 
@@ -229,6 +230,8 @@ def run_level_tracking(
             preview_targets=preview_targets,
             dedup_store=dedup_store,
             result_store=frame_store,
+            shared_provenance_tracker=shared_provenance_tracker,
+            level=level,
         )
 
     artifacts = persist_level_outputs(
@@ -245,6 +248,35 @@ def run_level_tracking(
         os.path.basename(artifacts['video_segments']) if artifacts.get('video_segments') else 'n/a',
         os.path.basename(artifacts['object_segments']) if artifacts.get('object_segments') else 'n/a',
     )
+
+    # Save provenance-based tree
+    with level_timer.track('persist.provenance_tree'):
+        if tracking_output.provenance_tracker is not None:
+            import json
+            relations_dir = ensure_dir(os.path.join(out_root, 'relations'))
+            provenance_tree_path = os.path.join(relations_dir, f'provenance_tree_L{level}.json')
+
+            family_result = tracking_output.provenance_tracker.get_family_hierarchy()
+            stats = tracking_output.provenance_tracker.get_statistics()
+
+            with open(provenance_tree_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'level': level,
+                    'parent_map': family_result['parent_map'],
+                    'orphan_count': family_result['orphan_count'],
+                    'orphan_ids': family_result['orphan_ids'],
+                    'statistics': stats,
+                }, f, indent=2, ensure_ascii=False)
+
+            artifacts['provenance_tree'] = os.path.relpath(provenance_tree_path, out_root)
+            LOGGER.info(
+                "Level %d provenance tree saved: %d objects, %d families, %d orphans (%.1f%% rejection rate)",
+                level,
+                stats['total_ssam_masks'],
+                len([v for v in family_result['parent_map'].values() if v is not None]),
+                family_result['orphan_count'],
+                stats['rejection_rate'] * 100,
+            )
 
     # Build relation index for this level
     with level_timer.track('persist.index'):

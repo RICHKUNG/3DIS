@@ -70,6 +70,11 @@ PYTHONPATH=src python run_workflow.py --config configs/multiscan/base.yaml
 
 2. **Filtering** (`src/my3dis/filter_candidates.py`)
    - Re-applies area/stability thresholds to raw candidates
+   - **Cascade Filtering** (NEW): Parent-aware filtering prevents orphan creation
+     - If parent mask is filtered, all descendants are also filtered
+     - Enabled by default in SSAM stage (`cascade_filtering: true`)
+     - Can be re-applied via `filter_candidates.py --cascade`
+     - Requires `unique_id` and `parent_unique_id` in data
    - Can be re-run without regenerating Semantic-SAM outputs
 
 3. **SAM2 Tracking** (`src/my3dis/track_from_candidates.py:73`)
@@ -96,6 +101,10 @@ PYTHONPATH=src python run_workflow.py --config configs/multiscan/base.yaml
   - `scenes: [scene_00065_00, ...]` - Explicit list
   - `scene_start` / `scene_end` - Range filtering
 - **Frame Sampling:** Python slice syntax `start:end:step` (e.g., `1200:1600:20`)
+- **Cascade Filtering (NEW):**
+  - `stages.ssam.cascade_filtering: true` (default) - Enable parent-aware filtering
+  - `stages.ssam.stability_threshold: 0.9` - Stability threshold for cascade filter
+  - Prevents orphan creation by filtering children when parent is filtered
 
 ### Output Layout
 Each run produces:
@@ -104,11 +113,26 @@ Each run produces:
 ├── level_{L}/
 │   ├── raw/                    # Raw Semantic-SAM (manifest.json, chunk_*.tar)
 │   ├── filtered/               # Filtered masks (filtered.json, *.npz)
-│   └── tracking/               # SAM2 outputs (video_segments_scale0.3x.npz, etc.)
+│   └── tracking/               # SAM2 outputs (video_segments_scale0.3x.npz, object_segments_scale0.3x.npz)
+├── relations/                  # Family tree outputs (NEW)
+│   ├── provenance_tree_L2.json # Per-level parent-child relationships
+│   ├── provenance_tree_L4.json
+│   ├── provenance_tree_L6.json
+│   └── family_tree.json        # Unified cross-level family hierarchy
+├── visualizations/             # Family comparison images (NEW, optional)
+│   ├── family_001_frame_XXXXX.png
+│   ├── family_002_frame_XXXXX.png
+│   └── ...                     # Side-by-side L2/L4/L6 renders
 ├── workflow_summary.json       # Per-stage config, timings, resource peaks
 ├── environment_snapshot.json   # Python/CUDA/torch versions, git state
 └── report.md                   # Generated summary with visualizations
 ```
+
+**Object ID Format (NEW):**
+- L2 objects: 2000-2999
+- L4 objects: 4000-4999
+- L6 objects: 6000-6999
+- Level immediately visible from ID alone
 
 ### Streaming Architecture
 - **Raw SSAM:** Chunked tar archives to avoid millions of small files (`raw_archive.py`)
@@ -116,6 +140,43 @@ Each run produces:
 - **Mask Encoding:** Packed binary format (`common_utils.py:encode_mask`) used throughout
 
 ## Project Status & Recent Changes
+
+**Cascade Filtering & Orphan Fix (2025-11-04):**
+- ✅ **Cascade Filtering:** Parent-aware filtering prevents orphan creation at SSAM stage
+  - Enabled by default (`stages.ssam.cascade_filtering: true`)
+  - Filters children when parent is filtered, maintaining tree integrity
+  - Detailed statistics: area_rejected, stability_rejected, cascade_rejected
+- ✅ **Dedup Timing Fix:** Fixed race condition in `sam2_runner.py`
+  - Deferred rejection processing until after prompt mapping is complete
+  - Resolves ~80% of timing-related orphans
+- ✅ **Unresolved Rejection Tracking:** Added to `provenance_tracker.py`
+  - Tracks cases where parent mapping fails
+  - Helps diagnose remaining orphan sources
+- ✅ **End-to-End Integration:** YAML config → workflow → SSAM → tracking
+  - `filter_candidates.py` supports `--cascade` for re-filtering
+  - Complete parameter chain validation
+- ✅ **Testing:** Unit tests for cascade logic, test config, automated test script
+- 📚 **Documentation:** See [`ORPHAN_FIX_PROGRESS.md`](ORPHAN_FIX_PROGRESS.md) and [`ORPHAN_FIX_IMPLEMENTATION_SUMMARY.md`](ORPHAN_FIX_IMPLEMENTATION_SUMMARY.md)
+- 🎯 **Expected Impact:** Orphan rate reduction from 2.2% to <0.5%
+
+**Enhanced Family Tree System (2025-10-30):**
+- ✅ **Orphan Fix:** Propagated mask tracking eliminates ~80% of orphans (60% → <10%)
+- ✅ **Level-Based Object IDs:** L2=2XXX, L4=4XXX, L6=6XXX for instant level identification
+- ✅ **Unified Family Tree:** Per-scene `family_tree.json` with complete parent-child hierarchy
+- ✅ **Query Interface:** `family_tree_query.py` for frame/mask lookup with caching
+- ✅ **Family Visualization:** Side-by-side L2/L4/L6 rendering in common frames
+- ✅ **Workflow Integration:** Automatic family tree + visualization generation after tracking
+- ✅ **YAML Configuration:** Control visualization with `visualize_families` and `family_viz.*` parameters
+- ✅ **SAM2 Tree Archived:** Old containment-based approach moved to `archive/sam2_tree_containment/`
+- 📚 **Documentation:** Updated [`docs/PROVENANCE_TRACKING.md`](docs/PROVENANCE_TRACKING.md)
+
+**Provenance-Based Tree Building (2025-10-29):**
+- ✅ **Globally Unique SSAM IDs:** Composite key format `{frame:04d}_{level}_{seq:04d}` eliminates ID collisions
+- ✅ **ProvenanceTracker:** Unified SSAM → SAM2 mapping tracks both accepted and rejected prompts
+- ✅ **DedupStore Enhancements:** Returns rejection info with matched mask indices
+- ✅ **Automatic Parent Tracking:** O(1) parent lookup preserves SSAM hierarchies through SAM2
+- ✅ **Per-Level Provenance Trees:** `relations/provenance_tree_L{level}.json` with orphan statistics
+- ✅ **Comparison Script:** `scripts/compare_trees.py` analyzes provenance vs containment approaches
 
 **Recent Optimizations (2025-10-22):**
 - ✅ **OOM 監控修復：** 修正 `run_workflow.py` 路徑設置，OOM 監控現在可正常工作
@@ -146,6 +207,90 @@ All CLI entrypoints are now functional:
 - `generate_report.py` - Generate reports
 - `prepare_tracking_run.py` - Prepare tracking runs
 
+## Family Tree System (NEW)
+
+### Automatic Generation
+Family trees are automatically generated after SAM2 tracking completes. Output includes:
+- `relations/provenance_tree_L{2,4,6}.json` - Per-level parent-child relationships
+- `relations/family_tree.json` - Unified cross-level hierarchy
+- `visualizations/` - Side-by-side L2/L4/L6 comparison images (if enabled in YAML)
+
+### Configuration (YAML)
+
+Enable/disable visualization and control parameters in your config:
+
+```yaml
+stages:
+  tracker:
+    visualize_families: true      # Enable automatic visualization
+    family_viz:
+      num_families: 10             # Max families to visualize (null = all)
+      max_frames_per_family: 3     # Frames per family
+      output_subdir: visualizations
+      random_seed: 42
+      min_levels: 2                # Only families with >= N levels
+```
+
+**Disable visualization:**
+```yaml
+stages:
+  tracker:
+    visualize_families: false
+```
+
+### Query and Visualization
+
+**Query family tree:**
+```bash
+PYTHONPATH=src python -m my3dis.family_tree_query \
+  --tree outputs/experiments/<scene>/<run>/relations/family_tree.json \
+  --stats  # Show statistics
+  --obj-id 2050  # Query specific object
+  --list-families  # List all families
+```
+
+**Visualize families (manual, if not auto-generated):**
+```bash
+python scripts/visualize_families.py \
+  --tree outputs/experiments/<scene>/<run>/relations/family_tree.json \
+  --data-path /path/to/scene/color \
+  --output-dir visualizations/ \
+  --num-families 5 \
+  --max-frames 3
+```
+
+**Test visualization workflow:**
+```bash
+python scripts/test_family_viz_workflow.py \
+  --run-dir outputs/experiments/<scene>/<run> \
+  --data-path /path/to/scene/color
+```
+
+### Querying from Python
+
+```python
+from my3dis.family_tree_query import FamilyTreeQuery
+
+# Load tree
+query = FamilyTreeQuery('path/to/family_tree.json')
+
+# Get object info
+obj_info = query.get_object_info(2050)
+frames = query.get_object_frames(2050)
+parent = query.get_parent(2050)
+children = query.get_children(2050)
+
+# Get family members
+family_members = query.get_family_members(2050)
+
+# Load masks
+mask = query.load_mask(obj_id=2050, frame_idx=1200)
+masks_batch = query.load_masks_batch(obj_id=2050)
+
+# Find common frames across objects
+common_frames = query.get_common_frames([2050, 4100, 6200])
+```
+
 ## Development Commands
 
 ### Run Single Scene (Development)
@@ -175,12 +320,24 @@ PYTHONPATH=src python src/my3dis/generate_report.py \
 
 ### Re-filter Candidates (No Regeneration)
 ```bash
+# Traditional filtering
 PYTHONPATH=src python src/my3dis/filter_candidates.py \
   --candidates-root outputs/experiments/<scene>/<run_name> \
   --levels 2,4,6 \
   --min-area 500 \
   --stability-threshold 0.9
+
+# With cascade filtering (requires unique_id in data)
+PYTHONPATH=src python src/my3dis/filter_candidates.py \
+  --candidates-root outputs/experiments/<scene>/<run_name> \
+  --levels 2,4,6 \
+  --min-area 500 \
+  --stability-threshold 0.9 \
+  --cascade \
+  --update-manifest
 ```
+
+**Note:** Cascade filtering requires data generated with `cascade_filtering: true`. If unique_id fields are missing, it will automatically fall back to traditional filtering with a warning.
 
 ### Prepare Scene Configs
 ```bash
@@ -210,6 +367,12 @@ PYTHONPATH=src python scripts/prepare_scene_configs.py \
 - **Utilities:**
   - `src/my3dis/common_utils.py` - Shared helpers (mask encoding, frame sorting, etc.)
   - `src/my3dis/workflow/summary.py:94` - Resource monitoring and environment snapshots
+
+- **Family Tree System (NEW):**
+  - `src/my3dis/family_tree_builder.py` - Build unified family trees from provenance data
+  - `src/my3dis/family_tree_query.py` - Query interface for family trees and mask loading
+  - `scripts/visualize_families.py` - Side-by-side L2/L4/L6 visualization tool
+  - `src/my3dis/tracking/provenance_tracker.py` - SSAM→SAM2 mapping with O(1) parent lookup
 
 ## Conda Environment Switching
 
@@ -373,10 +536,12 @@ stages:
 - **[`docs/proposals/SAM2_TREE_PROPOSALS.md`](docs/proposals/SAM2_TREE_PROPOSALS.md)** - Four proposals for SAM2-based tree building (comparison matrix, recommendations)
 
 ### Quick References
+- **[`docs/PROVENANCE_TRACKING.md`](docs/PROVENANCE_TRACKING.md)** - Provenance-based tree building system (NEW)
 - **[`docs/configuration.md`](docs/configuration.md)** - Configuration system documentation
 - **[`docs/RELATION_INDEX.md`](docs/RELATION_INDEX.md)** - Relation indexing system
 - **[`docs/POST_RUN_RECOVERY_v4.md`](docs/POST_RUN_RECOVERY_v4.md)** - Post-run data recovery (v4 format)
 - **[`configs/multiscan/base.yaml`](configs/multiscan/base.yaml)** - Production configuration template
 - **[`configs/multiscan/test_65.yaml`](configs/multiscan/test_65.yaml)** - Test/debug configuration
+- **[`scripts/compare_trees.py`](scripts/compare_trees.py)** - Compare provenance vs containment trees (NEW)
 - **[`scripts/check_scene_timings.py`](scripts/check_scene_timings.py)** - Performance analysis tool
 - **[`scripts/validate_formats.py`](scripts/validate_formats.py)** - Format validation tool for relations.json, tree.json, index.json

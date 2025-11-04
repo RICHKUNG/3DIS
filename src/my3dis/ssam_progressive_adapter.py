@@ -196,6 +196,8 @@ def generate_with_progressive(
     enable_gap_fill: bool = True,
     mask_scale_ratio: float = 1.0,
     max_masks_per_level: int = 2000,
+    cascade_filtering: bool = True,
+    stability_threshold: Optional[float] = None,
     verbose: bool = False,
 ) -> Iterable[Tuple[int, str, Dict[int, List[Dict[str, Any]]]]]:
     """Yield per-level candidates per frame using progressive_refinement.
@@ -213,6 +215,8 @@ def generate_with_progressive(
         enable_gap_fill: If True, generate gap-fill masks for uncovered regions.
         mask_scale_ratio: Ratio for downscaling masks (0.0-1.0, where 1.0 = no scaling).
         max_masks_per_level: Maximum number of masks to keep per level during progressive refinement.
+        cascade_filtering: Enable parent-aware cascade filtering (default: True).
+        stability_threshold: Minimum stability score for cascade filter (default: None).
         verbose: If True, show Semantic-SAM output; if False, suppress stdout/stderr during inference.
 
     Yields:
@@ -258,8 +262,11 @@ def generate_with_progressive(
                         image_path,
                         level_sequence=levels,
                         output_dirs=output_dirs,
+                        ssam_frame_idx=f_idx,  # Pass current frame index
                         min_area=min_area,
                         max_masks_per_level=max_masks_per_level,
+                        cascade_filtering=cascade_filtering,
+                        stability_threshold=stability_threshold,
                         save_viz=False,
                     )
 
@@ -340,7 +347,10 @@ def generate_with_progressive(
                 x1, y1, x2, y2 = bbox_from_mask_xyxy(seg_scaled)
                 bbox = bbox_xyxy_to_xywh((x1, y1, x2, y2))
                 stability = float(m.get('stability_score', 1.0))
-                frame_cands.append({
+                # Preserve all metadata from progressive_refinement (including provenance)
+                cand = dict(m)  # Copy all fields
+                # Override/add computed fields
+                cand.update({
                     'frame_idx': f_idx,
                     'frame_name': fname,
                     'bbox': bbox,
@@ -353,6 +363,7 @@ def generate_with_progressive(
                         full_resolution_shape=orig_shape,
                     ),
                 })
+                frame_cands.append(cand)
             frame_payload[L] = frame_cands
 
         # Store results for relation saving

@@ -1,0 +1,50 @@
+# Hierarchical inference configuration
+# Uses family tree for efficient coarse-to-fine retrieval
+
+strategy: hierarchical
+
+retrieval:
+  temperature: 0.2
+  min_similarity: 0.15          # Lower threshold for hierarchical (will refine)
+  top_k_per_level: 100          # Higher K for hierarchical stages
+  object_levels: [L2, L4]
+  part_levels: [L4, L6]
+
+pairing:
+  containment_threshold: 0.5
+  scale_range: [0.01, 0.9]
+  use_geometric_score: true
+  use_tree_pruning: true        # Essential for hierarchical strategy
+
+nms:
+  iou_threshold: 0.35
+  use_soft_nms: false
+  centroid_distance_ratio: 0.2
+  keep_top_k: 200
+
+scoring:
+  method: weighted_sum
+  weights:
+    object: 0.4
+    part: 0.4
+    geometric: 0.2
+  temperature: 1.0
+  hierarchy_bonus: 0.1          # Higher bonus for hierarchical
+
+formatter:
+  use_part_mask: true
+  min_mask_size: 10
+
+independent:
+  object_levels: [L2, L4]
+  part_levels: [L4, L6]
+  top_k_per_level: 50
+  retrieval_threshold: 0.3
+
+hierarchical:
+  coarse_top_k: 100             # Conservative initial stage
+  object_top_k: 50              # Refine to top 50 objects
+  part_top_k: 30                # Max 30 parts per object
+  coarse_threshold: 0.2         # Lower threshold for initial stage
+  refinement_threshold: 0.3     # Higher threshold for refined candidates
+  refinement_margin: 0.1        # Prefer child if score is 0.1 higher

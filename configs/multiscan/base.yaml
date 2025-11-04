@@ -1,5 +1,5 @@
 experiment:
-  name: v5_246_ssam2_filter500_fill5k_prop30_iou06_dsno
+  name: v5_246_ssam2_filter0_fill500_prop30_iou06_ds03
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
@@ -25,43 +25,107 @@ stages:
   ssam:
     enabled: true
     ssam_freq: 2
-    min_area: 500
+    min_area: 0
     stability_threshold: 1.0
     persist_raw: true
     skip_filtering: true
     add_gaps: true
-    fill_area: 5000
+    fill_area: 500
     append_timestamp: false
-    downscale_masks: false
-    downscale_ratio: 1.0
+    downscale_masks: true
+    downscale_ratio: 0.3
     max_masks_per_level: -1  # Maximum masks to keep per level during progressive refinement
     sam_ckpt: /media/Pluto/Yenhongxuan/Semantic-SAM/ckpts/swinl_only_sam_many2many.pth
   filter:
     enabled: true
-    min_area: 500
+    min_area: 
     stability_threshold: 1.0
   tracker:
     enabled: true
     prompt_mode: all_mask
     max_propagate: 30
     iou_threshold: 0.6
-    downscale_masks: false
-    downscale_ratio: 1.0
+    downscale_masks: true
+    downscale_ratio: 0.3
     render_viz: true
     sam2_cfg: /media/Pluto/Yenhongxuan/Grounded-SAM-2/sam2/configs/sam2.1/sam2.1_hiera_l.yaml
     sam2_ckpt: /media/Pluto/Yenhongxuan/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt
     comparison_sampling:
       max_frames: 300
-    # SAM2-based tree building (replaces SSAM tree with tracked objects tree)
-    build_sam2_tree: true
-    sam2_tree:
-      containment_threshold: 0.95      # Minimum avg containment for parent-child relationship (hyperparameter)
-      temporal_overlap_threshold: 0.3  # Minimum temporal overlap ratio (hyperparameter)
-    # SAM2 tree visualization
-    visualize_sam2_tree: true          # Generate family tree visualizations
-    tree_viz:
-      min_children: 1                  # Minimum children to visualize a family
-      max_families: null               # Maximum families to visualize (null = all)
+    # ========================================================================
+    # Family Tree Building & Visualization Configuration
+    # ========================================================================
+    # Provenance-based tree (Always enabled):
+    #    - Automatically tracks SSAM→SAM2 mappings during tracking
+    #    - Outputs: relations/provenance_tree_L{level}.json per level
+    #    - Unified tree: relations/family_tree.json (auto-generated)
+    #    - ~70-80% lower orphan rate vs containment-based approach
+    #
+    # Family visualization (Optional):
+    #    - Enable via visualize_families: true
+    #    - Generates side-by-side L2/L4/L6 comparison images
+    #    - Only visualizes families with multiple levels
+    # ========================================================================
+
+    # Enable automatic family visualization after tracking
+    visualize_families: true
+    family_viz:
+      num_families: 10              # Max families to visualize (null = all)
+      max_frames_per_family: 3      # Frames to render per family
+      output_subdir: visualizations # Output directory name
+      random_seed: 42               # Seed for reproducible family selection
+      min_levels: 2                 # Only visualize families with >= N levels
+
+    # ========================================================================
+    # ARCHIVED: Containment-based SAM2 tree (see archive/sam2_tree_containment/)
+    # ========================================================================
+
+  # ========================================================================
+  # Stage 3: 3D Mask Aggregation
+  # ========================================================================
+  # Projects 2D masks to 3D point cloud and generates 3D proposals
+  # Input: family_tree.json from SAM2 tracking stage
+  # Output: proposal_data_level{2,4,6}.npz with 3D masks and geometry
+  # ========================================================================
+  aggregation:
+    enabled: false  # Enable after implementing workflow integration
+    pointcloud_path: null  # Path to scene point cloud (.ply or .pth)
+    depth_maps_dir: null  # Directory containing depth maps
+    camera_params_path: null  # Path to camera parameters JSON (optional)
+
+    # Hyperparameters
+    iou_threshold: 0.6  # IoU threshold for 3D proposal deduplication
+    min_volume: 0.001  # Minimum volume threshold (m^3)
+    vis_depth_threshold: 0.05  # Visibility depth threshold (meters)
+    aggregation_method: union  # Method for aggregating masks across frames (union, intersection, majority)
+
+    # Device
+    device: cuda:0
+
+  # ========================================================================
+  # Stage 4: SigLIP Feature Assignment
+  # ========================================================================
+  # Assigns vision-language features to 3D proposals for open-vocabulary query
+  # Input: proposal_data_level{2,4,6}.npz from aggregation stage
+  # Output: siglip_features_level{2,4,6}.npz with features and predictions
+  # ========================================================================
+  siglip_assignment:
+    enabled: false  # Enable after implementing workflow integration
+
+    # Model configuration
+    model_name: google/siglip-so400m-patch14-384  # HuggingFace model name
+    batch_size: 32  # Number of proposals to process in parallel
+    topk_frames: 5  # Number of best views per proposal
+    use_multiscale: true  # Use multi-scale cropping for feature extraction
+
+    # Inference configuration
+    scale_semantic_score: 300.0  # Temperature scaling for similarity scores
+    duplicate_topk: 600  # Top-K predictions when allowing duplicates
+    allow_duplicates: true  # Allow duplicate labels across proposals
+
+    # Device
+    device: cuda:0
+
   report:
     enabled: true
     name: report.md

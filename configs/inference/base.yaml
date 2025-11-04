@@ -1,0 +1,58 @@
+# Base inference configuration for Open Vocabulary 3D Instance Segmentation
+# This config implements the baseline independent retrieval strategy
+
+strategy: independent  # Options: independent, hierarchical
+
+# Multi-level retrieval configuration
+retrieval:
+  temperature: 0.2              # Temperature for similarity scoring (lower = sharper)
+  min_similarity: 0.2           # Minimum similarity threshold
+  top_k_per_level: 50           # Max proposals per level
+  object_levels: [L2, L4]       # Levels to search for objects
+  part_levels: [L4, L6]         # Levels to search for parts
+
+# Object-Part pairing configuration
+pairing:
+  containment_threshold: 0.5    # Min containment ratio (part in object)
+  scale_range: [0.01, 0.9]      # Valid size ratio range (part/object)
+  use_geometric_score: true     # Include geometric score in final score
+  use_tree_pruning: true        # Use family tree to prune infeasible pairs
+
+# Non-Maximum Suppression configuration
+nms:
+  iou_threshold: 0.35           # IoU threshold for suppression
+  use_soft_nms: false           # Use soft NMS (score decay) instead of hard removal
+  soft_nms_sigma: 0.5           # Sigma for soft NMS Gaussian decay
+  centroid_distance_ratio: 0.2  # Spatial separation threshold (as ratio of mask size)
+  keep_top_k: 200               # Max predictions to keep per scene (null = no limit)
+
+# Score aggregation configuration
+scoring:
+  method: weighted_sum          # Options: arithmetic, geometric, weighted_sum, max, min
+  weights:
+    object: 0.4                 # Weight for object similarity
+    part: 0.4                   # Weight for part similarity
+    geometric: 0.2              # Weight for geometric compatibility
+  temperature: 1.0              # Temperature for score scaling
+  hierarchy_bonus: 0.05         # Bonus for expected level relationships
+
+# Output formatting configuration
+formatter:
+  use_part_mask: true           # Use part mask (vs object mask or union)
+  min_mask_size: 10             # Minimum mask size in points
+
+# Independent strategy specific parameters
+independent:
+  object_levels: [L2, L4]
+  part_levels: [L4, L6]
+  top_k_per_level: 50
+  retrieval_threshold: 0.3
+
+# Hierarchical strategy specific parameters
+hierarchical:
+  coarse_top_k: 100             # Top-K for coarse localization at L2
+  object_top_k: 50              # Max object candidates after refinement
+  part_top_k: 30                # Max part candidates per object
+  coarse_threshold: 0.2         # Similarity threshold for coarse stage
+  refinement_threshold: 0.3     # Similarity threshold for refinement
+  refinement_margin: 0.1        # Margin for preferring child over parent

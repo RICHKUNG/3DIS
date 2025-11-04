@@ -1,0 +1,61 @@
+# Test configuration for orphan fix validation
+# Tests Phase 1-2 fixes: Dedup timing + Cascade filtering
+experiment:
+  name: test_orphan_fix_1104
+  dataset_root: /media/public_dataset2/multiscan
+  scenes:
+    - scene_00005_00  # Quick test scene
+  parallel_scenes: 1
+  force_parallel: false
+  levels:
+    - 2
+    - 4
+    - 6
+  tag: orphan_fix_test
+  tag_in_path: false
+  aggregate_output: false
+  output_layout: scene_level
+  output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
+  frames:
+    step: 50
+
+stages:
+  gpu: 0
+  ssam:
+    enabled: true
+    ssam_freq: 4
+    min_area: 500  # Higher threshold for better quality
+    stability_threshold: 0.9
+    cascade_filtering: true  # NEW: Enable cascade filtering
+    persist_raw: true
+    skip_filtering: false
+    add_gaps: true
+    fill_area: 500
+    append_timestamp: false
+    downscale_masks: true
+    downscale_ratio: 0.3
+    max_masks_per_level: -1
+    sam_ckpt: /media/Pluto/Yenhongxuan/Semantic-SAM/ckpts/swinl_only_sam_many2many.pth
+  filter:
+    enabled: false  # Skip re-filtering since SSAM has cascade filter
+  tracker:
+    enabled: true
+    prompt_mode: all_mask
+    max_propagate: 30
+    iou_threshold: 0.6
+    downscale_masks: true
+    downscale_ratio: 0.3
+    render_viz: false
+    visualize_families: true  # NEW: Enable family visualization
+    family_viz:
+      num_families: 5
+      max_frames_per_family: 3
+      min_levels: 2
+    sam2_cfg: /media/Pluto/Yenhongxuan/Grounded-SAM-2/sam2/configs/sam2.1/sam2.1_hiera_l.yaml
+    sam2_ckpt: /media/Pluto/Yenhongxuan/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt
+    comparison_sampling:
+      max_frames: 100
+    build_sam2_tree: false  # Use provenance-based tree instead
+    visualize_sam2_tree: false
+  report:
+    enabled: true  # Enable report to see statistics

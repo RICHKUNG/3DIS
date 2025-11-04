@@ -1,0 +1,26 @@
+[
+  {
+    "object": "cabinet",
+    "part": "door",
+    "label_id": 121003,
+    "description": "Cabinet door"
+  },
+  {
+    "object": "table",
+    "part": "leg",
+    "label_id": 134018,
+    "description": "Table leg"
+  },
+  {
+    "object": "chair",
+    "part": "back",
+    "label_id": 103002,
+    "description": "Chair back"
+  },
+  {
+    "object": "door",
+    "part": "handle",
+    "label_id": 112007,
+    "description": "Door handle"
+  }
+]

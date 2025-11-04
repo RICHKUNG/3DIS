@@ -18,6 +18,7 @@ from my3dis.tracking.helpers import (
     bbox_transform_xywh_to_xyxy,
 )
 from my3dis.tracking.stores import DedupStore, FrameResultStore
+from my3dis.tracking.provenance_tracker import ProvenanceTracker
 from .candidate_loader import FrameCandidateBatch
 
 LOGGER = logging.getLogger("my3dis.track_from_candidates")
@@ -48,6 +49,7 @@ class TrackingArtifacts:
     preview_segments: Dict[int, Dict[int, Any]]
     frames_with_predictions: Set[int]
     objects_seen: Set[int]
+    provenance_tracker: Optional[ProvenanceTracker] = None
 
 
 def _coerce_mask_bool(mask: Any) -> Optional[np.ndarray]:
@@ -109,7 +111,8 @@ def _filter_new_candidates(
     frame_idx: int,
     dedup_store: DedupStore,
     iou_threshold: float,
-) -> List[PromptCandidate]:
+) -> Tuple[List[PromptCandidate], List[Tuple[PromptCandidate, int]]]:
+    """Filter candidates with deduplication, returning accepted and rejected lists."""
     return dedup_store.filter_candidates(frame_idx, candidates, iou_threshold)
 
 
@@ -261,6 +264,8 @@ def sam2_tracking(
     preview_targets: Optional[Set[int]] = None,
     dedup_store: Optional[DedupStore] = None,
     result_store: Optional[FrameResultStore] = None,
+    shared_provenance_tracker: Optional[ProvenanceTracker] = None,
+    level: Optional[int] = None,
 ) -> TrackingArtifacts:
     os.environ['TQDM_DISABLE'] = '1'
     try:  # pragma: no cover - optional dependency
@@ -278,6 +283,14 @@ def sam2_tracking(
     preview_segments: Dict[int, Dict[int, Any]] = {}
     frames_with_predictions: Set[int] = set()
     objects_seen: Set[int] = set()
+
+    # Use shared ProvenanceTracker for cross-level parent lookup
+    # If not provided, create a local tracker (for backward compatibility)
+    provenance_tracker = shared_provenance_tracker or ProvenanceTracker()
+
+    # Track dedup store mask index → sam2_obj_id mapping for rejection tracking
+    # Key: (frame_idx, mask_index_in_dedup_store) → Value: sam2_obj_id
+    dedup_mask_to_sam2_id: Dict[Tuple[int, int], int] = {}
 
     with torch.inference_mode(), torch.autocast("cuda"):
         state = predictor.init_state(video_path=frames_dir)
@@ -315,7 +328,12 @@ def sam2_tracking(
                 )
                 small_object_area_threshold = None
 
-        obj_count = 1
+        # Level-based object ID offset for easy identification
+        # L2: 2000+, L4: 4000+, L6: 6000+
+        if level is not None and level in (2, 4, 6):
+            obj_count = level * 1000
+        else:
+            obj_count = 1
         try:
             for batch in candidate_batches:
                 frame_idx = batch.local_index
@@ -337,15 +355,23 @@ def sam2_tracking(
                         continue
 
                 prepared_candidates = _prepare_prompt_candidates(batch.candidates)
-                filtered_candidates = _filter_new_candidates(
+                filtered_candidates, rejected_candidates = _filter_new_candidates(
                     prepared_candidates,
                     frame_idx=abs_idx,
                     dedup_store=dedup_store,
                     iou_threshold=iou_threshold,
                 )
+
+                # DEFERRED: Process rejected prompts AFTER propagation completes
+                # to ensure dedup_mask_to_sam2_id mapping is fully populated
+                deferred_rejections = []
+                for cand, matched_mask_idx in rejected_candidates:
+                    deferred_rejections.append((cand, matched_mask_idx, abs_idx))
+
                 if not filtered_candidates:
                     continue
 
+                obj_count_before = obj_count
                 obj_count = _add_prompts_to_predictor(
                     predictor,
                     state,
@@ -358,6 +384,37 @@ def sam2_tracking(
                     use_box_for_small=use_box_for_small,
                     small_object_area_threshold=small_object_area_threshold,
                 )
+
+                # EAGER MAPPING: Build mapping for prompt masks immediately after adding to predictor
+                # This ensures parent masks are mapped before child-level rejection checks
+                dedup_entry = dedup_store._frames.get(abs_idx)
+                if dedup_entry is not None:
+                    mask_count_before_prompts = len(dedup_entry.masks)
+
+                # Register accepted prompts in provenance tracker
+                for idx, cand in enumerate(filtered_candidates):
+                    sam2_obj_id = obj_count_before + idx
+                    payload = cand.payload
+                    ssam_unique_id = payload.get("unique_id")
+
+                    if ssam_unique_id:
+                        provenance_tracker.register_accepted_prompt(
+                            sam2_obj_id=sam2_obj_id,
+                            ssam_unique_id=ssam_unique_id,
+                            ssam_parent_id=payload.get("parent_unique_id"),
+                            ssam_frame_idx=payload.get("ssam_frame_idx", frame_idx),
+                            level=payload.get("level"),
+                            lineage=payload.get("lineage"),
+                        )
+
+                    # EAGER MAPPING: Track prompt mask index immediately
+                    # Prompt masks will be in dedup_store after propagation, but we need the mapping NOW
+                    # for subsequent child-level rejection checks
+                    if dedup_entry is not None:
+                        # After propagation, prompt masks will be at positions:
+                        # [existing_masks] + [prompt_mask_0, prompt_mask_1, ...]
+                        mask_idx_after_propagation = mask_count_before_prompts + idx
+                        dedup_mask_to_sam2_id[(abs_idx, mask_idx_after_propagation)] = sam2_obj_id
 
                 frame_segments = _propagate_frame_predictions(
                     predictor,
@@ -373,7 +430,43 @@ def sam2_tracking(
                     if not frame_data:
                         continue
                     frames_with_predictions.add(abs_out_idx)
+
+                    # Record mask count before adding propagated masks
+                    dedup_entry = dedup_store._frames.get(abs_out_idx)
+                    mask_count_before = len(dedup_entry.masks) if dedup_entry is not None else 0
+
                     dedup_store.add_packed(abs_out_idx, frame_data)
+
+                    # Track propagated masks in dedup_mask_to_sam2_id mapping
+                    # This ensures child-level candidates rejected due to overlap with propagated masks
+                    # can still find their parent SAM2 object IDs
+                    for idx, obj_id_raw in enumerate(sorted(frame_data.keys())):
+                        obj_id = int(obj_id_raw)
+                        mask_idx_in_store = mask_count_before + idx
+                        dedup_mask_to_sam2_id[(abs_out_idx, mask_idx_in_store)] = obj_id
+
+                # PROCESS DEFERRED REJECTIONS: Now that propagation is complete and all mappings are built
+                for cand, matched_mask_idx, prompt_frame_idx in deferred_rejections:
+                    payload = cand.payload
+                    ssam_unique_id = payload.get("unique_id")
+                    if ssam_unique_id:
+                        # Find the SAM2 object ID that this mask matched
+                        matched_sam2_id = dedup_mask_to_sam2_id.get((prompt_frame_idx, matched_mask_idx))
+                        if matched_sam2_id is not None:
+                            provenance_tracker.register_rejected_prompt(
+                                ssam_unique_id=ssam_unique_id,
+                                matched_sam2_obj_id=matched_sam2_id,
+                                ssam_parent_id=payload.get("parent_unique_id"),
+                            )
+                        else:
+                            # Log unresolved rejection (mapping not found)
+                            provenance_tracker.register_unresolved_rejection(
+                                ssam_unique_id=ssam_unique_id,
+                                matched_mask_idx=matched_mask_idx,
+                                frame_idx=prompt_frame_idx,
+                            )
+
+                for abs_out_idx, frame_data in frame_segments.items():
                     frame_name = frame_name_lookup.get(abs_out_idx)
                     entry_name = result_store.update(abs_out_idx, frame_name, frame_data)
                     for obj_id_raw, payload in frame_data.items():
@@ -389,11 +482,21 @@ def sam2_tracking(
             progress.close()
 
     if sx is None or sy is None:
-        raise RuntimeError('No segmentation masks available to derive resolution')
+        LOGGER.warning(
+            'No segmentation masks were accepted for SAM2 tracking; returning empty artifacts.',
+        )
+        return TrackingArtifacts(
+            object_refs=dict(object_refs),
+            preview_segments=preview_segments,
+            frames_with_predictions=frames_with_predictions,
+            objects_seen=objects_seen,
+            provenance_tracker=provenance_tracker,
+        )
 
     return TrackingArtifacts(
         object_refs=dict(object_refs),
         preview_segments=preview_segments,
         frames_with_predictions=frames_with_predictions,
         objects_seen=objects_seen,
+        provenance_tracker=provenance_tracker,
     )
