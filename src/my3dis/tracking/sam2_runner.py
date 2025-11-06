@@ -406,6 +406,15 @@ def sam2_tracking(
                             level=payload.get("level"),
                             lineage=payload.get("lineage"),
                         )
+                    else:
+                        # BUGFIX (2025-11-05): Warn when objects lack unique_id
+                        # This object will be tracked by SAM2 and appear in index.json,
+                        # but won't have provenance metadata for parent lookup
+                        LOGGER.warning(
+                            "Object %d (frame %d) lacks SSAM unique_id - will miss provenance tracking",
+                            sam2_obj_id,
+                            abs_idx,
+                        )
 
                     # EAGER MAPPING: Track prompt mask index immediately
                     # Prompt masks will be in dedup_store after propagation, but we need the mapping NOW

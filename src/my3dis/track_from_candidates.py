@@ -245,6 +245,53 @@ def run_tracking(
             LOGGER.info("Aggregate timing by stage → %s", ", ".join(category_summary))
         LOGGER.debug("Aggregate timing breakdown → %s", overall_timer.format_breakdown())
 
+    # Save unified cross-level provenance tree (BUGFIX 2025-11-05)
+    # This ensures cross-level parent relationships are preserved for family tree building
+    if shared_provenance_tracker is not None and level_list:
+        import json
+
+        relations_dir = ensure_dir(os.path.join(out_root, 'relations'))
+        unified_tree_path = os.path.join(relations_dir, 'unified_provenance_tree.json')
+
+        family_result = shared_provenance_tracker.get_family_hierarchy()
+        stats = shared_provenance_tracker.get_statistics()
+
+        # Count objects per level for summary
+        objects_per_level = {}
+        for obj_id in family_result['parent_map'].keys():
+            level_id = obj_id // 1000  # L2=2xxx, L4=4xxx, L6=6xxx
+            level_key = f'L{level_id}'
+            objects_per_level[level_key] = objects_per_level.get(level_key, 0) + 1
+
+        # Count cross-level relationships
+        cross_level_children = 0
+        for obj_id, parent_id in family_result['parent_map'].items():
+            if parent_id is not None:
+                obj_level = obj_id // 1000
+                parent_level = parent_id // 1000
+                if obj_level != parent_level:
+                    cross_level_children += 1
+
+        with open(unified_tree_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'levels': sorted(level_list),
+                'parent_map': family_result['parent_map'],
+                'orphan_count': family_result['orphan_count'],
+                'orphan_ids': family_result['orphan_ids'],
+                'statistics': stats,
+                'objects_per_level': objects_per_level,
+                'cross_level_children': cross_level_children,
+            }, f, indent=2, ensure_ascii=False)
+
+        LOGGER.info(
+            "Unified provenance tree saved: %d total objects (%s), %d cross-level relationships, %d orphans (%.1f%% rejection rate)",
+            sum(objects_per_level.values()),
+            ", ".join(f"{k}={v}" for k, v in sorted(objects_per_level.items())),
+            cross_level_children,
+            family_result['orphan_count'],
+            stats['rejection_rate'] * 100,
+        )
+
     update_manifest(
         context,
         out_root=out_root,

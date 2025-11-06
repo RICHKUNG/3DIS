@@ -149,13 +149,20 @@ Each run produces:
 - ✅ **Dedup Timing Fix:** Fixed race condition in `sam2_runner.py`
   - Deferred rejection processing until after prompt mapping is complete
   - Resolves ~80% of timing-related orphans
+- ✅ **Virtual Children Tracking:** Complete family tree semantics (NEW)
+  - Tracks SSAM masks rejected (deduped) as "virtual children" of matched parent
+  - Enables complete provenance: SSAM → SAM2 with dedup relationships
+  - Query API: `get_virtual_children()`, `has_virtual_children()`, `get_all_children()`
+  - Statistics: `virtual_children_count`, `parents_with_virtual_children`
 - ✅ **Unresolved Rejection Tracking:** Added to `provenance_tracker.py`
   - Tracks cases where parent mapping fails
   - Helps diagnose remaining orphan sources
 - ✅ **End-to-End Integration:** YAML config → workflow → SSAM → tracking
   - `filter_candidates.py` supports `--cascade` for re-filtering
   - Complete parameter chain validation
-- ✅ **Testing:** Unit tests for cascade logic, test config, automated test script
+- ✅ **Testing:** Comprehensive test suite with 100% pass rate
+  - Unit tests: ProvenanceTracker, FamilyTreeBuilder, QueryInterface
+  - Test script: `scripts/test_virtual_children.py`
 - 📚 **Documentation:** See [`ORPHAN_FIX_PROGRESS.md`](ORPHAN_FIX_PROGRESS.md) and [`ORPHAN_FIX_IMPLEMENTATION_SUMMARY.md`](ORPHAN_FIX_IMPLEMENTATION_SUMMARY.md)
 - 🎯 **Expected Impact:** Orphan rate reduction from 2.2% to <0.5%
 
@@ -289,7 +296,47 @@ masks_batch = query.load_masks_batch(obj_id=2050)
 
 # Find common frames across objects
 common_frames = query.get_common_frames([2050, 4100, 6200])
+
+# Query virtual children (NEW in v2)
+virtual_children = query.get_virtual_children(2050)
+has_virtual = query.has_virtual_children(2050)
+all_children = query.get_all_children(2050, include_virtual=True)
 ```
+
+### Virtual Children (NEW)
+
+**Virtual children** are SSAM masks that were rejected (deduped) during SAM2 tracking but conceptually belong to an object's family tree. They represent "family merging" where child-level masks were identified as the same object as the parent.
+
+**Use Cases:**
+- Understanding which child-level masks merged into parent objects
+- Complete provenance tracking from SSAM to SAM2
+- Debugging deduplication behavior
+
+**Example:**
+```python
+from my3dis.family_tree_query import FamilyTreeQuery
+
+query = FamilyTreeQuery('path/to/family_tree.json')
+
+# Check if object has virtual children
+if query.has_virtual_children(2050):
+    virtual_children = query.get_virtual_children(2050)
+    print(f"Object 2050 merged {len(virtual_children)} child-level masks:")
+    for ssam_id in virtual_children:
+        print(f"  - {ssam_id}")
+
+# Get all children (both real and virtual)
+all_children = query.get_all_children(2050, include_virtual=True)
+print(f"Real children: {all_children['children']}")
+print(f"Virtual children: {all_children['virtual_children']}")
+```
+
+**Statistics:**
+Virtual children statistics are automatically included in:
+- `provenance_tree_L{level}.json`: Per-level virtual children
+- `family_tree.json`: Aggregated statistics
+  - `virtual_children_count`: Total virtual children across all objects
+  - `parents_with_virtual_children`: Number of parents with virtual children
 
 ## Development Commands
 

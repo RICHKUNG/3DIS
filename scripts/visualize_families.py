@@ -78,22 +78,27 @@ def overlay_masks(
     alpha: float = 0.5,
 ) -> np.ndarray:
     """
-    Overlay multiple colored masks on base image.
+    Apply masks to base image with black background.
 
     Args:
         base_image: RGB image (H, W, 3)
         masks: Dict mapping obj_id -> binary mask
         obj_ids: List of object IDs to overlay (in order)
-        colors: List of colors (one per object)
-        alpha: Transparency (0=transparent, 1=opaque)
+        colors: Not used (kept for API compatibility)
+        alpha: Not used (kept for API compatibility)
 
     Returns:
-        RGB image with overlaid masks
+        RGB image with masked objects on black background
     """
-    result = base_image.copy()
-    h, w = result.shape[:2]
+    h, w = base_image.shape[:2]
 
-    for obj_id, color in zip(obj_ids, colors):
+    # Start with black background
+    result = np.zeros_like(base_image)
+
+    # Create combined mask (union of all object masks)
+    combined_mask = np.zeros((h, w), dtype=bool)
+
+    for obj_id in obj_ids:
         mask = masks.get(obj_id)
         if mask is None:
             continue
@@ -102,12 +107,11 @@ def overlay_masks(
         if mask.shape != (h, w):
             mask = cv2.resize(mask.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST).astype(bool)
 
-        # Create colored overlay
-        overlay = np.zeros_like(result)
-        overlay[mask] = color
+        # Add to combined mask
+        combined_mask |= mask
 
-        # Blend
-        result = cv2.addWeighted(result, 1.0, overlay, alpha, 0)
+    # Apply combined mask: keep original pixels where mask is True, black elsewhere
+    result[combined_mask] = base_image[combined_mask]
 
     return result
 

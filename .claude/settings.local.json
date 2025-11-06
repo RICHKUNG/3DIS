@@ -59,7 +59,10 @@
       "Bash(git checkout:*)",
       "Bash(PYTHONPATH=src timeout 180 python:*)",
       "Bash(python:*)",
-      "Bash(PYTHONPATH=src timeout 120 python:*)"
+      "Bash(PYTHONPATH=src timeout 120 python:*)",
+      "Bash(if [ -f /media/Pluto/richkung/My3DIS/logs/test/run_exp_20251105_161145.log ])",
+      "Bash(then grep -A 5 -B 5 \"provenance\\|orphan\\|139\\|209\" /media/Pluto/richkung/My3DIS/logs/test/run_exp_20251105_161145.log)",
+      "Bash(else echo \"Log file not found\")"
     ],
     "deny": [],
     "ask": []

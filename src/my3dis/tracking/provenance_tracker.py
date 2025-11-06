@@ -195,6 +195,10 @@ class ProvenanceTracker:
 
         Also compute orphan statistics (objects with ssam_parent_id but no SAM2 parent).
 
+        BUGFIX (2025-11-05): Collect ALL tracked SAM2 objects, not just those in sam2_provenance.
+        Some objects may lack ssam_unique_id during registration but still get tracked by SAM2.
+        We need to include them to match index.json completeness.
+
         Returns:
             Dictionary with:
             - parent_map: {child_id: parent_id} for all tracked objects
@@ -204,12 +208,21 @@ class ProvenanceTracker:
         parent_map = {}
         orphans = []
 
-        for sam2_obj_id in self.sam2_provenance.keys():
+        # BUGFIX: Collect all tracked SAM2 objects from multiple sources
+        all_sam2_ids = set(self.sam2_provenance.keys())
+
+        # Include objects from ssam_to_sam2 mapping (both accepted and rejected prompts)
+        for ssam_id, sam2_id in self.ssam_to_sam2.items():
+            if sam2_id is not None:
+                all_sam2_ids.add(sam2_id)
+
+        # Build parent map for ALL tracked objects
+        for sam2_obj_id in all_sam2_ids:
             parent_id = self.find_parent(sam2_obj_id)
             parent_map[sam2_obj_id] = parent_id
 
             # Count orphans (child level but no parent)
-            prov = self.sam2_provenance[sam2_obj_id]
+            prov = self.sam2_provenance.get(sam2_obj_id, {})
             if prov.get("ssam_parent_id") is not None and parent_id is None:
                 orphans.append(sam2_obj_id)
 

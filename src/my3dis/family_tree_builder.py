@@ -124,47 +124,100 @@ def build_family_tree(
     run_path = Path(run_dir)
     scene_name = run_path.parent.name if run_path.parent.name.startswith('scene_') else 'unknown'
 
-    # Load all provenance trees
-    level_trees: Dict[int, Dict[str, Any]] = {}
-    for level in levels:
-        tree_path = run_path / 'relations' / f'provenance_tree_L{level}.json'
-        if tree_path.exists():
-            level_trees[level] = load_provenance_tree(str(tree_path))
+    # BUGFIX (2025-11-05): Prefer unified provenance tree for cross-level relationships
+    # Check if unified_provenance_tree.json exists (contains all cross-level relationships)
+    unified_tree_path = run_path / 'relations' / 'unified_provenance_tree.json'
+    use_unified_tree = unified_tree_path.exists()
 
+    if use_unified_tree:
+        # Use unified tree which contains complete cross-level relationships
+        import warnings
+        warnings.warn(
+            f"Using unified provenance tree from {unified_tree_path.name} for cross-level relationships",
+            UserWarning
+        )
+        unified_tree = load_provenance_tree(str(unified_tree_path))
+        parent_map_raw = unified_tree.get('parent_map', {})
+
+        # Convert string keys to int for all_parent_map
+        all_parent_map: Dict[int, Optional[int]] = {}
+        for obj_id_str, parent_id in parent_map_raw.items():
+            obj_id = int(obj_id_str)
+            all_parent_map[obj_id] = int(parent_id) if parent_id is not None else None
+
+        # Load virtual children from unified tree
+        all_virtual_children: Dict[int, List[str]] = {}
+        virtual_children_raw = unified_tree.get('virtual_children', {})
+        for parent_id_str, children_list in virtual_children_raw.items():
+            parent_id = int(parent_id_str)
+            all_virtual_children[parent_id] = children_list
+
+        # Still load per-level trees for frame information
+        level_trees: Dict[int, Dict[str, Any]] = {}
+        for level in levels:
+            tree_path = run_path / 'relations' / f'provenance_tree_L{level}.json'
+            if tree_path.exists():
+                level_trees[level] = load_provenance_tree(str(tree_path))
+    else:
+        # Fallback to per-level trees (old format)
+        # Note: This will miss cross-level relationships!
+        import warnings
+        warnings.warn(
+            "unified_provenance_tree.json not found. Using per-level trees which may miss cross-level relationships. "
+            "Consider re-running tracking with updated code.",
+            UserWarning
+        )
+
+        level_trees: Dict[int, Dict[str, Any]] = {}
+        for level in levels:
+            tree_path = run_path / 'relations' / f'provenance_tree_L{level}.json'
+            if tree_path.exists():
+                level_trees[level] = load_provenance_tree(str(tree_path))
+
+        if not level_trees:
+            raise FileNotFoundError(f"No provenance trees found in {run_dir}/relations/")
+
+        # Build unified object registry from per-level trees
+        all_parent_map: Dict[int, Optional[int]] = {}
+        all_virtual_children: Dict[int, List[str]] = {}
+
+        for level, tree_data in level_trees.items():
+            parent_map = tree_data.get('parent_map', {})
+
+            # Convert string keys to int
+            for obj_id_str, parent_id in parent_map.items():
+                obj_id = int(obj_id_str)
+                all_parent_map[obj_id] = int(parent_id) if parent_id is not None else None
+
+            # Load virtual children from provenance tree
+            virtual_children = tree_data.get('virtual_children', {})
+            for parent_id_str, children_list in virtual_children.items():
+                parent_id = int(parent_id_str)
+                if parent_id not in all_virtual_children:
+                    all_virtual_children[parent_id] = []
+                all_virtual_children[parent_id].extend(children_list)
+
+    # Ensure level_trees is populated for frame loading
     if not level_trees:
         raise FileNotFoundError(f"No provenance trees found in {run_dir}/relations/")
 
-    # Build unified object registry
+    # Build unified object registry from level trees (for frame information)
     objects: Dict[int, Dict[str, Any]] = {}
-    all_parent_map: Dict[int, Optional[int]] = {}
-    all_virtual_children: Dict[int, List[str]] = {}
 
     for level, tree_data in level_trees.items():
         parent_map = tree_data.get('parent_map', {})
 
-        # Convert string keys to int
-        for obj_id_str, parent_id in parent_map.items():
-            obj_id = int(obj_id_str)
-            all_parent_map[obj_id] = int(parent_id) if parent_id is not None else None
-
-        # Load virtual children from provenance tree
-        virtual_children = tree_data.get('virtual_children', {})
-        for parent_id_str, children_list in virtual_children.items():
-            parent_id = int(parent_id_str)
-            if parent_id not in all_virtual_children:
-                all_virtual_children[parent_id] = []
-            all_virtual_children[parent_id].extend(children_list)
-
         # Load frame information from video segments
         # Try multiple path formats (backward compatibility + new formats)
-        # Priority: New format first, then old formats
+        # Priority: New format first (L-prefixed), then old formats (scale-based)
         video_segments_candidates = [
-            # New format (L-prefixed, directly in level dir)
+            # New format (L-prefixed, directly in level dir) - PRIORITY 1
             run_path / f'level_{level}' / f'video_segments_L{level:02d}.npz',
-            # New format variant (in tracking subdir)
+            # New format variant (in tracking subdir) - PRIORITY 2
             run_path / f'level_{level}' / 'tracking' / f'video_segments_L{level:02d}.npz',
-            # Old format (scale-based naming)
+            # Old format (scale-based naming, in tracking subdir) - PRIORITY 3
             run_path / f'level_{level}' / 'tracking' / f'video_segments_scale{mask_scale_ratio}x.npz',
+            # Old format variant (directly in level dir) - PRIORITY 4
             run_path / f'level_{level}' / f'video_segments_scale{mask_scale_ratio}x.npz',
         ]
 

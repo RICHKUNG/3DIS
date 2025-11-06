@@ -173,6 +173,24 @@ class FamilyTreeQuery:
 
         archive_path = self.run_dir / archive_rel_path
 
+        # If path doesn't exist, try fallback paths (for backward compatibility)
+        if not archive_path.exists():
+            level = obj_info.get('level')
+            if level is not None:
+                fallback_candidates = [
+                    # New format (L-prefixed, directly in level dir) - PRIORITY 1
+                    self.run_dir / f'level_{level}' / f'video_segments_L{level:02d}.npz',
+                    # New format variant (in tracking subdir) - PRIORITY 2
+                    self.run_dir / f'level_{level}' / 'tracking' / f'video_segments_L{level:02d}.npz',
+                    # Old format (scale-based naming) - PRIORITY 3
+                    self.run_dir / f'level_{level}' / 'tracking' / f'video_segments_scale0.3x.npz',
+                    self.run_dir / f'level_{level}' / f'video_segments_scale0.3x.npz',
+                ]
+                for candidate in fallback_candidates:
+                    if candidate.exists():
+                        archive_path = candidate
+                        break
+
         # Check cache first
         archive_key = str(archive_path)
         if archive_key not in self._archive_cache:
