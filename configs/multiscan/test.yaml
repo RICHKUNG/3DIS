@@ -2,17 +2,17 @@
 # Only difference: limited scene range for faster testing
 
 experiment:
-  name: test_1105_ssam4_filter300_fill500_fix
+  name: test_1108_ssam4_filter500_fill500_propinf_135
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   scene_start: scene_00005_00  # Test with small scene range
   scene_end: scene_00006_01    # 4 scenes for testing
-  parallel_scenes: 2
+  parallel_scenes: 1
   force_parallel: true  # Match base.yaml: bypass OOM monitoring
   levels:
-    - 2
-    - 4
-    - 6
+    - 1
+    - 3
+    - 5
   tag: tag
   tag_in_path: false
   aggregate_output: false
@@ -22,11 +22,11 @@ experiment:
     step: 50
 
 stages:
-  gpu: 1
+  gpu: 0
   ssam:
     enabled: true
     ssam_freq: 4
-    min_area: 300
+    min_area: 500
     stability_threshold: null  # Don't use stability filtering at SSAM stage (Phase 2.2)
     persist_raw: true
     skip_filtering: true
@@ -40,12 +40,12 @@ stages:
     sam_ckpt: /media/Pluto/Yenhongxuan/Semantic-SAM/ckpts/swinl_only_sam_many2many.pth
   filter:
     enabled: true
-    min_area: 300
+    min_area: 500
     stability_threshold: 1.0  # Post-SSAM filtering (not currently used)
   tracker:
     enabled: true
     prompt_mode: all_mask
-    max_propagate: 30
+    max_propagate: null
     iou_threshold: 0.6
     downscale_masks: true
     downscale_ratio: 0.3  # Match base.yaml: full resolution

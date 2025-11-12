@@ -1,0 +1,134 @@
+# Pipeline Template - Quick Setup for My3DIS Experiments
+# Copy this file and modify the paths for your experiment
+#
+# Usage:
+#   cp configs/inference/pipeline_template.yaml configs/inference/my_experiment.yaml
+#   # Edit my_experiment.yaml to set your paths
+#   python scripts/run_full_pipeline.py --config configs/inference/my_experiment.yaml
+
+# ============================================================================
+# REQUIRED: Update these paths for your experiment
+# ============================================================================
+experiment:
+  # Path to My3DIS experiment output directory
+  exp_dir: /media/Pluto/richkung/My3DIS/outputs/experiments/YOUR_EXPERIMENT_NAME
+
+  # Path to MultiScan scene directory
+  scene_path: /media/public_dataset2/multiscan/YOUR_SCENE_NAME
+
+  # Output directories (null = auto-generate as subdirs of exp_dir)
+  aggregation_output_dir: null  # Will use exp_dir/aggregation_output
+  inference_output_dir: null    # Will use exp_dir/inference_output
+
+  # Levels to process (should match your experiment)
+  levels: [2, 4, 6]
+
+  # Device configuration
+  # Options: cuda, cuda:0, cuda:1, cuda:2, cuda:3, cpu
+  # Use cuda:X to specify which GPU to use
+  device: cuda:0
+
+# ============================================================================
+# Aggregation Stage (2D → 3D + Feature Extraction)
+# ============================================================================
+aggregation:
+  enabled: true
+
+  # Merging and filtering parameters
+  iou_threshold: 0.8           # IoU threshold for merging overlapping proposals
+  area_fraction: 0.002         # Min area as fraction of total points (1/500)
+
+  # Feature extraction
+  extract_features: true
+  siglip_model: google/siglip-so400m-patch14-384
+  pooling_mode: voting         # voting (preserves magnitude) or average (L2 normalized)
+
+  # 3D projection settings (should match your tracking config)
+  projection:
+    vis_depth_threshold: 0.1
+    frequency: 50
+    resize_ratio: 0.3          # Must match tracker downscale_ratio
+    depth_scale: 1000.0
+
+# ============================================================================
+# Inference Stage (OV-3DIS)
+# ============================================================================
+inference:
+  enabled: true
+  strategy: independent        # independent or hierarchical
+
+  # Retrieval settings
+  retrieval:
+    temperature: 0.2
+    min_similarity: 0.2
+    top_k_per_level: 50
+    object_levels: [L2, L4]
+    part_levels: [L4, L6]
+
+  # Object-part pairing
+  pairing:
+    containment_threshold: 0.5
+    scale_range: [0.01, 0.9]
+    use_geometric_score: true
+    use_tree_pruning: true
+
+  # NMS (multi-instance aware)
+  nms:
+    iou_threshold: 0.35
+    use_soft_nms: false
+    centroid_distance_ratio: 0.2
+    keep_top_k: 200
+
+  # Score aggregation
+  scoring:
+    method: weighted_sum
+    weights:
+      object: 0.4
+      part: 0.4
+      geometric: 0.2
+    temperature: 1.0
+    hierarchy_bonus: 0.05
+
+  # Output formatting
+  formatter:
+    use_part_mask: true
+    min_mask_size: 10
+
+  # Strategy-specific parameters
+  independent:
+    object_levels: [L2, L4]
+    part_levels: [L4, L6]
+    top_k_per_level: 50
+    retrieval_threshold: 0.3
+    min_retrieval_threshold: 0.05
+    threshold_backoff_step: 0.05
+    fallback_to_topk: true
+
+  hierarchical:
+    coarse_top_k: 100
+    object_top_k: 50
+    part_top_k: 30
+    coarse_threshold: 0.2
+    refinement_threshold: 0.3
+    refinement_margin: 0.1
+
+# ============================================================================
+# Evaluation Stage (Optional)
+# ============================================================================
+evaluation:
+  enabled: false
+  gt_path: null                # Path to Search3D ground truth
+  query_file: null             # Path to query file (null = use default)
+  dataset_root: /media/public_dataset2/multiscan
+  scenes: null                 # null = all scenes in experiment
+  num_workers: 4
+  save_per_scene_metrics: true
+  save_per_class_metrics: true
+
+# ============================================================================
+# Logging
+# ============================================================================
+logging:
+  level: INFO
+  save_logs: true
+  log_file: pipeline.log

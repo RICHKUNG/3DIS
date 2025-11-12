@@ -1,0 +1,59 @@
+# Quick Evaluation Configuration for My3DIS Experiments
+# This config is optimized for fast evaluation on MultiScan dataset
+
+strategy: independent  # Options: independent, hierarchical
+
+# Retrieval settings
+retrieval:
+  temperature: 0.2
+  min_similarity: 0.2
+  top_k_per_level: 50
+  object_levels: [L2, L4]
+  part_levels: [L4, L6]
+
+# Pairing settings (for geometric constraints)
+pairing:
+  containment_threshold: 0.5  # Minimum containment ratio for object-part pairs
+  scale_range: [0.01, 0.9]    # Valid part scale relative to object
+  use_geometric_score: true   # Use geometric consistency in scoring
+  use_tree_pruning: true      # Use family tree for efficient pruning
+
+# NMS settings (multi-instance aware)
+nms:
+  iou_threshold: 0.35          # Lower = preserve more instances
+  use_soft_nms: false          # Use soft NMS (score decay instead of removal)
+  centroid_distance_ratio: 0.2 # Spatial separation threshold
+  keep_top_k: 200              # Maximum predictions per scene
+
+# Score aggregation
+scoring:
+  method: weighted_sum
+  weights:
+    object: 0.4      # Weight for object retrieval score
+    part: 0.4        # Weight for part retrieval score
+    geometric: 0.2   # Weight for geometric consistency
+  temperature: 1.0
+  hierarchy_bonus: 0.05  # Bonus for hierarchical consistency
+
+# Strategy-specific settings
+independent:
+  object_levels: [L2, L4]
+  part_levels: [L4, L6]
+  top_k_per_level: 50
+  retrieval_threshold: 0.3
+  min_retrieval_threshold: 0.05   # Lowest similarity before forcing top-k
+  threshold_backoff_step: 0.05    # Step size when lowering thresholds
+  fallback_to_topk: true          # Force top-k if nothing passes similarity filters
+
+hierarchical:
+  coarse_top_k: 100
+  object_top_k: 50
+  part_top_k: 30
+  coarse_threshold: 0.2
+  refinement_threshold: 0.3
+  refinement_margin: 0.1
+
+# Output formatter
+formatter:
+  use_part_mask: true    # Use part mask as final prediction
+  min_mask_size: 10      # Minimum points for valid mask

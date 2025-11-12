@@ -178,30 +178,37 @@ def visualize_family(
             level = obj_info['level']
             members_by_level.setdefault(level, []).append(obj_id)
 
-    # Find common frames where multiple levels appear
-    level_frame_sets = {}
-    for level, obj_ids in members_by_level.items():
-        frames_union = set()
-        for obj_id in obj_ids:
-            frames_union.update(query.get_object_frames(obj_id))
-        level_frame_sets[level] = frames_union
+    # Find common frames where ALL family members appear (not just levels)
+    # This prevents "Object X does not appear in frame Y" warnings
+    all_member_frames = []
+    for obj_id in family_members:
+        frames = query.get_object_frames(obj_id)
+        if frames:
+            all_member_frames.append(set(frames))
 
-    # Find frames where at least 2 levels appear
-    if len(level_frame_sets) < 2:
+    if not all_member_frames:
+        print(f"  Family {family_idx}: No frames found for any member, skipping")
+        return []
+
+    if len(members_by_level) < 2:
         print(f"  Family {family_idx}: Only 1 level present, skipping")
         return []
 
-    common_frames = set.intersection(*level_frame_sets.values())
-    if not common_frames:
-        # Relax: find frames where at least 2 levels appear
-        common_frames = set()
-        level_list = list(level_frame_sets.values())
-        for i in range(len(level_list)):
-            for j in range(i + 1, len(level_list)):
-                common_frames.update(level_list[i] & level_list[j])
+    # Strategy 1: Find frames where ALL members appear
+    common_frames = set.intersection(*all_member_frames)
 
     if not common_frames:
-        print(f"  Family {family_idx}: No common frames across levels, skipping")
+        # Strategy 2: Find frames where at least 70% of members appear
+        from collections import Counter
+        frame_counts = Counter()
+        for frame_set in all_member_frames:
+            frame_counts.update(frame_set)
+
+        threshold = max(2, int(len(all_member_frames) * 0.7))
+        common_frames = {f for f, count in frame_counts.items() if count >= threshold}
+
+    if not common_frames:
+        print(f"  Family {family_idx}: No common frames across members, skipping")
         return []
 
     # Sample frames
@@ -257,6 +264,11 @@ def visualize_family(
             # Load masks for this level
             masks = {}
             for obj_id in level_obj_ids:
+                # Check if object appears in this frame before loading
+                obj_frames = query.get_object_frames(obj_id)
+                if frame_idx not in obj_frames:
+                    continue  # Skip silently, object not in this frame
+
                 mask = query.load_mask(obj_id, frame_idx)
                 if mask is not None:
                     masks[obj_id] = mask

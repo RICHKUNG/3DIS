@@ -137,9 +137,144 @@ Each run produces:
 ### Streaming Architecture
 - **Raw SSAM:** Chunked tar archives to avoid millions of small files (`raw_archive.py`)
 - **SAM2 Output:** Manifest-backed NPZ/ZIP archives, never materialize entire arrays in memory
-- **Mask Encoding:** Packed binary format (`common_utils.py:encode_mask`) used throughout
+- **Mask Encoding:** Packed binary format (`my3dis.mask.encoding.encode_mask`) used throughout
+
+### Module Structure (NEW - 2025-11-07)
+
+The codebase uses a modular structure for better organization:
+
+**Mask Operations** (`src/my3dis/mask/`):
+- `encoding.py` - Pack/unpack binary masks, downscaling
+- `geometry.py` - Bounding box extraction and conversion
+
+**I/O Utilities** (`src/my3dis/io/`):
+- `fs_utils.py` - Directory creation, frame subset building
+
+**General Utilities** (`src/my3dis/utils/`):
+- `time_utils.py` - Duration formatting
+- `parsing.py` - Config parsing (levels, ranges, CSV)
+- `sorting.py` - Numeric filename sorting
+- `logging.py` - Logging configuration
+
+**Legacy Compatibility**:
+- `common_utils.py` - Re-exports from new modules for backward compatibility
+- Will be maintained until v2.2 (approximately 9 months)
+- New code should import from specific modules for clarity
+
+**Example**:
+```python
+# Preferred (new code)
+from my3dis.mask.encoding import encode_mask, pack_binary_mask
+from my3dis.utils.parsing import parse_levels
+
+# Still works (legacy code)
+from my3dis.common_utils import encode_mask, parse_levels
+```
+
+### StageRunner Pattern (NEW - 2025-11-07)
+
+The workflow now uses a **StageRunner pattern** for better modularity and testability. Each pipeline stage is implemented as an independent class that implements the `StageRunner` interface.
+
+**Architecture** (`src/my3dis/workflow/`):
+- `stage_runner.py` - Abstract base class defining the stage interface
+- `stages/` - Directory containing all stage implementations
+  - `ssam_stage.py` - Semantic-SAM candidate generation
+  - `filter_stage.py` - Candidate filtering
+  - `tracker_stage.py` - SAM2 tracking
+  - `family_tree_stage.py` - Family tree generation
+  - `family_viz_stage.py` - Family visualization
+  - `report_stage.py` - Report generation
+
+**Benefits**:
+- Each stage is independently testable
+- Easy to add new stages
+- Clear separation of concerns
+- Consistent stage execution interface
+
+**Creating a Custom Stage**:
+```python
+from my3dis.workflow.stage_runner import StageRunner
+
+class CustomStageRunner(StageRunner):
+    @property
+    def name(self) -> str:
+        """Return stage name for configuration lookup."""
+        return "custom"
+
+    def should_run(self) -> bool:
+        """Determine if stage should execute based on config."""
+        return self._stage_cfg().get('enabled', True)
+
+    def execute(self) -> None:
+        """Execute stage-specific logic."""
+        self._log(f"Starting {self.name} stage...")
+
+        # Your stage logic here
+        # Access context via: self.context
+        # Access config via: self._stage_cfg()
+        # Record timing via: self._record_stage_timing()
+
+        self._log(f"{self.name} stage completed")
+```
+
+**Usage in SceneWorkflow**:
+```python
+from my3dis.workflow.scene_workflow import SceneWorkflow, SceneContext
+
+# SceneWorkflow automatically registers all standard stages
+context = SceneContext(
+    config=config,
+    experiment_cfg=experiment_cfg,
+    stages_cfg=stages_cfg,
+    default_stage_gpu=None,
+    data_path="/path/to/scene/color",
+    output_root="/path/to/output",
+    config_path=Path("config.yaml"),
+)
+
+workflow = SceneWorkflow(context)
+summary = workflow.run()  # Executes all enabled stages
+```
+
+**Backward Compatibility**:
+- The refactored workflow maintains 100% API compatibility
+- `run_scene_workflow()` function still works as before
+- Original implementation backed up as `scene_workflow_legacy.py`
 
 ## Project Status & Recent Changes
+
+**Module Refactoring (2025-11-07):**
+
+**Phase 1 - common_utils.py Modularization (COMPLETE):**
+- ✅ **Reduced from 306 lines to 109 lines (-64.4%)**
+- ✅ Split into specialized modules: `mask/`, `io/`, `utils/`
+  - `my3dis.mask.encoding` - Mask encoding/decoding operations (187 lines)
+  - `my3dis.mask.geometry` - Bounding box and geometric operations (32 lines)
+  - `my3dis.io.fs_utils` - Filesystem utilities (76 lines)
+  - `my3dis.utils.time_utils` - Time formatting (30 lines)
+  - `my3dis.utils.parsing` - Configuration parsing (78 lines)
+  - `my3dis.utils.sorting` - Sorting utilities (33 lines)
+  - `my3dis.utils.logging` - Logging configuration (69 lines)
+- ✅ **100% Backward Compatibility:** All existing imports continue to work
+- ✅ **Comprehensive Testing:** Test suite (`scripts/test_refactoring_phase1.py`) validates all modules
+
+**Phase A - scene_workflow.py StageRunner Refactoring (COMPLETE):**
+- ✅ **Reduced from 664 lines to 264 lines (-60.2%)**
+- ✅ **StageRunner Pattern:** Extracted 6 independent stage implementations
+  - `stages/ssam_stage.py` - Semantic-SAM candidate generation (162 lines)
+  - `stages/filter_stage.py` - Candidate filtering (81 lines)
+  - `stages/tracker_stage.py` - SAM2 tracking (99 lines)
+  - `stages/family_tree_stage.py` - Family tree generation (71 lines)
+  - `stages/family_viz_stage.py` - Family visualization (127 lines)
+  - `stages/report_stage.py` - Report generation (78 lines)
+- ✅ **Abstract Interface:** `stage_runner.py` defines consistent stage execution pattern
+- ✅ **100% Backward Compatibility:** All existing APIs preserved, legacy version backed up
+- ✅ **Integration Tested:** All imports and executor integration verified
+
+**Overall Progress:**
+- 📊 **50% Complete** (2/4 phases finished)
+- 📚 **Documentation:** See [`REFACTORING_STATUS_2025_11_07.md`](REFACTORING_STATUS_2025_11_07.md) and [`REFACTORING_PROGRESS_2025_11_07.md`](REFACTORING_PROGRESS_2025_11_07.md)
+- 🎯 **Impact:** Significantly improved code organization, modularity, and maintainability without breaking changes
 
 **Cascade Filtering & Orphan Fix (2025-11-04):**
 - ✅ **Cascade Filtering:** Parent-aware filtering prevents orphan creation at SSAM stage

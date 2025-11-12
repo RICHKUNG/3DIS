@@ -10,6 +10,7 @@ Main components:
 - nms: Multi-instance aware Non-Maximum Suppression
 - strategies: Different inference strategies (independent, hierarchical, exhaustive)
 - formatter: Output formatting for Search3D evaluation
+- feature_extraction: SigLIP feature extraction for proposals and text queries
 """
 
 from .retrieval import MultiLevelRetriever
@@ -18,6 +19,7 @@ from .nms import multi_instance_nms
 from .scoring import ScoreAggregator
 from .formatter import Search3DFormatter
 from .inference_pipeline import InferencePipeline
+from .feature_extraction import SigLIPFeatureExtractor
 
 __all__ = [
     'MultiLevelRetriever',
@@ -26,4 +28,5 @@ __all__ = [
     'ScoreAggregator',
     'Search3DFormatter',
     'InferencePipeline',
+    'SigLIPFeatureExtractor',
 ]

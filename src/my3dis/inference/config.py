@@ -56,6 +56,9 @@ class IndependentStrategyConfig:
     part_levels: List[str] = field(default_factory=lambda: ['L4', 'L6'])
     top_k_per_level: int = 50
     retrieval_threshold: float = 0.3
+    min_retrieval_threshold: float = 0.05
+    threshold_backoff_step: float = 0.05
+    fallback_to_topk: bool = True
 
 
 @dataclass
@@ -127,7 +130,14 @@ class InferenceConfig:
 
     def to_yaml(self, path: str):
         """Save configuration to YAML file."""
-        data = {
+        data = self.to_dict()
+
+        with open(path, 'w') as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return configuration as a serializable dictionary."""
+        return {
             'strategy': self.strategy,
             'retrieval': {
                 'temperature': self.retrieval.temperature,
@@ -164,6 +174,9 @@ class InferenceConfig:
                 'part_levels': self.independent.part_levels,
                 'top_k_per_level': self.independent.top_k_per_level,
                 'retrieval_threshold': self.independent.retrieval_threshold,
+                'min_retrieval_threshold': self.independent.min_retrieval_threshold,
+                'threshold_backoff_step': self.independent.threshold_backoff_step,
+                'fallback_to_topk': self.independent.fallback_to_topk,
             },
             'hierarchical': {
                 'coarse_top_k': self.hierarchical.coarse_top_k,
@@ -175,9 +188,6 @@ class InferenceConfig:
             },
         }
 
-        with open(path, 'w') as f:
-            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-
     def get_strategy_kwargs(self) -> Dict[str, Any]:
         """Get kwargs for strategy initialization based on selected strategy."""
         if self.strategy == "independent":
@@ -186,6 +196,9 @@ class InferenceConfig:
                 'part_levels': self.independent.part_levels,
                 'top_k_per_level': self.independent.top_k_per_level,
                 'retrieval_threshold': self.independent.retrieval_threshold,
+                'min_retrieval_threshold': self.independent.min_retrieval_threshold,
+                'threshold_backoff_step': self.independent.threshold_backoff_step,
+                'fallback_to_topk': self.independent.fallback_to_topk,
             }
         elif self.strategy == "hierarchical":
             return {

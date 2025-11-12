@@ -47,6 +47,9 @@ independent:
   part_levels: [L4, L6]
   top_k_per_level: 50
   retrieval_threshold: 0.3
+  min_retrieval_threshold: 0.05
+  threshold_backoff_step: 0.05
+  fallback_to_topk: true
 
 # Hierarchical strategy specific parameters
 hierarchical:

@@ -9,15 +9,23 @@ This module handles the first stage of 3D projection pipeline:
 
 Input: family_tree.json from SAM2 stage
 Output: 3D proposals (NPZ format) ready for SigLIP feature assignment
+
+Components:
+- AggregationPipeline: Full 2D→3D projection pipeline (requires depth maps)
+- ProposalLoader: Lightweight loader for 2D masks from tracking outputs
+- MaskProjector: 2D to 3D projection utilities
 """
 
 from .aggregation_pipeline import AggregationPipeline
 from .mask_projection import MaskProjector
 from .aggregation_utils import aggregate_masks_3d, compute_proposal_geometry
+from .proposal_loader import ProposalLoader, load_proposals_from_experiment
 
 __all__ = [
     'AggregationPipeline',
     'MaskProjector',
     'aggregate_masks_3d',
     'compute_proposal_geometry',
+    'ProposalLoader',
+    'load_proposals_from_experiment',
 ]
