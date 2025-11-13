@@ -67,7 +67,9 @@
       "Bash(timeout 5 find:*)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(PYTHONPATH=src conda run:*)"
+      "Bash(PYTHONPATH=src conda run:*)",
+      "WebFetch(domain:search3d-segmentation.github.io)",
+      "WebFetch(domain:arxiv.org)"
     ],
     "deny": [],
     "ask": []

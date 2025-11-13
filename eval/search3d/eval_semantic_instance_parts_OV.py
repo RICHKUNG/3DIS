@@ -39,6 +39,40 @@ opt["distance_threshes"] = np.array([float("inf")])
 opt["distance_confs"] = np.array([-float("inf")])
 
 
+def _load_instance_labels(file_path: str) -> np.ndarray:
+    labels = []
+    with open(file_path, "r") as f:
+        for line in f:
+            stripped = line.strip()
+            if stripped == "":
+                continue
+            labels.append(int(stripped))
+    return np.asarray(labels, dtype=np.int64)
+
+
+def _labels_to_prediction_dict(labels: np.ndarray) -> dict:
+    num_points = labels.shape[0]
+    unique_ids = np.unique(labels)
+    unique_ids = unique_ids[unique_ids > 0]
+
+    if unique_ids.size == 0:
+        return {
+            "pred_classes": np.zeros(0, dtype=np.int32),
+            "pred_scores": np.zeros(0, dtype=np.float32),
+            "pred_masks": np.zeros((num_points, 0), dtype=bool),
+        }
+
+    pred_classes = (unique_ids // 1000).astype(np.int32)
+    pred_scores = np.ones(unique_ids.shape[0], dtype=np.float32)
+    pred_masks = labels[:, None] == unique_ids[None, :]
+
+    return {
+        "pred_classes": pred_classes,
+        "pred_scores": pred_scores,
+        "pred_masks": pred_masks,
+    }
+
+
 def evaluate_matches(matches):
     overlaps = opt["overlaps"]
     min_region_sizes = [opt["min_region_sizes"][0]]
@@ -344,6 +378,16 @@ def assign_instances_for_scan(pred: dict, gt_file: str):
         pred2gt[label_name].append(pred_instance)
 
     return gt2pred, pred2gt
+
+
+def evaluate_scan_from_files(
+    pred_file: str, gt_file: str, scene_name: str = ""
+):
+    pred_labels = _load_instance_labels(pred_file)
+    pred = _labels_to_prediction_dict(pred_labels)
+    gt2pred, pred2gt = assign_instances_for_scan(pred=pred, gt_file=gt_file)
+    match_entry = {"gt": gt2pred, "pred": pred2gt}
+    return match_entry
 
 
 def print_results(avgs):

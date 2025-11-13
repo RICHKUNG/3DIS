@@ -19,7 +19,13 @@ from .pairing import ObjectPartPairer, FamilyTree
 from .nms import Prediction
 from .scoring import ScoreAggregator
 from .formatter import Search3DFormatter
-from .strategies import InferenceStrategy, IndependentStrategy, HierarchicalStrategy
+from .strategies import (
+    InferenceStrategy,
+    IndependentStrategy,
+    HierarchicalStrategy,
+    ExhaustivePairingStrategy,
+    ExhaustivePairingWithCombinedQuery
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +141,13 @@ class InferencePipeline:
     ) -> InferenceStrategy:
         """Create inference strategy."""
         if strategy_name == "independent":
+            # Log combined query mode if enabled
+            use_combined_query = kwargs.get('use_combined_query', True)
+            if use_combined_query:
+                logger.info("IndependentStrategy: Using combined query mode (default)")
+            else:
+                logger.info("IndependentStrategy: Using separate query mode")
+
             return IndependentStrategy(
                 retriever=self.retriever,
                 pairer=self.pairer,
@@ -147,7 +160,64 @@ class InferencePipeline:
             if self.family_tree is None:
                 raise ValueError("Hierarchical strategy requires family tree")
 
+            # Log combined query mode if enabled
+            use_combined_query = kwargs.get('use_combined_query', True)
+            if use_combined_query:
+                logger.info("HierarchicalStrategy: Using combined query mode (default)")
+            else:
+                logger.info("HierarchicalStrategy: Using separate query mode")
+
             return HierarchicalStrategy(
+                retriever=self.retriever,
+                pairer=self.pairer,
+                score_aggregator=self.score_aggregator,
+                family_tree=self.family_tree,
+                **kwargs
+            )
+
+        elif strategy_name == "exhaustive_pairing":
+            # Check if combined query mode is enabled
+            use_combined_query = kwargs.pop('use_combined_query', False)
+
+            if use_combined_query:
+                logger.info("Using ExhaustivePairingWithCombinedQuery (combined 'X of Y' mode)")
+                # Extract SigLIP-related parameters for combined query strategy
+                siglip_model = kwargs.pop('siglip_model', 'google/siglip-so400m-patch14-384')
+                siglip_device = kwargs.pop('siglip_device', 'cuda')
+                skip_model_load = kwargs.pop('skip_model_load', False)
+
+                return ExhaustivePairingWithCombinedQuery(
+                    retriever=self.retriever,
+                    pairer=self.pairer,
+                    score_aggregator=self.score_aggregator,
+                    family_tree=self.family_tree,
+                    siglip_model=siglip_model,
+                    device=siglip_device,
+                    skip_model_load=skip_model_load,
+                    **kwargs
+                )
+            else:
+                logger.info("Using ExhaustivePairingStrategy (separate query mode)")
+                # Remove SigLIP-related parameters that base strategy doesn't use
+                kwargs.pop('siglip_model', None)
+                kwargs.pop('siglip_device', None)
+                kwargs.pop('skip_model_load', None)
+
+                return ExhaustivePairingStrategy(
+                    retriever=self.retriever,
+                    pairer=self.pairer,
+                    score_aggregator=self.score_aggregator,
+                    family_tree=self.family_tree,
+                    **kwargs
+                )
+
+        elif strategy_name == "exhaustive_pairing_combined":
+            # Legacy support: directly specify combined query strategy
+            logger.warning(
+                "Strategy name 'exhaustive_pairing_combined' is deprecated. "
+                "Use 'exhaustive_pairing' with 'use_combined_query: true' instead."
+            )
+            return ExhaustivePairingWithCombinedQuery(
                 retriever=self.retriever,
                 pairer=self.pairer,
                 score_aggregator=self.score_aggregator,

@@ -16,6 +16,7 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+import re
 
 import numpy as np
 import torch
@@ -43,6 +44,39 @@ from .pipeline_functions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def detect_available_levels(exp_dir: Path) -> List[int]:
+    """
+    Auto-detect available levels from experiment directory structure.
+
+    Args:
+        exp_dir: Path to experiment directory
+
+    Returns:
+        Sorted list of available levels (e.g., [1, 3, 5] or [2, 4, 6])
+    """
+    if not exp_dir.exists():
+        logger.warning(f"Experiment directory does not exist: {exp_dir}")
+        return []
+
+    levels = []
+    level_pattern = re.compile(r'^level_(\d+)$')
+
+    for item in exp_dir.iterdir():
+        if item.is_dir():
+            match = level_pattern.match(item.name)
+            if match:
+                level_num = int(match.group(1))
+                # Check if video_segments file exists
+                video_segments_path = item / f"video_segments_L{level_num:02d}.npz"
+                if video_segments_path.exists():
+                    levels.append(level_num)
+                else:
+                    logger.debug(f"Level directory found but video_segments missing: {item}")
+
+    levels.sort()
+    return levels
 
 
 def _is_family_tree_format(data: Dict) -> bool:
@@ -162,6 +196,7 @@ class AggregationPipeline:
         device: str = 'cuda',
         config: Optional[Dict] = None,
         pooling_mode: str = 'average',
+        area_fraction_per_level: Optional[Dict[int, float]] = None,
     ):
         """
         Initialize aggregation pipeline.
@@ -171,12 +206,15 @@ class AggregationPipeline:
             scene_path: MultiScan scene directory
             iou_threshold: IoU threshold for merging proposals
             area_fraction: Minimum area as fraction of total points (default: 1/500)
+                Used as fallback if area_fraction_per_level is not specified
             device: Torch device
             config: Configuration dict (defaults from pipeline.ipynb if None)
             pooling_mode: Feature pooling mode - 'average' or 'voting' (default: 'average')
                 - 'average': Average point features, then L2 normalize
                 - 'voting': Average point features, NO L2 normalization (preserves magnitude)
                   Matches utils_ov_inference.py behavior (line 54-55)
+            area_fraction_per_level: Per-level area fractions (e.g., {2: 0.002, 4: 0.001, 6: 0.0005})
+                If None, uses area_fraction for all levels
         """
         self.exp_dir = Path(exp_dir)
         self.scene_path = Path(scene_path)
@@ -185,6 +223,7 @@ class AggregationPipeline:
         # Hyperparameters
         self.iou_threshold = iou_threshold
         self.area_fraction = area_fraction
+        self.area_fraction_per_level = area_fraction_per_level or {}
         self.pooling_mode = pooling_mode
 
         # Configuration (from pipeline.ipynb)
@@ -284,7 +323,8 @@ class AggregationPipeline:
 
         Args:
             output_dir: Output directory for 3D proposals
-            levels: Levels to process (default: [2, 4, 6])
+            levels: Levels to process. If None, will auto-detect from exp_dir.
+                   If auto-detection finds no levels, defaults to [2, 4, 6].
             extract_features: Whether to extract SigLIP features
             siglip_model: SigLIP model (required if extract_features=True)
             siglip_processor: SigLIP processor (required if extract_features=True)
@@ -296,15 +336,35 @@ class AggregationPipeline:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         if levels is None:
-            levels = [2, 4, 6]
+            # Auto-detect levels from experiment directory
+            detected_levels = detect_available_levels(self.exp_dir)
+            if detected_levels:
+                levels = detected_levels
+                logger.info(f"Auto-detected levels from experiment directory: {levels}")
+            else:
+                levels = [2, 4, 6]
+                logger.warning(f"No levels detected, using default: {levels}")
+        else:
+            logger.info(f"Using specified levels: {levels}")
 
         # Initialize WORLD_2_CAM
         if self.world2cam is None:
             self._init_world2cam()
 
-        # Compute area threshold
-        area_thresh = int(self.P * self.area_fraction)
-        logger.info(f"Area threshold: {area_thresh} points ({self.area_fraction:.4f} * {self.P})")
+        # Compute area thresholds (per-level or global)
+        area_thresh_by_level = {}
+        global_area_thresh = None
+        if self.area_fraction_per_level:
+            logger.info("Using per-level area thresholds:")
+            for level in levels:
+                frac = self.area_fraction_per_level.get(level, self.area_fraction)
+                area_thresh_by_level[level] = int(self.P * frac)
+                logger.info(f"  Level {level}: {area_thresh_by_level[level]} points ({frac:.4f} * {self.P})")
+        else:
+            global_area_thresh = int(self.P * self.area_fraction)
+            logger.info(f"Using global area threshold: {global_area_thresh} points ({self.area_fraction:.4f} * {self.P})")
+            for level in levels:
+                area_thresh_by_level[level] = global_area_thresh
 
         # Load family tree for relations
         logger.info("Loading family tree for relations...")
@@ -362,7 +422,10 @@ class AggregationPipeline:
         if 2 in levels and 2 in masks_by_level:
             logger.info("\nLevel 2: Merging and filtering...")
             new_mask_l2, col_ids, old2rep, dropped_ids, groups = merge_drop_level2_mask(
-                masks_by_level[2], self.iou_threshold, area_thresh
+                masks_by_level[2],
+                self.iou_threshold,
+                area_thresh_by_level[2],
+                proposal_ids=ids_by_level.get(2),
             )
 
             merged_away_ids, dropped_small_ids = split_merged_vs_small(dropped_ids, groups)
@@ -383,7 +446,7 @@ class AggregationPipeline:
                 masks_by_level[4],
                 relations,
                 self.iou_threshold,
-                area_thresh,
+                area_thresh_by_level[4],
                 proposal_ids=ids_by_level.get(4),
             )
 
@@ -400,7 +463,7 @@ class AggregationPipeline:
                 masks_by_level[6],
                 relations,
                 self.iou_threshold,
-                area_thresh,
+                area_thresh_by_level[6],
                 proposal_ids=ids_by_level.get(6),
             )
 
@@ -513,7 +576,7 @@ class AggregationPipeline:
             'ply_file': str(self.ply_file),
             'iou_threshold': self.iou_threshold,
             'area_fraction': self.area_fraction,
-            'area_threshold': area_thresh,
+            'area_threshold': area_thresh_by_level if self.area_fraction_per_level else global_area_thresh,
             'num_points': self.P,
             'outputs': results,
             'feature_extraction': extract_features,

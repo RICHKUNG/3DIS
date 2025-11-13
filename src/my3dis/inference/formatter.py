@@ -141,7 +141,7 @@ class Search3DFormatter:
         predictions = []
 
         for pair in pairs:
-            # Choose mask
+            # Choose mask for primary output
             if self.use_part_mask:
                 mask = pair.part_proposal.mask
             else:
@@ -151,10 +151,23 @@ class Search3DFormatter:
                     pair.part_proposal.mask
                 ).astype(np.uint8)
 
+            # Store both object and part masks in metadata for Search3D export
+            metadata = {
+                'object_mask': pair.object_proposal.mask,
+                'part_mask': pair.part_proposal.mask,
+                'object_id': pair.object_proposal.object_id,
+                'part_id': pair.part_proposal.object_id,
+                'object_level': pair.object_proposal.level,
+                'part_level': pair.part_proposal.level,
+                'object_score': pair.object_score,
+                'part_score': pair.part_score,
+            }
+
             pred = Prediction(
                 mask=mask,
                 score=pair.combined_score,
-                label_id=pair.label_id
+                label_id=pair.label_id,
+                metadata=metadata
             )
             predictions.append(pred)
 

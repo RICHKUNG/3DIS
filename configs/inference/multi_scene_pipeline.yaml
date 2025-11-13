@@ -1,0 +1,143 @@
+# Multi-Scene Inference Pipeline Configuration
+# Based on full_pipeline.yaml but supports multiple scenes
+#
+# Usage:
+#   python scripts/run_multi_scene_pipeline.py --config configs/inference/multi_scene_pipeline.yaml
+
+# ============================================================================
+# Experiment Settings (Multi-Scene)
+# ============================================================================
+experiment:
+  # Path to experiment root directory (contains multiple scene_XXX subdirectories)
+  exp_root: /media/Pluto/richkung/My3DIS/outputs/experiments/test_1108_ssam4_filter500_fill500_propinf
+
+  # MultiScan dataset root
+  dataset_root: /media/public_dataset2/multiscan
+
+  # Scene selection (multiple options):
+  # Option 1: Process all scenes
+  # scenes: all
+
+  # Option 2: Explicit list
+  scenes: [scene_00005_00, scene_00006_00, scene_00018_00]
+
+  # Option 3: Range (requires scene naming pattern scene_XXXXX_YY)
+  # scene_start: scene_00005_00
+  # scene_end: scene_00020_00
+
+  # Levels to process
+  levels: [2, 4, 6]
+
+  # Device configuration
+  device: cuda:1
+
+  # Parallel scene processing
+  parallel_scenes: 1  # Process scenes sequentially for stability
+
+# ============================================================================
+# Aggregation Stage Configuration (same as full_pipeline.yaml)
+# ============================================================================
+aggregation:
+  enabled: false  # Usually skip for multi-scene (already done)
+  iou_threshold: 0.8
+  area_fraction: 0.002
+  extract_features: true
+  siglip_model: google/siglip-so400m-patch14-384
+  pooling_mode: voting
+
+  projection:
+    vis_depth_threshold: 0.1
+    frequency: 50
+    resize_ratio: 0.3
+    depth_scale: 1000.0
+
+# ============================================================================
+# Inference Stage Configuration (RELAXED constraints)
+# ============================================================================
+inference:
+  enabled: true
+  export_predictions_ply: true
+  ply_export_max_predictions: 50
+  ply_export_colors:
+    - [255, 99, 71]
+    - [102, 205, 170]
+    - [65, 105, 225]
+    - [218, 112, 214]
+    - [255, 215, 0]
+    - [0, 191, 255]
+    - [144, 238, 144]
+    - [255, 140, 0]
+  test_all_strategies: true
+  strategies_to_test: [independent, hierarchical]
+  strategy: independent
+
+  retrieval:
+    temperature: 0.2
+    min_similarity: 0.05          # RELAXED
+    top_k_per_level: 100          # INCREASED
+    object_levels: [L2, L4]
+    part_levels: [L4, L6]
+
+  pairing:
+    containment_threshold: 0.1    # RELAXED
+    scale_range: [0.001, 0.99]    # RELAXED
+    use_geometric_score: true
+    use_tree_pruning: false       # DISABLED for maximum recall
+
+  nms:
+    iou_threshold: 0.35
+    use_soft_nms: false
+    soft_nms_sigma: 0.5
+    centroid_distance_ratio: 0.2
+    keep_top_k: 200
+
+  scoring:
+    method: weighted_sum
+    weights:
+      object: 0.4
+      part: 0.4
+      geometric: 0.2
+    temperature: 1.0
+    hierarchy_bonus: 0.05
+
+  formatter:
+    use_part_mask: true
+    min_mask_size: 10
+
+  independent:
+    object_levels: [L2, L4]
+    part_levels: [L4, L6]
+    top_k_per_level: 100
+    retrieval_threshold: 0.2      # RELAXED
+    min_retrieval_threshold: 0.01 # RELAXED
+    threshold_backoff_step: 0.03
+    fallback_to_topk: true
+
+  hierarchical:
+    coarse_top_k: 150             # INCREASED
+    object_top_k: 100             # INCREASED
+    part_top_k: 50                # INCREASED
+    coarse_threshold: 0.05        # RELAXED
+    refinement_threshold: 0.1     # RELAXED
+    refinement_margin: 0.05       # RELAXED
+
+# ============================================================================
+# Evaluation Stage Configuration
+# ============================================================================
+evaluation:
+  enabled: true
+  gt_path: /media/Pluto/richkung/My3DIS/data/search3d_gt/multiscan_data_search3d/multiscan_annotations_search3d/ov_part_annotations
+  query_file: /media/Pluto/richkung/My3DIS/eval/search3d/eval_semantic_instance_parts_OV.py
+  dataset_root: /media/public_dataset2/multiscan
+  scenes: null  # Inherit from experiment.scenes
+  num_workers: 4
+  save_per_scene_metrics: true
+  save_per_class_metrics: true
+
+# ============================================================================
+# Logging and Debugging
+# ============================================================================
+logging:
+  level: INFO
+  save_logs: true
+  log_file: multi_scene_pipeline.log

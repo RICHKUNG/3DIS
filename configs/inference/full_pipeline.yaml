@@ -14,14 +14,16 @@
 # Experiment Settings
 # ============================================================================
 experiment:
-  # Path to My3DIS experiment directory
+  # Path to My3DIS experiment directory (SCENE-SPECIFIC)
   # This directory should contain:
   #   - level_2/video_segments_L02.npz
   #   - level_4/video_segments_L04.npz
   #   - level_6/video_segments_L06.npz
   #   - relations/family_tree.json
-  exp_dir: /media/Pluto/richkung/My3DIS/outputs/experiments/test_1108_ssam4_filter500_fill500_propinf
-
+  # NOTE: For multi-scene experiments, this should point to the scene subdirectory,
+  #       e.g., .../test_1108_ssam4_filter500_fill500_propinf/scene_00005_00
+  exp_dir: /media/Pluto/richkung/My3DIS/outputs/experiments/test_1108_ssam4_filter500_fill500_propinf/scene_00005_00
+  levels: [2, 4, 6]
   # Path to MultiScan scene directory (for 3D reconstruction)
   # Example: /media/public_dataset2/multiscan/scene_00005_00
   scene_path: /media/public_dataset2/multiscan/scene_00005_00
@@ -37,8 +39,6 @@ experiment:
   inference_output_dir: null
 
   # Levels to process (should match your experiment levels)
-  levels: [2, 4, 6]
-
   # Device configuration
   # Options:
   #   - cuda (use default GPU)
@@ -59,7 +59,13 @@ aggregation:
   # Minimum area as fraction of total 3D points
   # Formula: min_points = num_points * area_fraction
   # Default 1/500 means proposals must have at least P/500 points
-  area_fraction: 0.002  # 1/500
+  area_fraction: 0.002  # 1/500 (used as fallback if area_fraction_per_level not set)
+
+  # Per-level area fractions (optional)
+  # If specified, overrides area_fraction for specific levels
+  # Useful for applying different size thresholds to different granularity levels
+  # Example: Stricter filtering for coarse levels, more permissive for fine levels
+  area_fraction_per_level: null  # Example: {2: 0.003, 4: 0.002, 6: 0.001}
 
   # Feature extraction settings
   extract_features: true
@@ -91,25 +97,50 @@ inference:
   # Enable/disable inference stage
   enabled: true
 
-  # Strategy: independent or hierarchical
+  # Export predictions as PLY point clouds (for visualization/debugging)
+  export_predictions_ply: true
+  ply_export_max_predictions: 50
+  ply_export_include_full_scene: true
+  ply_export_background_color: [80, 80, 80]
+  ply_export_colors:
+    - [255, 99, 71]
+    - [102, 205, 170]
+    - [65, 105, 225]
+    - [218, 112, 214]
+    - [255, 215, 0]
+    - [0, 191, 255]
+    - [144, 238, 144]
+    - [255, 140, 0]
+
+  # Multi-Strategy Testing (NEW)
+  # When enabled, runs inference with all specified strategies and generates comparison report
+  test_all_strategies: true  # Default: true (test all strategies)
+
+  # Strategies to test when test_all_strategies=true
+  # Available: independent, hierarchical, exhaustive_pairing
+  strategies_to_test: [independent, hierarchical, exhaustive_pairing]
+
+  # Single Strategy Selection (used when test_all_strategies=false)
+  # Strategy: independent, hierarchical, or exhaustive_pairing
   # - independent: Retrieve objects and parts independently, then pair
   # - hierarchical: Coarse-to-fine retrieval using hierarchy
+  # - exhaustive_pairing: Exhaustive level-pair evaluation with smart selection
   strategy: independent
 
   # Multi-level retrieval configuration
   retrieval:
     temperature: 0.2              # Temperature for similarity scoring (lower = sharper)
-    min_similarity: 0.2           # Minimum similarity threshold
-    top_k_per_level: 50           # Max proposals per level
+    min_similarity: 0.05          # Minimum similarity threshold - RELAXED from 0.2
+    top_k_per_level: 100          # Max proposals per level - INCREASED from 50
     object_levels: [L2, L4]       # Levels to search for objects
     part_levels: [L4, L6]         # Levels to search for parts
 
   # Object-Part pairing configuration
   pairing:
-    containment_threshold: 0.5    # Min containment ratio (part in object)
-    scale_range: [0.01, 0.9]      # Valid size ratio range (part/object)
-    use_geometric_score: true     # Include geometric score in final score
-    use_tree_pruning: true        # Use family tree to prune infeasible pairs
+    containment_threshold: 0.001  # Min containment ratio (part in object) - EXTREMELY RELAXED (0.1% overlap)
+    scale_range: [0.0001, 20.0]   # Valid size ratio range (part/object) - Allow part up to 20x object
+    use_geometric_score: false    # Include geometric score in final score - DISABLED for combined query
+    use_tree_pruning: false       # Use family tree to prune infeasible pairs - DISABLED for debugging
 
   # Non-Maximum Suppression configuration (multi-instance aware)
   nms:
@@ -121,11 +152,12 @@ inference:
 
   # Score aggregation configuration
   scoring:
-    method: weighted_sum          # Options: arithmetic, geometric, weighted_sum, max, min
+    method: arithmetic            # Options: arithmetic, geometric, weighted_sum, max, min
+                                   # arithmetic: (object_score + part_score) / 2 (recommended for combined query)
     weights:
-      object: 0.4                 # Weight for object similarity
-      part: 0.4                   # Weight for part similarity
-      geometric: 0.2              # Weight for geometric compatibility
+      object: 0.5                 # Weight for object similarity (used in weighted_sum)
+      part: 0.5                   # Weight for part similarity (used in weighted_sum)
+      geometric: 0.0              # Weight for geometric compatibility (disabled for combined query)
     temperature: 1.0              # Temperature for score scaling
     hierarchy_bonus: 0.05         # Bonus for expected level relationships
 
@@ -138,20 +170,49 @@ inference:
   independent:
     object_levels: [L2, L4]
     part_levels: [L4, L6]
-    top_k_per_level: 50
-    retrieval_threshold: 0.3
-    min_retrieval_threshold: 0.05
-    threshold_backoff_step: 0.05
+    top_k_per_level: 100          # INCREASED from 50
+    retrieval_threshold: 0.2      # RELAXED from 0.3
+    min_retrieval_threshold: 0.01 # RELAXED from 0.05
+    threshold_backoff_step: 0.03  # REDUCED from 0.05 for finer steps
     fallback_to_topk: true
+
+    # Combined Query Settings (DEFAULT)
+    use_combined_query: true      # Use "part of object" combined queries (DEFAULT)
+    siglip_model: google/siglip-so400m-patch14-384
+    siglip_device: cuda:0
 
   # Hierarchical strategy specific parameters
   hierarchical:
-    coarse_top_k: 100             # Top-K for coarse localization at L2
-    object_top_k: 50              # Max object candidates after refinement
-    part_top_k: 30                # Max part candidates per object
-    coarse_threshold: 0.2         # Similarity threshold for coarse stage
-    refinement_threshold: 0.3     # Similarity threshold for refinement
-    refinement_margin: 0.1        # Margin for preferring child over parent
+    coarse_top_k: 150             # Top-K for coarse localization at L2 - INCREASED from 100
+    object_top_k: 100             # Max object candidates after refinement - INCREASED from 50
+    part_top_k: 50                # Max part candidates per object - INCREASED from 30
+    coarse_threshold: 0.05        # Similarity threshold for coarse stage - RELAXED from 0.2
+    refinement_threshold: 0.1     # Similarity threshold for refinement - RELAXED from 0.3
+    refinement_margin: 0.05       # Margin for preferring child over parent - RELAXED from 0.1
+
+    # Combined Query Settings (DEFAULT)
+    use_combined_query: true      # Use "part of object" combined queries (DEFAULT)
+    siglip_model: google/siglip-so400m-patch14-384
+    siglip_device: cuda:0
+
+  # Exhaustive pairing strategy specific parameters
+  exhaustive_pairing:
+    available_levels: [L2, L4, L6]  # Levels to consider for pairing
+    top_k_per_level: 100            # Max proposals per level - INCREASED from 50
+    retrieval_threshold: 0.2        # Minimum similarity threshold for retrieval
+    min_retrieval_threshold: 0.05   # Minimum threshold for backoff fallback
+    threshold_backoff_step: 0.03    # Step size for threshold backoff
+    fallback_to_topk: true          # Fall back to top-k if no proposals above threshold
+    selection_metric: max           # How to select best level-pair: 'max', 'mean', or 'sum'
+    use_tree_pruning: false         # Use family tree to prune infeasible pairs
+    return_all_pairs: false         # Return pairs from all levels (true) or only best (false)
+
+    # Combined Query Settings (DEFAULT BEHAVIOR)
+    # Uses "part of object" combined queries with SigLIP feature extraction
+    # This is the recommended approach for OV part-level inference
+    use_combined_query: true        # Enable combined "X of Y" query mode (DEFAULT)
+    siglip_model: google/siglip-so400m-patch14-384  # SigLIP model for combined query features
+    siglip_device: cuda:0           # Device for SigLIP model (cuda:0, cuda:1, or cpu)
 
 # ============================================================================
 # Evaluation Stage Configuration (Optional)
@@ -160,9 +221,20 @@ evaluation:
   # Enable/disable evaluation stage
   enabled: true
 
-  # Path to Search3D ground truth annotations
-  # Example: /path/to/multiscan_annotations_search3d/ov_part_annotations
-  gt_path: /media/Pluto/richkung/My3DIS/data/search3d_gt/multiscan_data_search3d/multiscan_annotations_search3d/ov_part_annotations
+  # Ground truth path for OV object-part evaluation
+  gt_paths:
+    obj_part: /media/Pluto/richkung/My3DIS/data/search3d_gt/multiscan_data_search3d/multiscan_annotations_search3d/ov_part_annotations
+
+  # Evaluation modes to run (obj_part only)
+  eval_modes: ['obj_part']
+
+  # Evaluation script for obj_part
+  eval_scripts:
+    obj_part: eval/search3d/eval_semantic_instance_parts_OV.py
+
+  # DEPRECATED: Use gt_paths.obj_part instead
+  # Kept for backward compatibility
+  gt_path: null
 
   # Path to Search3D query file
   # If null, will use all queries from eval/search3d_ov_part_queries.txt

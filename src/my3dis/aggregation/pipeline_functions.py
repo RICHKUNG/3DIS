@@ -228,29 +228,41 @@ def merge_drop_level2_mask(
     mask_l2: torch.Tensor,
     iou_thresh: float,
     area_thresh: int,
+    proposal_ids: List[int] = None,
 ):
     """
     Returns:
       new_mask_l2: [P, N_keep] bool
-      col_ids: list[int] - proposal_id (1-based) for each column
-      old_to_rep_id: dict[int,int] - old_id(1-based) -> representative_id(1-based)
-      dropped_ids: set[int] - old_id(1-based) removed
-      merged_groups: dict[int,list[int]] - rep_id -> members (1-based)
+      col_ids: list[int] - proposal_id for each surviving column
+      old_to_rep_id: dict[int,int] - original proposal id -> representative id
+      dropped_ids: set[int] - original ids removed
+      merged_groups: dict[int,list[int]] - rep_id -> members (original ids)
     """
     assert mask_l2.dtype == torch.bool
     P, N = mask_l2.shape
+    if proposal_ids is not None and len(proposal_ids) != N:
+        raise ValueError(
+            f"proposal_ids (len={len(proposal_ids)}) must match mask columns (N={N})"
+        )
+
+    # Normalize IDs so downstream logic never relies on 1-based indices
+    id_lookup: List[int] = [
+        int(proposal_ids[i]) if proposal_ids is not None else i + 1
+        for i in range(N)
+    ]
 
     # 1) Drop tiny first
     areas = _areas_from_mask(mask_l2)
     keep_small = (areas >= area_thresh)
-    dropped_small_idx = torch.nonzero(~keep_small, as_tuple=False).squeeze(1).tolist()
+    drop_idxs = torch.nonzero(~keep_small, as_tuple=False).squeeze(1).tolist()
+    dropped_small_ids = [id_lookup[i] for i in drop_idxs]
 
     keep_mask = mask_l2[:, keep_small]
-    keep_ids  = [i+1 for i in range(N) if keep_small[i].item()]
+    keep_ids = [id_lookup[i] for i in range(N) if keep_small[i].item()]
 
     # 2) Merge by IoU
     if keep_mask.shape[1] == 0:
-        return keep_mask, [], {}, set([i+1 for i in range(N)]), {}
+        return keep_mask, [], {}, set(dropped_small_ids), {}
 
     iou = _iou_matrix(keep_mask)
     comps = _connected_components_by_thresh(iou, iou_thresh)
@@ -259,7 +271,7 @@ def merge_drop_level2_mask(
     col_ids  = []
     merged_groups = {}
     old_to_rep_id = {}
-    dropped_ids = set([idx+1 for idx in dropped_small_idx])
+    dropped_ids = set(dropped_small_ids)
 
     for comp in comps:
         comp_ids = [keep_ids[j] for j in comp]

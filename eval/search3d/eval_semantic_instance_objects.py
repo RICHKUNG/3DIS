@@ -18,7 +18,12 @@ from scipy import stats
 import util as util
 import util_3d as util_3d
 
-from search3d.benchmark.evaluation.multiscan.data.multiscan_search3d_constants import CLASS_LABELS, VALID_CLASS_IDS
+# Use local data constants instead of search3d package
+try:
+    from search3d.benchmark.evaluation.multiscan.data.multiscan_search3d_constants import CLASS_LABELS, VALID_CLASS_IDS
+except ImportError:
+    # Fallback to local import
+    from data.multiscan_search3d_constants import CLASS_LABELS, VALID_CLASS_IDS
 
 # ---------- Label info ---------- #
 DATASET_NAME = "multiscan_search3d_obj"
@@ -42,6 +47,40 @@ opt['min_region_sizes'] = np.array([100])  # 100 for scannet
 opt['distance_threshes'] = np.array([float('inf')])
 # distance confidences
 opt['distance_confs'] = np.array([-float('inf')])
+
+
+def _load_instance_labels(file_path: str) -> np.ndarray:
+    labels = []
+    with open(file_path, "r") as f:
+        for line in f:
+            stripped = line.strip()
+            if stripped == "":
+                continue
+            labels.append(int(stripped))
+    return np.asarray(labels, dtype=np.int64)
+
+
+def _labels_to_prediction_dict(labels: np.ndarray) -> dict:
+    num_points = labels.shape[0]
+    unique_ids = np.unique(labels)
+    unique_ids = unique_ids[unique_ids > 0]
+
+    if unique_ids.size == 0:
+        return {
+            "pred_classes": np.zeros(0, dtype=np.int32),
+            "pred_scores": np.zeros(0, dtype=np.float32),
+            "pred_masks": np.zeros((num_points, 0), dtype=bool),
+        }
+
+    pred_classes = (unique_ids // 1000).astype(np.int32)
+    pred_scores = np.ones(unique_ids.shape[0], dtype=np.float32)
+    pred_masks = labels[:, None] == unique_ids[None, :]
+
+    return {
+        "pred_classes": pred_classes,
+        "pred_scores": pred_scores,
+        "pred_masks": pred_masks,
+    }
 
 
 def evaluate_matches(matches):
@@ -366,6 +405,27 @@ def write_result_file(avgs, filename):
             f.write(_SPLITTER.join([str(x) for x in [class_name, class_id, ap, ap50, ap25]]) + '\n')
 
 
+def evaluate_scan_from_files(
+    pred_file: str, gt_file: str, scene_name: str = ""
+):
+    """
+    Evaluate a single scan from prediction and ground truth files.
+
+    Args:
+        pred_file: Path to prediction file (scene_*_obj_inst.txt)
+        gt_file: Path to ground truth file (scene_*_obj_inst.txt)
+        scene_name: Optional scene name for identification
+
+    Returns:
+        Dictionary with 'gt' and 'pred' match entries for evaluate_matches()
+    """
+    pred_labels = _load_instance_labels(pred_file)
+    pred = _labels_to_prediction_dict(pred_labels)
+    gt2pred, pred2gt = assign_instances_for_scan(pred=pred, gt_file=gt_file)
+    match_entry = {"gt": gt2pred, "pred": pred2gt}
+    return match_entry
+
+
 def evaluate(preds: dict, gt_path: str, output_file: str, dataset: str = "multiscan_search3d_obj"):
     #pdb.set_trace()
     global DATASET_NAME
@@ -419,4 +479,3 @@ def evaluate(preds: dict, gt_path: str, output_file: str, dataset: str = "multis
     # print
     print_results(avgs)
     return avgs
-

@@ -1,5 +1,5 @@
 experiment:
-  name: v5_246_ssam2_filter0_fill500_prop30_iou06_ds03
+  name: v5_246_ssam2_filter10_fill100_propinf_iou06_ds03
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   scene_start: scene_00005_00  # replace with first scene name (inclusive) to limit the run
@@ -21,16 +21,16 @@ experiment:
     step: 50
   # run_dir: /media/Pluto/richkung/My3DIS/outputs/experiments/test_1009_2/scene_00065_00/246_filter_fill_prop30
 stages:
-  gpu: 0
+  gpu: 1
   ssam:
     enabled: true
     ssam_freq: 2
-    min_area: 0
+    min_area: 10
     stability_threshold: 1.0
     persist_raw: true
     skip_filtering: true
     add_gaps: true
-    fill_area: 500
+    fill_area: 100
     append_timestamp: false
     downscale_masks: true
     downscale_ratio: 0.3
@@ -38,12 +38,12 @@ stages:
     sam_ckpt: /media/Pluto/Yenhongxuan/Semantic-SAM/ckpts/swinl_only_sam_many2many.pth
   filter:
     enabled: true
-    min_area: 
+    min_area: 10
     stability_threshold: 1.0
   tracker:
     enabled: true
     prompt_mode: all_mask
-    max_propagate: 30
+    max_propagate: null
     iou_threshold: 0.6
     downscale_masks: true
     downscale_ratio: 0.3
@@ -70,7 +70,7 @@ stages:
     # Enable automatic family visualization after tracking
     visualize_families: true
     family_viz:
-      num_families: 10              # Max families to visualize (null = all)
+      num_families: null              # Max families to visualize (null = all)
       max_frames_per_family: 3      # Frames to render per family
       output_subdir: visualizations # Output directory name
       random_seed: 42               # Seed for reproducible family selection
