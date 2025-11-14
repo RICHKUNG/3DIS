@@ -197,6 +197,10 @@ def filter_level(
             local_id = 0
             for ec in enriched_candidates:
                 unique_id = ec.get('unique_id')
+                # BUGFIX (2025-11-13): Also reject candidates without unique_id
+                # Cascade filter rejects these but doesn't add to rejection_reasons (can't use None as dict key)
+                if not unique_id:
+                    continue  # No unique_id - reject
                 if unique_id in rejection_reasons:
                     continue  # Rejected by cascade filter
 

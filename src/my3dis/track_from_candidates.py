@@ -11,6 +11,13 @@ if __package__ is None or __package__ == '':
     if str(src_path) not in sys.path:
         sys.path.insert(0, str(src_path))
 
+    # Configure temp directory to use /media partition (avoid root partition space issues)
+    tmp_dir = project_root / 'tmp'
+    tmp_dir.mkdir(exist_ok=True)
+    import os
+    os.environ['TMPDIR'] = str(tmp_dir)
+    os.environ['TEMP'] = str(tmp_dir)
+    os.environ['TMP'] = str(tmp_dir)
 
 import argparse
 import logging

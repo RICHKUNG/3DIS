@@ -261,7 +261,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--similarity-threshold", type=float, default=0.5, help="Threshold to flag high similarity")
     parser.add_argument("--output-json", type=Path, help="Optional path to dump JSON summary")
     parser.add_argument("--no-optimized", dest="use_optimized", action="store_false", default=True, help="Disable batched optimization (default: enabled)")
-    parser.add_argument("--no-sparse", dest="use_sparse", action="store_false", default=True, help="Disable sparse processing (default: enabled)")
     return parser.parse_args()
 
 
@@ -333,8 +332,8 @@ def main():
     local_only = args.local_files_only or Path(args.siglip_model).expanduser().exists()
     model, processor, tokenizer = load_siglip_components(args.siglip_model, local_only)
 
-    logger.info("Extracting proposal features (optimized=%s, sparse=%s, batch_size=%d)...",
-                args.use_optimized, args.use_sparse, args.batch_size)
+    logger.info("Extracting proposal features (optimized=%s, batch_size=%d, sparse=True)...",
+                args.use_optimized, args.batch_size)
     proposal_features = extract_proposal_features_siglip(
         pipeline=pipeline,
         proposal_masks=proposal_masks,
@@ -344,7 +343,6 @@ def main():
         topk=args.topk_views,
         batch_size=args.batch_size,
         use_optimized=args.use_optimized,
-        use_sparse=args.use_sparse,
     )
 
     logger.info("Extracting text features for %d unique labels", len({inst.label_id for inst in instances}))

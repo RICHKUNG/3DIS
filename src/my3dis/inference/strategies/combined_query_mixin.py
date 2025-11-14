@@ -117,35 +117,43 @@ class CombinedQueryMixin:
     def update_proposals_with_combined_feature(
         self,
         proposals: List[Proposal],
-        combined_feat: np.ndarray
+        combined_feat: np.ndarray,
+        scale_semantic_score: float = 300.0
     ):
         """
         Update proposal scores using combined feature similarity.
 
-        This computes cosine similarity between each proposal's feature
-        and the combined query feature, then updates the proposal's score.
+        Following utils_ov_inference.py approach:
+        1. Compute cosine similarity for all proposals
+        2. Scale by scale_semantic_score (default 300)
+        3. Apply softmax across all proposals
 
         Args:
             proposals: List of proposals to update
             combined_feat: Combined query feature embedding
+            scale_semantic_score: Semantic score scaling factor (default 300)
         """
         if len(proposals) == 0:
             return
 
-        # Normalize combined feature
-        combined_norm = combined_feat / (np.linalg.norm(combined_feat) + 1e-8)
+        # Collect all proposal features
+        proposal_feats = np.stack([p.feature for p in proposals])
 
-        for prop in proposals:
-            # Normalize proposal feature
-            prop_norm = prop.feature / (np.linalg.norm(prop.feature) + 1e-8)
+        # Use compute_cosine_similarity to get scaled + softmax scores
+        from ..retrieval import compute_cosine_similarity
 
-            # Compute cosine similarity
-            similarity = float(np.dot(prop_norm, combined_norm))
+        scores = compute_cosine_similarity(
+            combined_feat,
+            proposal_feats,
+            temperature=1.0,  # Not used
+            scale_semantic_score=scale_semantic_score
+        )
 
-            # Update score
-            prop.score = similarity
+        # Update proposal scores
+        for prop, score in zip(proposals, scores):
+            prop.score = float(score)
 
-        logger.debug(f"Updated {len(proposals)} proposals with combined feature scores")
+        logger.debug(f"Updated {len(proposals)} proposals with combined feature scores (scale={scale_semantic_score})")
 
     def retrieve_with_combined_query(
         self,

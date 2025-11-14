@@ -1,0 +1,57 @@
+# Complete test with tracker to verify no "lacks unique_id" warnings
+
+experiment:
+  name: test_gap_fix_tracker_1113
+  dataset_root: /media/public_dataset2/multiscan
+  scenes: null
+  scene_start: scene_00005_00
+  scene_end: scene_00005_01
+  parallel_scenes: 1
+  force_parallel: true
+  levels:
+    - 1
+    - 3
+  tag: tag
+  tag_in_path: false
+  aggregate_output: false
+  output_layout: scene_level
+  output_root: /media/Pluto/richkung/My3DIS/outputs/experiments/{name}
+  frames:
+    start: 0
+    end: 400  # First 400 frames only
+    step: 50
+
+stages:
+  gpu: 0
+  ssam:
+    enabled: true
+    ssam_freq: 4
+    min_area: 500
+    stability_threshold: null
+    persist_raw: true
+    skip_filtering: true
+    add_gaps: true
+    fill_area: 500
+    append_timestamp: false
+    downscale_masks: true
+    downscale_ratio: 0.3
+    max_masks_per_level: 5000
+    cascade_filtering: true
+    sam_ckpt: /media/Pluto/Yenhongxuan/Semantic-SAM/ckpts/swinl_only_sam_many2many.pth
+  filter:
+    enabled: true
+    min_area: 500
+    stability_threshold: 1.0
+  tracker:
+    enabled: true
+    prompt_mode: all_mask
+    max_propagate: null
+    iou_threshold: 0.6
+    downscale_masks: true
+    downscale_ratio: 0.3
+    render_viz: false  # Disable viz for speed
+    sam2_cfg: /media/Pluto/Yenhongxuan/Grounded-SAM-2/sam2/configs/sam2.1/sam2.1_hiera_l.yaml
+    sam2_ckpt: /media/Pluto/Yenhongxuan/Grounded-SAM-2/checkpoints/sam2.1_hiera_large.pt
+    visualize_families: false  # Disable for speed
+  report:
+    enabled: false

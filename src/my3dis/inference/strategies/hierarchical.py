@@ -253,7 +253,8 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
                         child_scores = compute_cosine_similarity(
                             object_query_feat,
                             child_features,
-                            temperature=self.retriever.temperature
+                            temperature=self.retriever.temperature,
+                            scale_semantic_score=self.retriever.scale_semantic_score
                         )
 
                         # Add children that score well
@@ -377,7 +378,8 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
         part_scores = compute_cosine_similarity(
             part_query_feat,
             part_features,
-            temperature=self.retriever.temperature
+            temperature=self.retriever.temperature,
+            scale_semantic_score=self.retriever.scale_semantic_score
         )
 
         # Filter and sort
@@ -560,7 +562,8 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
                         child_scores = compute_cosine_similarity(
                             combined_feat,
                             child_features,
-                            temperature=self.retriever.temperature
+                            temperature=self.retriever.temperature,
+                            scale_semantic_score=self.retriever.scale_semantic_score
                         )
 
                         # Add children that score well
@@ -684,7 +687,8 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
         part_scores = compute_cosine_similarity(
             combined_feat,
             part_features,
-            temperature=self.retriever.temperature
+            temperature=self.retriever.temperature,
+            scale_semantic_score=self.retriever.scale_semantic_score
         )
 
         # Filter and sort

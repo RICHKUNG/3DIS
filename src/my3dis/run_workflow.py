@@ -14,6 +14,13 @@ if __package__ is None or __package__ == '':
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
 
+    # Configure temp directory to use /media partition (avoid root partition space issues)
+    tmp_dir = project_root / 'tmp'
+    tmp_dir.mkdir(exist_ok=True)
+    os.environ['TMPDIR'] = str(tmp_dir)
+    os.environ['TEMP'] = str(tmp_dir)
+    os.environ['TMP'] = str(tmp_dir)
+
 import argparse
 import csv
 import json

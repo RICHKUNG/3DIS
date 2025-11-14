@@ -8,6 +8,12 @@ SCRIPT_PID=$$
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PROJECT_ROOT="$SCRIPT_DIR"
 
+# Configure temp directory to use /media partition (avoid root partition space issues)
+export TMPDIR="$PROJECT_ROOT/tmp"
+export TEMP="$PROJECT_ROOT/tmp"
+export TMP="$PROJECT_ROOT/tmp"
+mkdir -p "$TMPDIR"
+
 DEFAULT_SEMANTIC_SAM_ROOT="${MY3DIS_SEMANTIC_SAM_ROOT:-$PROJECT_ROOT/../Semantic-SAM}"
 DEFAULT_SEMANTIC_SAM_CKPT="${MY3DIS_SEMANTIC_SAM_CKPT:-$DEFAULT_SEMANTIC_SAM_ROOT/checkpoints/swinl_only_sam_many2many.pth}"
 DEFAULT_SAM2_ROOT="${MY3DIS_SAM2_ROOT:-$PROJECT_ROOT/../SAM2}"

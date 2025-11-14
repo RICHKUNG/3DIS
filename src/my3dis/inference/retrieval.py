@@ -35,31 +35,43 @@ class RetrievalResult:
 def compute_cosine_similarity(
     query_feat: np.ndarray,
     proposal_feats: np.ndarray,
-    temperature: float = 1.0
+    temperature: float = 1.0,
+    scale_semantic_score: float = 300.0
 ) -> np.ndarray:
     """
     Compute cosine similarity between query and proposal features.
 
+    Following the implementation in utils_ov_inference.py:
+    1. Compute cosine similarity (normalized dot product)
+    2. Scale by scale_semantic_score (default 300)
+    3. Apply softmax across all proposals
+
     Args:
         query_feat: Query embedding, shape (D,)
         proposal_feats: Proposal embeddings, shape (N, D)
-        temperature: Temperature for scaling (higher = softer distribution)
+        temperature: Temperature for scaling (higher = softer distribution) - DEPRECATED, use scale_semantic_score instead
+        scale_semantic_score: Semantic score scaling factor (default 300, matching utils_ov_inference.py)
 
     Returns:
-        Similarity scores, shape (N,)
+        Similarity scores after softmax, shape (N,)
     """
-    # Normalize
+    # Normalize features
     query_norm = query_feat / (np.linalg.norm(query_feat) + 1e-8)
     proposal_norms = proposal_feats / (np.linalg.norm(proposal_feats, axis=1, keepdims=True) + 1e-8)
 
     # Compute cosine similarity
-    similarities = proposal_norms.dot(query_norm)
+    similarities = proposal_norms.dot(query_norm)  # [N]
 
-    # Apply temperature scaling
-    if temperature != 1.0:
-        similarities = similarities / temperature
+    # Scale by semantic score (matching utils_ov_inference.py line 48)
+    scaled_similarities = scale_semantic_score * similarities  # [N]
 
-    return similarities
+    # Apply softmax across all proposals
+    # exp_scores = exp(scaled_similarities)
+    # softmax_scores = exp_scores / sum(exp_scores)
+    exp_scores = np.exp(scaled_similarities - np.max(scaled_similarities))  # Numerical stability
+    softmax_scores = exp_scores / (np.sum(exp_scores) + 1e-8)
+
+    return softmax_scores
 
 
 class MultiLevelRetriever:
@@ -76,19 +88,22 @@ class MultiLevelRetriever:
         self,
         proposals_by_level: Dict[str, List[Proposal]],
         temperature: float = 0.2,
-        min_similarity: float = 0.2
+        min_similarity: float = 0.2,
+        scale_semantic_score: float = 300.0
     ):
         """
         Initialize retriever with proposals at different levels.
 
         Args:
             proposals_by_level: Dict mapping level names to lists of Proposals
-            temperature: Temperature for similarity scoring
+            temperature: Temperature for similarity scoring - DEPRECATED, use scale_semantic_score instead
             min_similarity: Minimum similarity threshold for keeping proposals
+            scale_semantic_score: Semantic score scaling factor (default 300, matching utils_ov_inference.py)
         """
         self.proposals_by_level = proposals_by_level
-        self.temperature = temperature
+        self.temperature = temperature  # Kept for backward compatibility
         self.min_similarity = min_similarity
+        self.scale_semantic_score = scale_semantic_score
 
     def retrieve_single_level(
         self,
@@ -120,8 +135,13 @@ class MultiLevelRetriever:
         # Extract features
         features = np.stack([p.feature for p in proposals])
 
-        # Compute similarities
-        scores = compute_cosine_similarity(query_feat, features, self.temperature)
+        # Compute similarities with scale_semantic_score (matching utils_ov_inference.py)
+        scores = compute_cosine_similarity(
+            query_feat,
+            features,
+            temperature=self.temperature,  # Kept for backward compatibility but not used
+            scale_semantic_score=self.scale_semantic_score
+        )
 
         # Apply threshold
         threshold = threshold if threshold is not None else self.min_similarity

@@ -135,11 +135,23 @@ class CascadeFilter:
         all_rejections = {**individually_rejected, **cascade_rejected}
 
         # Step 5: Build filtered output (masks NOT rejected)
-        filtered_masks = [
-            mask
-            for mask in masks
-            if mask.get("unique_id") not in all_rejections
-        ]
+        # BUGFIX (2025-11-13): Also reject masks without unique_id
+        # Previously, masks with None/missing unique_id would bypass all filters
+        filtered_masks = []
+        for mask in masks:
+            unique_id = mask.get("unique_id")
+
+            # Reject masks without unique_id
+            if not unique_id:
+                # Don't add to rejections dict (can't use None as key), but don't include in output
+                continue
+
+            # Reject masks that failed filtering
+            if unique_id in all_rejections:
+                continue
+
+            # Mask passed all checks
+            filtered_masks.append(mask)
 
         return filtered_masks, all_rejections
 

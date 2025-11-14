@@ -2,7 +2,7 @@
 # Only difference: limited scene range for faster testing
 
 experiment:
-  name: test_1108_ssam4_filter500_fill500_propinf_135
+  name: test_1113_ssam4_filter500_fill500_propinf_135
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   scene_start: scene_00005_00  # Test with small scene range

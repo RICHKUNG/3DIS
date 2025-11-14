@@ -69,7 +69,14 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(PYTHONPATH=src conda run:*)",
       "WebFetch(domain:search3d-segmentation.github.io)",
-      "WebFetch(domain:arxiv.org)"
+      "WebFetch(domain:arxiv.org)",
+      "Bash(PYTHONPATH=src timeout 300 conda run:*)",
+      "Bash(grep -oP \"\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\" echo \"\" echo \"4. 测试 run 启动时间（成功）：\" head -1 /tmp/gap_fix_tracker_test.log)",
+      "Bash(timeout 30 du:*)",
+      "Bash(conda clean:*)",
+      "Bash(pip cache:*)",
+      "Bash(/dev/null -print0)",
+      "Bash(/dev/null -exec du -h {} +)"
     ],
     "deny": [],
     "ask": []

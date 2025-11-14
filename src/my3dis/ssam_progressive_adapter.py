@@ -34,8 +34,14 @@ from my3dis.pipeline_defaults import DEFAULT_SEMANTIC_SAM_ROOT as _DEFAULT_SEMAN
 _SEM_ROOT_STR = expand_default(_DEFAULT_SEMANTIC_SAM_ROOT)
 DEFAULT_SEMANTIC_SAM_ROOT = _SEM_ROOT_STR
 
+# Prepend Semantic-SAM root to sys.path to ensure it takes precedence over
+# any installed semantic_sam package in site-packages
 if DEFAULT_SEMANTIC_SAM_ROOT not in sys.path:
-    sys.path.append(DEFAULT_SEMANTIC_SAM_ROOT)
+    sys.path.insert(0, DEFAULT_SEMANTIC_SAM_ROOT)
+elif sys.path[0] != DEFAULT_SEMANTIC_SAM_ROOT:
+    # If already in path but not first, move it to the front
+    sys.path.remove(DEFAULT_SEMANTIC_SAM_ROOT)
+    sys.path.insert(0, DEFAULT_SEMANTIC_SAM_ROOT)
 
 # Import Semantic-SAM modules
 from semantic_sam import build_semantic_sam, prepare_image  # noqa: E402
@@ -302,13 +308,24 @@ def generate_with_progressive(
             base_segs = [m.get('segmentation') for m in base_masks if m.get('segmentation') is not None]
             gap_components = _extract_gap_components(base_segs, fill_area)
             if gap_components:
+                gap_seq = 1  # Gap-fill sequence counter for this frame
                 for comp in gap_components:
+                    # Generate globally unique ID for gap-fill masks (format: {frame:04d}_{level}_gap{seq:04d})
+                    gap_unique_id = f"{f_idx:04d}_{base_level}_gap{gap_seq:04d}"
+                    gap_seq += 1
+
                     additional_gap_masks.append({
                         'segmentation': pack_binary_mask(comp, full_resolution_shape=comp.shape),
                         'stability_score': 1.0,
                         'area': int(comp.sum()),
                         'level': base_level,
                         'source': 'gap_fill',
+                        # BUGFIX (2025-11-13): Add provenance fields for gap-fill masks
+                        # This enables provenance tracking in SAM2 stage
+                        'unique_id': gap_unique_id,
+                        'parent_unique_id': None,  # Gap-fill masks have no parent
+                        'ssam_frame_idx': f_idx,
+                        'lineage': [],  # Empty lineage for gap-fill masks
                     })
                 LOGGER.info(
                     "Frame %s: added %d gap-fill masks at level %s",
