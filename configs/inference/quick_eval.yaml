@@ -8,8 +8,8 @@ retrieval:
   temperature: 0.2
   min_similarity: 0.2
   top_k_per_level: 50
-  object_levels: [L2, L4]
-  part_levels: [L4, L6]
+  object_levels: [L1, L3]
+  part_levels: [L3, L5]
 
 # Pairing settings (for geometric constraints)
 pairing:
@@ -37,8 +37,8 @@ scoring:
 
 # Strategy-specific settings
 independent:
-  object_levels: [L2, L4]
-  part_levels: [L4, L6]
+  object_levels: [L1, L3]
+  part_levels: [L3, L5]
   top_k_per_level: 50
   retrieval_threshold: 0.3
   min_retrieval_threshold: 0.05   # Lowest similarity before forcing top-k

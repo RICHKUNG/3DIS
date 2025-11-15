@@ -8,8 +8,8 @@ retrieval:
   temperature: 0.2              # Temperature for similarity scoring (lower = sharper)
   min_similarity: 0.2           # Minimum similarity threshold
   top_k_per_level: 50           # Max proposals per level
-  object_levels: [L2, L4]       # Levels to search for objects
-  part_levels: [L4, L6]         # Levels to search for parts
+  object_levels: [L1, L3]       # Levels to search for objects
+  part_levels: [L3, L5]         # Levels to search for parts
 
 # Object-Part pairing configuration
 pairing:
@@ -43,8 +43,8 @@ formatter:
 
 # Independent strategy specific parameters
 independent:
-  object_levels: [L2, L4]
-  part_levels: [L4, L6]
+  object_levels: [L1, L3]
+  part_levels: [L3, L5]
   top_k_per_level: 50
   retrieval_threshold: 0.3
   min_retrieval_threshold: 0.05
@@ -53,7 +53,7 @@ independent:
 
 # Hierarchical strategy specific parameters
 hierarchical:
-  coarse_top_k: 100             # Top-K for coarse localization at L2
+  coarse_top_k: 100             # Top-K for coarse localization at L1
   object_top_k: 50              # Max object candidates after refinement
   part_top_k: 30                # Max part candidates per object
   coarse_threshold: 0.2         # Similarity threshold for coarse stage

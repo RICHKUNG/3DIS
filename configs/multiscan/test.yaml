@@ -2,17 +2,17 @@
 # Only difference: limited scene range for faster testing
 
 experiment:
-  name: test_1113_ssam4_filter500_fill500_propinf_135
+  name: test_v7_246_ssam4_filter10_fill50_prop30_1114
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
-  scene_start: scene_00005_00  # Test with small scene range
-  scene_end: scene_00006_01    # 4 scenes for testing
-  parallel_scenes: 1
+  scene_start: scene_00005_00  
+  scene_end: scene_00006_01    
+  parallel_scenes: 2
   force_parallel: true  # Match base.yaml: bypass OOM monitoring
   levels:
-    - 1
-    - 3
-    - 5
+    - 2
+    - 4
+    - 6
   tag: tag
   tag_in_path: false
   aggregate_output: false
@@ -22,30 +22,30 @@ experiment:
     step: 50
 
 stages:
-  gpu: 0
+  gpu: 1
   ssam:
     enabled: true
     ssam_freq: 4
-    min_area: 500
-    stability_threshold: null  # Don't use stability filtering at SSAM stage (Phase 2.2)
+    min_area: 10
+    stability_threshold: null  # Don't use stability filtering at SSAM stage
     persist_raw: true
     skip_filtering: true
     add_gaps: true
-    fill_area: 500  # Match base.yaml: 5k instead of 10k
+    fill_area: 50  # Match base.yaml: 5k instead of 10k
     append_timestamp: false
     downscale_masks: true
     downscale_ratio: 0.3  # Match base.yaml: full resolution
-    max_masks_per_level: 5000  # Limit for testing
-    cascade_filtering: true  # Enable cascade filtering (Phase 2.2)
+    max_masks_per_level: 2000  # Reduced from 10000 to prevent OOM
+    cascade_filtering: true  # Enable cascade filtering
     sam_ckpt: /media/Pluto/Yenhongxuan/Semantic-SAM/ckpts/swinl_only_sam_many2many.pth
   filter:
     enabled: true
-    min_area: 500
+    min_area: 10
     stability_threshold: 1.0  # Post-SSAM filtering (not currently used)
   tracker:
     enabled: true
     prompt_mode: all_mask
-    max_propagate: null
+    max_propagate: 30  # Limit propagation to reduce GPU memory usage
     iou_threshold: 0.6
     downscale_masks: true
     downscale_ratio: 0.3  # Match base.yaml: full resolution
@@ -59,8 +59,8 @@ stages:
     # ========================================================================
     visualize_families: true         # Enable for test runs to verify output
     family_viz:
-      num_families: 200                # Fewer families for faster testing
-      max_frames_per_family: 2       # Fewer frames per family
+      num_families: 20                # Reduced from 100 to save memory
+      max_frames_per_family: 2       # Reduced from 3 to save memory
       output_subdir: visualizations
       random_seed: 42
       min_levels: 2

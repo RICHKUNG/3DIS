@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # Ensure src/ and project_root are in path for direct execution (must be inline to avoid circular import)
 if __package__ is None or __package__ == '':
+    import os
     import sys
     from pathlib import Path
     project_root = Path(__file__).resolve().parents[2]

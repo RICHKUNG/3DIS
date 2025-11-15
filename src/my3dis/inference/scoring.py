@@ -130,12 +130,18 @@ class ScoreAggregator:
 
         # Add bonus if hierarchy is as expected (object at coarser level than part)
         if object_level is not None and part_level is not None:
-            level_order = {'L2': 0, 'L4': 1, 'L6': 2}
-            obj_idx = level_order.get(object_level, -1)
-            part_idx = level_order.get(part_level, -1)
+            # Extract level numbers dynamically (L1→1, L2→2, etc.)
+            import re
+            obj_match = re.match(r'^L(\d+)$', object_level)
+            part_match = re.match(r'^L(\d+)$', part_level)
 
-            if obj_idx >= 0 and part_idx >= 0 and obj_idx < part_idx:
-                base_score = min(1.0, base_score + bonus)
+            if obj_match and part_match:
+                obj_idx = int(obj_match.group(1))
+                part_idx = int(part_match.group(1))
+
+                # Coarser level (smaller number) should be object, finer level (larger) should be part
+                if obj_idx < part_idx:
+                    base_score = min(1.0, base_score + bonus)
 
         return base_score
 

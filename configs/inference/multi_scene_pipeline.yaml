@@ -75,8 +75,8 @@ inference:
     temperature: 0.2
     min_similarity: 0.05          # RELAXED
     top_k_per_level: 100          # INCREASED
-    object_levels: [L2, L4]
-    part_levels: [L4, L6]
+    object_levels: [L1, L3]
+    part_levels: [L3, L5]
 
   pairing:
     containment_threshold: 0.1    # RELAXED
@@ -105,8 +105,8 @@ inference:
     min_mask_size: 10
 
   independent:
-    object_levels: [L2, L4]
-    part_levels: [L4, L6]
+    object_levels: [L1, L3]
+    part_levels: [L3, L5]
     top_k_per_level: 100
     retrieval_threshold: 0.2      # RELAXED
     min_retrieval_threshold: 0.01 # RELAXED
@@ -127,6 +127,7 @@ inference:
 evaluation:
   enabled: true
   gt_path: /media/Pluto/richkung/My3DIS/data/search3d_gt/multiscan_data_search3d/multiscan_annotations_search3d/ov_part_annotations
+  gt_ply_path: /media/Pluto/richkung/My3DIS/data/search3d_gt/multiscan_data_search3d/multiscan_test_plys_only
   query_file: /media/Pluto/richkung/My3DIS/eval/search3d/eval_semantic_instance_parts_OV.py
   dataset_root: /media/public_dataset2/multiscan
   scenes: null  # Inherit from experiment.scenes

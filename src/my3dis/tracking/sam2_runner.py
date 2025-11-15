@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 import os
 from collections import defaultdict
@@ -489,6 +490,11 @@ def sam2_tracking(
                         }
         finally:
             progress.close()
+
+    # Clean up GPU memory before returning (tracking_output already prepared)
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        gc.collect()
 
     if sx is None or sy is None:
         LOGGER.warning(

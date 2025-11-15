@@ -247,21 +247,52 @@ def load_point_cloud_for_export(
     """
     Load point cloud from scene directory for Search3D export.
 
+    Tries multiple fallback mesh files if the primary mesh is not found:
+    1. mesh_aligned_0.05.ply (default)
+    2. <scene_name>_converted.ply
+    3. <scene_name>.ply
+    4. Any other .ply file in the directory
+
     Args:
         scene_path: Path to MultiScan scene directory
-        mesh_name: Name of the PLY mesh file
+        mesh_name: Name of the PLY mesh file (tried first)
 
     Returns:
         (P, 3) numpy array of point coordinates
 
     Raises:
-        FileNotFoundError: If mesh file not found
+        FileNotFoundError: If no mesh file found
     """
     scene_path = Path(scene_path)
     mesh_path = scene_path / mesh_name
 
-    if not mesh_path.exists():
-        raise FileNotFoundError(f"Mesh file not found: {mesh_path}")
+    # Build list of candidate mesh files to try
+    candidates = [mesh_path]
+
+    # Add common fallback patterns
+    scene_name = scene_path.name
+    candidates.append(scene_path / f"{scene_name}_converted.ply")
+    candidates.append(scene_path / f"{scene_name}.ply")
+
+    # Try to find any other .ply files as last resort
+    if scene_path.exists():
+        other_plys = list(scene_path.glob("*.ply"))
+        for ply in other_plys:
+            if ply not in candidates:
+                candidates.append(ply)
+
+    # Try each candidate
+    for candidate in candidates:
+        if candidate.exists():
+            mesh_path = candidate
+            break
+    else:
+        # No mesh found
+        tried_paths = '\n  '.join(str(c) for c in candidates[:3])
+        raise FileNotFoundError(
+            f"Mesh file not found. Tried:\n  {tried_paths}\n"
+            f"Please ensure a PLY mesh file exists in {scene_path}"
+        )
 
     # Import here to avoid circular dependency
     try:
@@ -280,7 +311,7 @@ def load_point_cloud_for_export(
         vertices['z']
     ], axis=1)
 
-    logger.info(f"Loaded {len(points)} points")
+    logger.info(f"Loaded {len(points)} points from {mesh_path.name}")
     return points
 
 

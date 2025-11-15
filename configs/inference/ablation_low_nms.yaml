@@ -6,8 +6,8 @@ retrieval:
   temperature: 0.2
   min_similarity: 0.2
   top_k_per_level: 50
-  object_levels: [L2, L4]
-  part_levels: [L4, L6]
+  object_levels: [L1, L3]
+  part_levels: [L3, L5]
 
 pairing:
   containment_threshold: 0.5
@@ -36,8 +36,8 @@ formatter:
   min_mask_size: 10
 
 independent:
-  object_levels: [L2, L4]
-  part_levels: [L4, L6]
+  object_levels: [L1, L3]
+  part_levels: [L3, L5]
   top_k_per_level: 50
   retrieval_threshold: 0.3
   min_retrieval_threshold: 0.05

@@ -1,8 +1,19 @@
 # Production-like test configuration (matches base.yaml workflow behavior)
 # Only difference: limited scene range for faster testing
-
+###############################################################
+# v7_246_ssam4_filter10_fill50_propinf aniki 1
+# v7_135_ssam4_filter10_fill50_propinf mercury 1 FAIL
+# v7_135_ssam8_filter10_fill50_propinf mercury 2 FAIL
+# v7_135_ssam4_filter100_fill100_prop30 bourbon 0 FAIL
+# v7_246_ssam4_filter100_fill100_prop30 bourbon 1 FAIL
+# v7_246_ssam4_filter100_fill100_prop50_max3k_m_0
+# v7_246_ssam4_filter100_fill100_prop30_max3k_m_1
+# v7_246_ssam4_filter100_fill100_prop10_max3k_m_2 FAIL
+# v7_135_ssam4_filter200_fill200_prop30_max3k_b_0 FAIL
+# v7_135_ssam2_filter200_fill200_prop30_max3k_b_1 FAIL
+###############################################################
 experiment:
-  name: v6_246_ssam4_filter10_fill50_prop10
+  name: v7_135_ssam2_filter500_fill500_prop10_max3k_m_2
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   scene_start: scene_00005_00  
@@ -10,9 +21,9 @@ experiment:
   parallel_scenes: 1
   force_parallel: true  # Match base.yaml: bypass OOM monitoring
   levels:
-    - 2
-    - 4
-    - 6
+    - 1
+    - 3
+    - 5
   tag: tag
   tag_in_path: false
   aggregate_output: false
@@ -22,30 +33,30 @@ experiment:
     step: 50
 
 stages:
-  gpu: 1
+  gpu: 2
   ssam:
     enabled: true
-    ssam_freq: 4
-    min_area: 10
+    ssam_freq: 2
+    min_area: 500
     stability_threshold: null  # Don't use stability filtering at SSAM stage
     persist_raw: true
     skip_filtering: true
     add_gaps: true
-    fill_area: 50  # Match base.yaml: 5k instead of 10k
+    fill_area: 500  # Match base.yaml: 5k instead of 10k
     append_timestamp: false
     downscale_masks: true
     downscale_ratio: 0.3  # Match base.yaml: full resolution
-    max_masks_per_level: 10000  # Limit for testing
+    max_masks_per_level: 3000  # Reduced from 10000 to prevent OOM
     cascade_filtering: true  # Enable cascade filtering
     sam_ckpt: /media/Pluto/Yenhongxuan/Semantic-SAM/ckpts/swinl_only_sam_many2many.pth
   filter:
     enabled: true
-    min_area: 10
+    min_area: 500
     stability_threshold: 1.0  # Post-SSAM filtering (not currently used)
   tracker:
     enabled: true
     prompt_mode: all_mask
-    max_propagate: 10
+    max_propagate: 10  # Limit propagation to reduce GPU memory usage
     iou_threshold: 0.6
     downscale_masks: true
     downscale_ratio: 0.3  # Match base.yaml: full resolution
@@ -59,8 +70,8 @@ stages:
     # ========================================================================
     visualize_families: true         # Enable for test runs to verify output
     family_viz:
-      num_families: 100                # Fewer families for faster testing
-      max_frames_per_family: 3       # Fewer frames per family
+      num_families: 20                # Reduced from 100 to save memory
+      max_frames_per_family: 2       # Reduced from 3 to save memory
       output_subdir: visualizations
       random_seed: 42
       min_levels: 2

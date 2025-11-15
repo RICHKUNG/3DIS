@@ -22,11 +22,16 @@ experiment:
   #   - relations/family_tree.json
   # NOTE: For multi-scene experiments, this should point to the scene subdirectory,
   #       e.g., .../test_1108_ssam4_filter500_fill500_propinf/scene_00005_00
-  exp_dir: /media/Pluto/richkung/My3DIS/outputs/experiments/test_1108_ssam4_filter500_fill500_propinf/scene_00005_00
-  levels: [2, 4, 6]
+  exp_dir: /media/Pluto/richkung/My3DIS/outputs/experiments/v6_135_ssam2_filter10_fill50_propinf/scene_00005_01
+
+  # Levels to process (will be auto-detected from exp_dir if null)
+  # Set explicitly if you want to override auto-detection
+  # Example: [1, 3, 5] or [2, 4, 6]
+  levels: null  # Auto-detect from level_* directories in exp_dir
+
   # Path to MultiScan scene directory (for 3D reconstruction)
   # Example: /media/public_dataset2/multiscan/scene_00005_00
-  scene_path: /media/public_dataset2/multiscan/scene_00005_00
+  scene_path: /media/public_dataset2/multiscan/scene_00005_01
 
   # Output directory for aggregation results (NPZ files, features, etc.)
   # Default: {exp_dir}/aggregation_output
@@ -132,8 +137,8 @@ inference:
     temperature: 0.2              # Temperature for similarity scoring (lower = sharper)
     min_similarity: 0.05          # Minimum similarity threshold - RELAXED from 0.2
     top_k_per_level: 100          # Max proposals per level - INCREASED from 50
-    object_levels: [L2, L4]       # Levels to search for objects
-    part_levels: [L4, L6]         # Levels to search for parts
+    object_levels: [L1, L3]       # Levels to search for objects (FIXED: was L2, L4)
+    part_levels: [L3, L5]         # Levels to search for parts (FIXED: was L4, L6)
 
   # Object-Part pairing configuration
   pairing:
@@ -168,8 +173,8 @@ inference:
 
   # Independent strategy specific parameters
   independent:
-    object_levels: [L2, L4]
-    part_levels: [L4, L6]
+    object_levels: [L1, L3]       # FIXED: was L2, L4
+    part_levels: [L3, L5]         # FIXED: was L4, L6
     top_k_per_level: 100          # INCREASED from 50
     retrieval_threshold: 0.2      # RELAXED from 0.3
     min_retrieval_threshold: 0.01 # RELAXED from 0.05
@@ -183,7 +188,7 @@ inference:
 
   # Hierarchical strategy specific parameters
   hierarchical:
-    coarse_top_k: 150             # Top-K for coarse localization at L2 - INCREASED from 100
+    coarse_top_k: 150             # Top-K for coarse localization at L1 - INCREASED from 100
     object_top_k: 100             # Max object candidates after refinement - INCREASED from 50
     part_top_k: 50                # Max part candidates per object - INCREASED from 30
     coarse_threshold: 0.05        # Similarity threshold for coarse stage - RELAXED from 0.2
@@ -197,7 +202,7 @@ inference:
 
   # Exhaustive pairing strategy specific parameters
   exhaustive_pairing:
-    available_levels: [L2, L4, L6]  # Levels to consider for pairing
+    available_levels: [L1, L3, L5]  # Levels to consider for pairing (FIXED: was L2, L4, L6)
     top_k_per_level: 100            # Max proposals per level - INCREASED from 50
     retrieval_threshold: 0.2        # Minimum similarity threshold for retrieval
     min_retrieval_threshold: 0.05   # Minimum threshold for backoff fallback
@@ -224,6 +229,10 @@ evaluation:
   # Ground truth path for OV object-part evaluation
   gt_paths:
     obj_part: /media/Pluto/richkung/My3DIS/data/search3d_gt/multiscan_data_search3d/multiscan_annotations_search3d/ov_part_annotations
+
+  # Ground truth PLY files directory (for Search3D format export)
+  # These are the standardized test scene PLY files used for evaluation
+  gt_ply_path: /media/Pluto/richkung/My3DIS/data/search3d_gt/multiscan_data_search3d/multiscan_test_plys_only
 
   # Evaluation modes to run (obj_part only)
   eval_modes: ['obj_part']

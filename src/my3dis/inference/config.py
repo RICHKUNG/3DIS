@@ -13,8 +13,8 @@ class RetrievalConfig:
     temperature: float = 0.2
     min_similarity: float = 0.2
     top_k_per_level: int = 50
-    object_levels: List[str] = field(default_factory=lambda: ['L2', 'L4'])
-    part_levels: List[str] = field(default_factory=lambda: ['L4', 'L6'])
+    object_levels: List[str] = field(default_factory=lambda: ['L1', 'L3'])
+    part_levels: List[str] = field(default_factory=lambda: ['L3', 'L5'])
 
 
 @dataclass
@@ -52,13 +52,18 @@ class ScoringConfig:
 @dataclass
 class IndependentStrategyConfig:
     """Configuration for independent retrieval strategy."""
-    object_levels: List[str] = field(default_factory=lambda: ['L2', 'L4'])
-    part_levels: List[str] = field(default_factory=lambda: ['L4', 'L6'])
+    object_levels: List[str] = field(default_factory=lambda: ['L1', 'L3'])
+    part_levels: List[str] = field(default_factory=lambda: ['L3', 'L5'])
     top_k_per_level: int = 50
     retrieval_threshold: float = 0.3
     min_retrieval_threshold: float = 0.05
     threshold_backoff_step: float = 0.05
     fallback_to_topk: bool = True
+
+    # Combined query settings
+    use_combined_query: bool = True
+    siglip_model: str = "google/siglip-so400m-patch14-384"
+    siglip_device: str = "cuda:0"
 
 
 @dataclass
@@ -71,6 +76,30 @@ class HierarchicalStrategyConfig:
     refinement_threshold: float = 0.3
     refinement_margin: float = 0.1
 
+    # Combined query settings
+    use_combined_query: bool = True
+    siglip_model: str = "google/siglip-so400m-patch14-384"
+    siglip_device: str = "cuda:0"
+
+
+@dataclass
+class ExhaustivePairingConfig:
+    """Configuration for exhaustive pairing strategy."""
+    available_levels: List[str] = field(default_factory=lambda: ['L1', 'L3', 'L5'])
+    top_k_per_level: int = 100
+    retrieval_threshold: float = 0.2
+    min_retrieval_threshold: float = 0.05
+    threshold_backoff_step: float = 0.03
+    fallback_to_topk: bool = True
+    selection_metric: str = 'max'  # max, mean, or sum
+    use_tree_pruning: bool = False
+    return_all_pairs: bool = False
+
+    # Combined query settings
+    use_combined_query: bool = True
+    siglip_model: str = "google/siglip-so400m-patch14-384"
+    siglip_device: str = "cuda:0"
+
 
 @dataclass
 class FormatterConfig:
@@ -82,7 +111,7 @@ class FormatterConfig:
 @dataclass
 class InferenceConfig:
     """Complete inference configuration."""
-    strategy: str = "independent"  # independent, hierarchical
+    strategy: str = "independent"  # independent, hierarchical, exhaustive_pairing
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     pairing: PairingConfig = field(default_factory=PairingConfig)
     nms: NMSConfig = field(default_factory=NMSConfig)
@@ -92,6 +121,7 @@ class InferenceConfig:
     # Strategy-specific configs
     independent: IndependentStrategyConfig = field(default_factory=IndependentStrategyConfig)
     hierarchical: HierarchicalStrategyConfig = field(default_factory=HierarchicalStrategyConfig)
+    exhaustive_pairing: ExhaustivePairingConfig = field(default_factory=ExhaustivePairingConfig)
 
     @classmethod
     def from_yaml(cls, path: str) -> 'InferenceConfig':
@@ -125,6 +155,9 @@ class InferenceConfig:
 
         if 'hierarchical' in data:
             config.hierarchical = HierarchicalStrategyConfig(**data['hierarchical'])
+
+        if 'exhaustive_pairing' in data:
+            config.exhaustive_pairing = ExhaustivePairingConfig(**data['exhaustive_pairing'])
 
         return config
 
@@ -177,6 +210,9 @@ class InferenceConfig:
                 'min_retrieval_threshold': self.independent.min_retrieval_threshold,
                 'threshold_backoff_step': self.independent.threshold_backoff_step,
                 'fallback_to_topk': self.independent.fallback_to_topk,
+                'use_combined_query': self.independent.use_combined_query,
+                'siglip_model': self.independent.siglip_model,
+                'siglip_device': self.independent.siglip_device,
             },
             'hierarchical': {
                 'coarse_top_k': self.hierarchical.coarse_top_k,
@@ -185,6 +221,23 @@ class InferenceConfig:
                 'coarse_threshold': self.hierarchical.coarse_threshold,
                 'refinement_threshold': self.hierarchical.refinement_threshold,
                 'refinement_margin': self.hierarchical.refinement_margin,
+                'use_combined_query': self.hierarchical.use_combined_query,
+                'siglip_model': self.hierarchical.siglip_model,
+                'siglip_device': self.hierarchical.siglip_device,
+            },
+            'exhaustive_pairing': {
+                'available_levels': self.exhaustive_pairing.available_levels,
+                'top_k_per_level': self.exhaustive_pairing.top_k_per_level,
+                'retrieval_threshold': self.exhaustive_pairing.retrieval_threshold,
+                'min_retrieval_threshold': self.exhaustive_pairing.min_retrieval_threshold,
+                'threshold_backoff_step': self.exhaustive_pairing.threshold_backoff_step,
+                'fallback_to_topk': self.exhaustive_pairing.fallback_to_topk,
+                'selection_metric': self.exhaustive_pairing.selection_metric,
+                'use_tree_pruning': self.exhaustive_pairing.use_tree_pruning,
+                'return_all_pairs': self.exhaustive_pairing.return_all_pairs,
+                'use_combined_query': self.exhaustive_pairing.use_combined_query,
+                'siglip_model': self.exhaustive_pairing.siglip_model,
+                'siglip_device': self.exhaustive_pairing.siglip_device,
             },
         }
 
@@ -199,6 +252,9 @@ class InferenceConfig:
                 'min_retrieval_threshold': self.independent.min_retrieval_threshold,
                 'threshold_backoff_step': self.independent.threshold_backoff_step,
                 'fallback_to_topk': self.independent.fallback_to_topk,
+                'use_combined_query': self.independent.use_combined_query,
+                'siglip_model': self.independent.siglip_model,
+                'siglip_device': self.independent.siglip_device,
             }
         elif self.strategy == "hierarchical":
             return {
@@ -208,6 +264,24 @@ class InferenceConfig:
                 'coarse_threshold': self.hierarchical.coarse_threshold,
                 'refinement_threshold': self.hierarchical.refinement_threshold,
                 'refinement_margin': self.hierarchical.refinement_margin,
+                'use_combined_query': self.hierarchical.use_combined_query,
+                'siglip_model': self.hierarchical.siglip_model,
+                'siglip_device': self.hierarchical.siglip_device,
+            }
+        elif self.strategy == "exhaustive_pairing":
+            return {
+                'available_levels': self.exhaustive_pairing.available_levels,
+                'top_k_per_level': self.exhaustive_pairing.top_k_per_level,
+                'retrieval_threshold': self.exhaustive_pairing.retrieval_threshold,
+                'min_retrieval_threshold': self.exhaustive_pairing.min_retrieval_threshold,
+                'threshold_backoff_step': self.exhaustive_pairing.threshold_backoff_step,
+                'fallback_to_topk': self.exhaustive_pairing.fallback_to_topk,
+                'selection_metric': self.exhaustive_pairing.selection_metric,
+                'use_tree_pruning': self.exhaustive_pairing.use_tree_pruning,
+                'return_all_pairs': self.exhaustive_pairing.return_all_pairs,
+                'use_combined_query': self.exhaustive_pairing.use_combined_query,
+                'siglip_model': self.exhaustive_pairing.siglip_model,
+                'siglip_device': self.exhaustive_pairing.siglip_device,
             }
         else:
             return {}

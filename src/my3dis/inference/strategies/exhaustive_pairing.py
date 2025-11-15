@@ -61,6 +61,7 @@ class ExhaustivePairingStrategy(InferenceStrategy):
         fallback_to_topk: bool = True,
         selection_metric: str = "max",  # 'max', 'mean', or 'sum'
         use_tree_pruning: bool = False,
+        return_all_pairs: bool = False,
         **kwargs
     ):
         """
@@ -80,6 +81,7 @@ class ExhaustivePairingStrategy(InferenceStrategy):
                             - 'mean': Choose pair with highest average score
                             - 'sum': Choose pair with highest total score
             use_tree_pruning: Use family tree for pruning pairs
+            return_all_pairs: Default value for return_all_pairs in infer()
             **kwargs: Additional arguments for base class
         """
         super().__init__(retriever, pairer, **kwargs)
@@ -92,6 +94,7 @@ class ExhaustivePairingStrategy(InferenceStrategy):
         self.fallback_to_topk = fallback_to_topk
         self.selection_metric = selection_metric
         self.use_tree_pruning = use_tree_pruning
+        self.return_all_pairs = return_all_pairs
 
         # Generate all valid level pairs
         self.level_pairs = self._generate_level_pairs()
@@ -102,9 +105,10 @@ class ExhaustivePairingStrategy(InferenceStrategy):
         Generate all valid (object_level, part_level) pairs.
 
         Valid pairs are those where part_level >= object_level in hierarchy.
-        For L2, L4, L6 this gives: (L2,L4), (L2,L6), (L4,L6)
+        Assumes available_levels are sorted from coarse to fine.
         """
-        level_order = {'L2': 0, 'L4': 1, 'L6': 2}
+        # Create level order mapping dynamically from available_levels
+        level_order = {level: idx for idx, level in enumerate(sorted(self.available_levels))}
         pairs = []
 
         for obj_level in self.available_levels:
@@ -128,7 +132,7 @@ class ExhaustivePairingStrategy(InferenceStrategy):
         nms_iou_threshold: float = 0.35,
         use_soft_nms: bool = False,
         keep_top_k: Optional[int] = None,
-        return_all_pairs: bool = False,
+        return_all_pairs: Optional[bool] = None,
         **kwargs
     ) -> List[ObjectPartPair]:
         """
@@ -149,6 +153,10 @@ class ExhaustivePairingStrategy(InferenceStrategy):
         Returns:
             List of object-part pairs (from best level-pair or all pairs)
         """
+        # Use instance attribute if not provided
+        if return_all_pairs is None:
+            return_all_pairs = self.return_all_pairs
+
         logger.info(f"Starting exhaustive pairing for label_id={label_id}")
 
         # Dictionary to store results for each level pair

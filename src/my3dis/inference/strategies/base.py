@@ -25,7 +25,8 @@ class InferenceStrategy(ABC):
         retriever: MultiLevelRetriever,
         pairer: ObjectPartPairer,
         score_aggregator: Optional[ScoreAggregator] = None,
-        family_tree: Optional[FamilyTree] = None
+        family_tree: Optional[FamilyTree] = None,
+        **kwargs
     ):
         """
         Initialize strategy.
@@ -35,6 +36,7 @@ class InferenceStrategy(ABC):
             pairer: Object-part pairer
             score_aggregator: Score aggregation strategy
             family_tree: Family tree for hierarchical relationships
+            **kwargs: Additional strategy-specific parameters (ignored by base class)
         """
         self.retriever = retriever
         self.pairer = pairer

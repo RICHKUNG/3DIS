@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import time
@@ -293,6 +294,16 @@ def run_level_tracking(
         )
         artifacts['index'] = os.path.relpath(index_path, out_root)
         LOGGER.info("Level %d index saved → %s", level, index_path)
+
+    # Clean up GPU memory after level completion (all data already persisted)
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            gc.collect()
+            LOGGER.debug("Level %d: GPU memory cache cleared", level)
+    except ImportError:
+        pass
 
     filtered_preview: List[Optional[List[Dict[str, Any]]]] = [None] * len(frame_numbers)
     for meta_idx, local_idx in zip(preview_meta_indices, preview_local_indices):

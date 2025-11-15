@@ -62,8 +62,8 @@ inference:
     temperature: 0.2
     min_similarity: 0.05
     top_k_per_level: 100
-    object_levels: [L2, L4]
-    part_levels: [L4, L6]
+    object_levels: [L1, L3]
+    part_levels: [L3, L5]
 
   # ==================== MODIFIED PAIRING CONFIG ====================
   # KEY CHANGES:
@@ -97,8 +97,8 @@ inference:
     min_mask_size: 10
 
   independent:
-    object_levels: [L2, L4]
-    part_levels: [L4, L6]
+    object_levels: [L1, L3]
+    part_levels: [L3, L5]
     top_k_per_level: 100
     retrieval_threshold: 0.2
     min_retrieval_threshold: 0.01
@@ -120,6 +120,7 @@ evaluation:
   enabled: true
   gt_paths:
     obj_part: /media/Pluto/richkung/My3DIS/data/search3d_gt/multiscan_data_search3d/multiscan_annotations_search3d/ov_part_annotations
+  gt_ply_path: /media/Pluto/richkung/My3DIS/data/search3d_gt/multiscan_data_search3d/multiscan_test_plys_only
   eval_modes: ['obj_part']
   eval_scripts:
     obj_part: eval/search3d/eval_semantic_instance_parts_OV.py

@@ -74,6 +74,22 @@ def setup_paths(config: Dict) -> Dict:
     """
     exp_dir = Path(config['experiment']['exp_dir'])
 
+    # Auto-detect levels if not specified
+    if config['experiment']['levels'] is None:
+        detected_levels = []
+        for level_dir in sorted(exp_dir.glob('level_*')):
+            if level_dir.is_dir():
+                level_num = int(level_dir.name.split('_')[1])
+                detected_levels.append(level_num)
+
+        if detected_levels:
+            config['experiment']['levels'] = detected_levels
+            logger.info(f"Auto-detected levels from exp_dir: {detected_levels}")
+        else:
+            # Fallback to common default
+            config['experiment']['levels'] = [2, 4, 6]
+            logger.warning(f"Could not auto-detect levels, using default: [2, 4, 6]")
+
     # Resolve aggregation output directory
     if config['experiment']['aggregation_output_dir'] is None:
         config['experiment']['aggregation_output_dir'] = str(exp_dir / 'aggregation_output')
@@ -100,6 +116,7 @@ def _dict_to_inference_config(inf_dict: Dict) -> InferenceConfig:
         FormatterConfig,
         IndependentStrategyConfig,
         HierarchicalStrategyConfig,
+        ExhaustivePairingConfig,
     )
 
     config = InferenceConfig()
@@ -127,6 +144,9 @@ def _dict_to_inference_config(inf_dict: Dict) -> InferenceConfig:
 
     if 'hierarchical' in inf_dict:
         config.hierarchical = HierarchicalStrategyConfig(**inf_dict['hierarchical'])
+
+    if 'exhaustive_pairing' in inf_dict:
+        config.exhaustive_pairing = ExhaustivePairingConfig(**inf_dict['exhaustive_pairing'])
 
     return config
 
@@ -290,6 +310,7 @@ def run_inference_stage(
     # Load proposals and features
     logger.info("Loading proposals and features from aggregation output...")
     proposals_by_level = {}
+    scene_num_points = None
 
     for level_str, npz_path in proposal_data_paths.items():
         level = int(level_str)
@@ -301,6 +322,8 @@ def run_inference_stage(
         proposal_masks = torch.from_numpy(data['proposal_masks'])
         proposal_features = torch.from_numpy(data['proposal_features'])
         proposal_ids = data['proposal_ids']
+        if scene_num_points is None:
+            scene_num_points = int(proposal_masks.shape[0])
 
         logger.info(f"  Level {level}: {len(proposal_ids)} proposals")
 
@@ -355,6 +378,21 @@ def run_inference_stage(
             'refinement_threshold': inference_config.hierarchical.refinement_threshold,
             'refinement_margin': inference_config.hierarchical.refinement_margin,
         }
+    elif inference_config.strategy == 'exhaustive_pairing':
+        strategy_kwargs = {
+            'available_levels': inference_config.exhaustive_pairing.available_levels,
+            'top_k_per_level': inference_config.exhaustive_pairing.top_k_per_level,
+            'retrieval_threshold': inference_config.exhaustive_pairing.retrieval_threshold,
+            'min_retrieval_threshold': inference_config.exhaustive_pairing.min_retrieval_threshold,
+            'threshold_backoff_step': inference_config.exhaustive_pairing.threshold_backoff_step,
+            'fallback_to_topk': inference_config.exhaustive_pairing.fallback_to_topk,
+            'selection_metric': inference_config.exhaustive_pairing.selection_metric,
+            'use_tree_pruning': inference_config.exhaustive_pairing.use_tree_pruning,
+            'return_all_pairs': inference_config.exhaustive_pairing.return_all_pairs,
+            'use_combined_query': inference_config.exhaustive_pairing.use_combined_query,
+            'siglip_model': inference_config.exhaustive_pairing.siglip_model,
+            'siglip_device': inference_config.exhaustive_pairing.siglip_device,
+        }
 
     pipeline = InferencePipeline(
         proposals_by_level=proposals_by_level,
@@ -362,6 +400,10 @@ def run_inference_stage(
         strategy=inference_config.strategy,
         **strategy_kwargs
     )
+    if scene_num_points is None:
+        scene_num_points = pipeline.num_points
+    elif pipeline.num_points is not None:
+        scene_num_points = pipeline.num_points
 
     # Load SigLIP model for text encoding
     logger.info(f"Loading SigLIP model for text encoding...")
@@ -579,7 +621,7 @@ def run_inference_stage(
 
     # Export Search3D format (obj_part only)
     search3d_export_stats = None
-    if len(prediction_masks) > 0 and config['evaluation'].get('enabled', False):
+    if config['evaluation'].get('enabled', False):
         try:
             from my3dis.aggregation.search3d_formatter import (
                 export_predictions_search3d,
@@ -589,15 +631,50 @@ def run_inference_stage(
             logger.info("Exporting predictions in Search3D format...")
 
             # Load point cloud to get total number of points
-            scene_path = Path(exp_config['scene_path'])
-            try:
-                points = load_point_cloud_for_export(scene_path)
-                num_points = len(points)
-                logger.info(f"  Scene has {num_points} points")
-            except Exception as e:
-                logger.warning(f"Failed to load point cloud: {e}")
-                logger.warning("Using mask dimensions to infer number of points")
-                num_points = len(prediction_masks[0])
+            # Priority: GT PLY path > scene path
+            scene_name = Path(exp_config['scene_path']).name
+            gt_ply_path = config['evaluation'].get('gt_ply_path')
+
+            points = None
+            num_points = None
+
+            # When no predictions exist, fall back to known point count from proposals
+            if len(prediction_masks) == 0 and scene_num_points is not None:
+                num_points = scene_num_points
+
+            # Try GT PLY path first (for Search3D evaluation)
+            if gt_ply_path:
+                gt_ply_file = Path(gt_ply_path) / f"{scene_name}.ply"
+                if gt_ply_file.exists():
+                    try:
+                        logger.info(f"  Loading GT PLY from {gt_ply_file}")
+                        points = load_point_cloud_for_export(
+                            gt_ply_file.parent,
+                            mesh_name=gt_ply_file.name
+                        )
+                        num_points = len(points)
+                        logger.info(f"  Scene has {num_points} points (from GT PLY)")
+                    except Exception as e:
+                        logger.warning(f"Failed to load GT PLY: {e}")
+
+            # Fall back to scene path if GT PLY not available
+            if num_points is None:
+                scene_path = Path(exp_config['scene_path'])
+                try:
+                    points = load_point_cloud_for_export(scene_path)
+                    num_points = len(points)
+                    logger.info(f"  Scene has {num_points} points (from scene path)")
+                except Exception as e:
+                    logger.warning(f"Failed to load point cloud: {e}")
+                    logger.warning("Using mask dimensions to infer number of points")
+                    if len(prediction_masks) > 0:
+                        num_points = len(prediction_masks[0])
+                    elif scene_num_points is not None:
+                        num_points = scene_num_points
+                    else:
+                        raise RuntimeError(
+                            "Unable to determine number of points for Search3D export"
+                        )
 
             # Create Prediction-like objects for formatter
             class SimplePrediction:

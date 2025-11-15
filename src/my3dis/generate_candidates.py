@@ -758,6 +758,12 @@ def run_generation(
                             )
                         else:
                             full_shape = (int(H), int(W))
+
+                    # BUGFIX (2025-11-14): Add provenance fields for gap-fill masks
+                    # Calculate gap sequence number (count existing gap_fill masks + 1)
+                    gap_seq = len([c for c in candidates if c.get('source') == 'gap_fill']) + 1
+                    gap_unique_id = f"{ssam_frame_idx:04d}_{level}_gap{gap_seq:04d}"
+
                     candidates.append({
                         'frame_idx': ssam_frame_idx,
                         'frame_name': f"gap_{ssam_frame_idx:05d}",
@@ -767,6 +773,12 @@ def run_generation(
                         'level': level,
                         'mask_scale_ratio': ratio_hint,
                         'segmentation': pack_binary_mask(gap, full_resolution_shape=full_shape),
+                        # Provenance tracking fields (matches ssam_progressive_adapter.py format)
+                        'unique_id': gap_unique_id,
+                        'parent_unique_id': None,  # Gap-fill masks have no parent
+                        'source': 'gap_fill',
+                        'ssam_frame_idx': ssam_frame_idx,
+                        'lineage': [],  # Empty lineage for gap-fill masks
                     })
 
             for m in candidates:

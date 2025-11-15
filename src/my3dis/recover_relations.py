@@ -15,6 +15,18 @@ Created: 2025-10-21
 """
 from __future__ import annotations
 
+# Configure temp directory to use /media partition (avoid root partition space issues)
+if __name__ == '__main__':
+    import os
+    import sys
+    from pathlib import Path
+    _project_root = Path(__file__).resolve().parents[2]
+    _tmp_dir = _project_root / 'tmp'
+    _tmp_dir.mkdir(exist_ok=True)
+    os.environ['TMPDIR'] = str(_tmp_dir)
+    os.environ['TEMP'] = str(_tmp_dir)
+    os.environ['TMP'] = str(_tmp_dir)
+
 import argparse
 import json
 import logging

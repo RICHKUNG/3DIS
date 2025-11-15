@@ -76,7 +76,13 @@
       "Bash(conda clean:*)",
       "Bash(pip cache:*)",
       "Bash(/dev/null -print0)",
-      "Bash(/dev/null -exec du -h {} +)"
+      "Bash(/dev/null -exec du -h {} +)",
+      "Bash(timeout 300 bash:*)",
+      "Bash(conda env list:*)",
+      "Bash([ -f /media/Pluto/richkung/My3DIS/LEVEL_FIX_SUMMARY.md ])",
+      "Bash(test:*)",
+      "Bash(timeout 10 tail:*)",
+      "Bash(pgrep:*)"
     ],
     "deny": [],
     "ask": []

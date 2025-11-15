@@ -17,6 +17,15 @@ if __name__ == '__main__':
     if str(_src_root) not in sys.path:
         sys.path.insert(0, str(_src_root))
 
+    # Configure temp directory to use /media partition (avoid root partition space issues)
+    import os
+    _project_root = Path(__file__).resolve().parents[2]
+    _tmp_dir = _project_root / 'tmp'
+    _tmp_dir.mkdir(exist_ok=True)
+    os.environ['TMPDIR'] = str(_tmp_dir)
+    os.environ['TEMP'] = str(_tmp_dir)
+    os.environ['TMP'] = str(_tmp_dir)
+
 from my3dis.siglip_assignment import SigLIPAssignmentPipeline
 
 logging.basicConfig(

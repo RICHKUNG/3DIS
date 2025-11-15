@@ -8,12 +8,12 @@ data/
 outputs/
 _progressive_tmp/
 .tmp_npz/
-
+tmp/
 # Python notebook and interpreter caches
 __pycache__/
 .ipynb_checkpoints/
 3DprojToSiglip/
-
+third_party/
 # Misc directories not used
 no use/
 stages.filter.enabled=true/

@@ -9,6 +9,7 @@ import numpy as np
 from typing import List, Tuple, Optional, Dict, Set
 from dataclasses import dataclass
 import logging
+import re
 
 from .retrieval import Proposal
 from .geometry import (
@@ -19,6 +20,34 @@ from .geometry import (
 from .scoring import ScoreAggregator
 
 logger = logging.getLogger(__name__)
+
+
+def parse_level_to_prefix(level: str) -> int:
+    """
+    Extract level number from level string and compute ID prefix.
+
+    Args:
+        level: Level string (e.g., 'L1', 'L2', ..., 'L6')
+
+    Returns:
+        ID prefix for this level (e.g., L1→1000, L2→2000, L6→6000)
+
+    Raises:
+        ValueError: If level format is invalid
+    """
+    match = re.match(r'^L(\d+)$', level)
+    if not match:
+        raise ValueError(
+            f"Invalid level format: '{level}'. Expected format: L<number> (e.g., 'L1', 'L2', 'L6')"
+        )
+
+    level_num = int(match.group(1))
+    if level_num < 1 or level_num > 9:
+        raise ValueError(
+            f"Invalid level number: {level_num}. Must be between 1 and 9"
+        )
+
+    return level_num * 1000
 
 
 @dataclass
@@ -59,10 +88,13 @@ class FamilyTree:
         children = self.tree_data[obj_id].get('children', [])
 
         if target_level is not None:
-            # Filter by level (assuming level is encoded in ID: 2XXX, 4XXX, 6XXX)
-            level_prefix = {'L2': 2, 'L4': 4, 'L6': 6}
-            prefix = level_prefix.get(target_level, -1) * 1000
-            children = [c for c in children if prefix <= c < prefix + 1000]
+            # Filter by level (level is encoded in ID: L1→1XXX, L2→2XXX, etc.)
+            try:
+                prefix = parse_level_to_prefix(target_level)
+                children = [c for c in children if prefix <= c < prefix + 1000]
+            except ValueError as e:
+                logger.warning(f"Invalid target_level '{target_level}': {e}")
+                return []
 
         return children
 
@@ -83,11 +115,17 @@ class FamilyTree:
             queue.extend(children)
 
         if levels is not None:
-            level_prefixes = [{'L2': 2, 'L4': 4, 'L6': 6}[l] * 1000 for l in levels]
-            descendants = [
-                d for d in descendants
-                if any(prefix <= d < prefix + 1000 for prefix in level_prefixes)
-            ]
+            # Parse level prefixes dynamically
+            try:
+                level_prefixes = [parse_level_to_prefix(l) for l in levels]
+                descendants = [
+                    d for d in descendants
+                    if any(prefix <= d < prefix + 1000 for prefix in level_prefixes)
+                ]
+            except ValueError as e:
+                logger.error(f"Invalid level in levels list: {e}")
+                # Return all descendants if level parsing fails
+                pass
 
         return descendants
 
