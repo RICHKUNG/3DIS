@@ -38,7 +38,7 @@ import json
 import logging
 import time
 import yaml
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 from collections import Counter
 
 import torch
@@ -75,7 +75,7 @@ def setup_paths(config: Dict) -> Dict:
     exp_dir = Path(config['experiment']['exp_dir'])
 
     # Auto-detect levels if not specified
-    if config['experiment']['levels'] is None:
+    if config['experiment'].get('levels') is None:
         detected_levels = []
         for level_dir in sorted(exp_dir.glob('level_*')):
             if level_dir.is_dir():
@@ -91,11 +91,11 @@ def setup_paths(config: Dict) -> Dict:
             logger.warning(f"Could not auto-detect levels, using default: [2, 4, 6]")
 
     # Resolve aggregation output directory
-    if config['experiment']['aggregation_output_dir'] is None:
+    if config['experiment'].get('aggregation_output_dir') is None:
         config['experiment']['aggregation_output_dir'] = str(exp_dir / 'aggregation_output')
 
     # Resolve inference output directory
-    if config['experiment']['inference_output_dir'] is None:
+    if config['experiment'].get('inference_output_dir') is None:
         config['experiment']['inference_output_dir'] = str(exp_dir / 'inference_output')
 
     return config
@@ -273,6 +273,54 @@ def run_aggregation_stage(config: Dict) -> Dict[str, str]:
     return results
 
 
+def auto_detect_available_levels(aggregation_output_dir: Path) -> List[str]:
+    """
+    Auto-detect available levels from aggregation output directory.
+
+    Scans for proposal_data_level*.npz files and returns available level names.
+
+    Args:
+        aggregation_output_dir: Path to aggregation output directory
+
+    Returns:
+        List of available level names (e.g., ['L2', 'L4', 'L6'])
+
+    Example:
+        If directory contains:
+        - proposal_data_level2.npz
+        - proposal_data_level4.npz
+        - proposal_data_level6.npz
+
+        Returns: ['L2', 'L4', 'L6']
+    """
+    import re
+
+    if not aggregation_output_dir.exists():
+        logger.warning(f"Aggregation output directory not found: {aggregation_output_dir}")
+        return []
+
+    # Find all proposal_data_level*.npz files
+    proposal_files = list(aggregation_output_dir.glob("proposal_data_level*.npz"))
+
+    # Extract level numbers
+    levels = []
+    for file in proposal_files:
+        match = re.search(r'level(\d+)\.npz', file.name)
+        if match:
+            level_num = int(match.group(1))
+            levels.append(f'L{level_num}')
+
+    # Sort levels by number
+    levels.sort(key=lambda x: int(x[1:]))
+
+    if levels:
+        logger.info(f"Auto-detected available levels: {levels}")
+    else:
+        logger.warning(f"No proposal data files found in {aggregation_output_dir}")
+
+    return levels
+
+
 def run_inference_stage(
     config: Dict,
     proposal_data_paths: Dict[str, str],
@@ -303,6 +351,58 @@ def run_inference_stage(
     if strategy is not None:
         inf_config_dict['strategy'] = strategy
         logger.info(f"Using strategy: {strategy}")
+
+    # Auto-detect available levels from aggregation output
+    aggregation_output_dir = Path(exp_config.get('aggregation_output_dir',
+                                                  Path(exp_config['exp_dir']) / 'aggregation_output'))
+    available_levels = auto_detect_available_levels(aggregation_output_dir)
+
+    # Auto-configure level settings if not explicitly set or set to 'auto'
+    # For each strategy, check if levels are null/auto and fill with detected levels
+    if available_levels:
+        # Helper function to determine object and part levels from available levels
+        def get_default_level_split(levels):
+            """Split available levels into object (coarser) and part (finer) levels."""
+            if len(levels) >= 2:
+                # Use coarser levels for objects, finer levels for parts
+                mid = len(levels) // 2
+                object_levels = levels[:mid] if mid > 0 else levels[:1]
+                part_levels = levels[mid:] if mid < len(levels) else levels[-1:]
+                return object_levels, part_levels
+            elif len(levels) == 1:
+                # Only one level - use it for both
+                return levels, levels
+            else:
+                return [], []
+
+        object_levels_default, part_levels_default = get_default_level_split(available_levels)
+
+        # Update retrieval config
+        if 'retrieval' in inf_config_dict:
+            if inf_config_dict['retrieval'].get('object_levels') in [None, 'auto', []]:
+                inf_config_dict['retrieval']['object_levels'] = object_levels_default
+                logger.info(f"Auto-configured retrieval.object_levels = {object_levels_default}")
+            if inf_config_dict['retrieval'].get('part_levels') in [None, 'auto', []]:
+                inf_config_dict['retrieval']['part_levels'] = part_levels_default
+                logger.info(f"Auto-configured retrieval.part_levels = {part_levels_default}")
+
+        # Update independent strategy config
+        if 'independent' in inf_config_dict:
+            if inf_config_dict['independent'].get('object_levels') in [None, 'auto', []]:
+                inf_config_dict['independent']['object_levels'] = object_levels_default
+                logger.info(f"Auto-configured independent.object_levels = {object_levels_default}")
+            if inf_config_dict['independent'].get('part_levels') in [None, 'auto', []]:
+                inf_config_dict['independent']['part_levels'] = part_levels_default
+                logger.info(f"Auto-configured independent.part_levels = {part_levels_default}")
+
+        # Update hierarchical strategy config (uses all levels for coarse-to-fine)
+        # Hierarchical doesn't have object_levels/part_levels, skip
+
+        # Update exhaustive_pairing strategy config
+        if 'exhaustive_pairing' in inf_config_dict:
+            if inf_config_dict['exhaustive_pairing'].get('available_levels') in [None, 'auto', []]:
+                inf_config_dict['exhaustive_pairing']['available_levels'] = available_levels
+                logger.info(f"Auto-configured exhaustive_pairing.available_levels = {available_levels}")
 
     # Convert inference config dict to InferenceConfig object (from dict, not file)
     inference_config = _dict_to_inference_config(inf_config_dict)
@@ -398,6 +498,7 @@ def run_inference_stage(
         proposals_by_level=proposals_by_level,
         family_tree_path=family_tree_path_str,  # Pass path instead of dict
         strategy=inference_config.strategy,
+        config=inference_config,  # Pass config for scoring/pairing/nms
         **strategy_kwargs
     )
     if scene_num_points is None:
@@ -438,10 +539,14 @@ def run_inference_stage(
 
         # Optional: filter queries to labels present in GT for this scene
         eval_cfg = config.get('evaluation', {})
-        scene_label_counts = load_scene_label_distribution(
-            eval_cfg.get('gt_path'),
-            scene_name
-        )
+        # Try new gt_paths.obj_part first, fallback to deprecated gt_path
+        gt_path = None
+        if 'gt_paths' in eval_cfg and eval_cfg['gt_paths']:
+            gt_path = eval_cfg['gt_paths'].get('obj_part')
+        if not gt_path:
+            gt_path = eval_cfg.get('gt_path')
+
+        scene_label_counts = load_scene_label_distribution(gt_path, scene_name)
         if scene_label_counts:
             allowed_labels = set(scene_label_counts.keys())
             filtered_queries = [q for q in queries if q[2] in allowed_labels]
@@ -1201,14 +1306,499 @@ def run_evaluation_stage(
     return results
 
 
+def discover_scenes(exp_root: Path, scenes_config) -> List[Tuple[str, Path, Path]]:
+    """
+    Discover scenes to process in multi-scene mode.
+
+    Args:
+        exp_root: Experiment root directory
+        scenes_config: Scene configuration from YAML (all, list, or pattern)
+
+    Returns:
+        List of (scene_name, scene_exp_dir, scene_data_path) tuples
+    """
+    import glob as glob_module
+
+    scene_dirs = []
+
+    # Find all scene directories in exp_root
+    for item in exp_root.iterdir():
+        if item.is_dir() and item.name.startswith('scene_'):
+            scene_dirs.append(item)
+
+    scene_dirs.sort()
+
+    if not scene_dirs:
+        logger.warning(f"No scene directories found in {exp_root}")
+        return []
+
+    logger.info(f"Found {len(scene_dirs)} scene directories in {exp_root}")
+
+    # Filter based on scenes_config
+    if scenes_config is None or scenes_config == "all":
+        # Process all scenes
+        selected_scenes = scene_dirs
+    elif isinstance(scenes_config, list):
+        # Process specific scenes
+        selected_names = set(scenes_config)
+        selected_scenes = [d for d in scene_dirs if d.name in selected_names]
+    elif isinstance(scenes_config, str):
+        # Pattern matching
+        import fnmatch
+        pattern = scenes_config
+        selected_scenes = [d for d in scene_dirs if fnmatch.fnmatch(d.name, pattern)]
+    else:
+        logger.error(f"Invalid scenes config: {scenes_config}")
+        return []
+
+    logger.info(f"Selected {len(selected_scenes)} scenes to process")
+
+    return [(d.name, d, None) for d in selected_scenes]
+
+
+def process_single_scene(
+    scene_name: str,
+    scene_exp_dir: Path,
+    scene_data_path: Optional[Path],
+    config: Dict,
+    dataset_root: Optional[Path] = None
+) -> Dict:
+    """
+    Process a single scene through the full pipeline.
+
+    Args:
+        scene_name: Scene name (e.g., scene_00005_00)
+        scene_exp_dir: Scene experiment directory
+        scene_data_path: Scene data path (PLY, images, etc.)
+        config: Full configuration dictionary
+        dataset_root: Dataset root directory (for auto-resolving scene_data_path)
+
+    Returns:
+        Dictionary with scene results and metrics
+    """
+    logger.info("="*80)
+    logger.info(f"PROCESSING SCENE: {scene_name}")
+    logger.info("="*80)
+
+    # Resolve scene_data_path if not provided
+    if scene_data_path is None and dataset_root is not None:
+        scene_data_path = dataset_root / scene_name
+        logger.info(f"Auto-resolved scene_data_path: {scene_data_path}")
+
+    if scene_data_path is None or not scene_data_path.exists():
+        logger.error(f"Scene data path not found: {scene_data_path}")
+        return {
+            'status': 'failed',
+            'error': 'scene_data_path_not_found',
+            'scene_name': scene_name
+        }
+
+    # Create scene-specific config
+    scene_config = config.copy()
+    scene_config['experiment'] = config['experiment'].copy()
+    scene_config['experiment']['exp_dir'] = str(scene_exp_dir)
+    scene_config['experiment']['scene_path'] = str(scene_data_path)
+
+    # Setup paths for this scene
+    scene_config = setup_paths(scene_config)
+
+    scene_results = {
+        'scene_name': scene_name,
+        'exp_dir': str(scene_exp_dir),
+        'scene_path': str(scene_data_path),
+        'status': 'success',
+        'aggregation': {},
+        'inference': {},
+        'evaluation': {}
+    }
+
+    try:
+        # Stage 1: Aggregation
+        proposal_data_paths = None
+        if scene_config['aggregation']['enabled']:
+            try:
+                proposal_data_paths = run_aggregation_stage(scene_config)
+                scene_results['aggregation'] = {
+                    'status': 'success',
+                    'outputs': proposal_data_paths
+                }
+            except Exception as e:
+                logger.error(f"Aggregation failed for {scene_name}: {e}", exc_info=True)
+                scene_results['aggregation'] = {
+                    'status': 'failed',
+                    'error': str(e)
+                }
+                scene_results['status'] = 'failed'
+                return scene_results
+        else:
+            # Load existing aggregation outputs
+            logger.info(f"Skipping aggregation for {scene_name} (loading existing outputs)")
+            agg_output_dir = Path(scene_config['experiment']['aggregation_output_dir'])
+            proposal_data_paths = {}
+
+            levels_to_check = scene_config['experiment'].get('levels', None)
+            if levels_to_check is None:
+                from my3dis.aggregation.aggregation_pipeline import detect_available_levels
+                detected_levels = detect_available_levels(scene_exp_dir)
+                if detected_levels:
+                    levels_to_check = detected_levels
+                else:
+                    levels_to_check = [2, 4, 6]
+
+            for level in levels_to_check:
+                npz_path = agg_output_dir / f"proposal_data_level{level}.npz"
+                if npz_path.exists():
+                    proposal_data_paths[str(level)] = str(npz_path)
+
+            scene_results['aggregation'] = {
+                'status': 'skipped',
+                'outputs': proposal_data_paths
+            }
+
+        # Stage 2: Inference
+        strategy_results = {}
+        if scene_config['inference']['enabled'] and proposal_data_paths:
+            try:
+                test_all_strategies = scene_config['inference'].get('test_all_strategies', False)
+
+                if test_all_strategies:
+                    strategies_to_test = scene_config['inference'].get('strategies_to_test', ['independent', 'hierarchical'])
+                    for strategy in strategies_to_test:
+                        inference_stats = run_inference_stage(
+                            scene_config,
+                            proposal_data_paths,
+                            strategy=strategy,
+                            output_subdir=strategy
+                        )
+                        strategy_results[strategy] = inference_stats
+                else:
+                    strategy_name = scene_config['inference']['strategy']
+                    inference_stats = run_inference_stage(scene_config, proposal_data_paths)
+                    strategy_results[strategy_name] = inference_stats
+
+                scene_results['inference'] = {
+                    'status': 'success',
+                    'strategies': strategy_results
+                }
+            except Exception as e:
+                logger.error(f"Inference failed for {scene_name}: {e}", exc_info=True)
+                scene_results['inference'] = {
+                    'status': 'failed',
+                    'error': str(e)
+                }
+                scene_results['status'] = 'failed'
+                return scene_results
+
+        # Stage 3: Evaluation
+        if scene_config['evaluation']['enabled'] and strategy_results:
+            try:
+                eval_results = {}
+                for strategy_name, stats in strategy_results.items():
+                    eval_result = run_evaluation_stage(
+                        config=scene_config,
+                        inference_output_dir=stats['output_dir'],
+                    )
+                    eval_results[strategy_name] = eval_result
+
+                scene_results['evaluation'] = {
+                    'status': 'success',
+                    'results': eval_results
+                }
+            except Exception as e:
+                logger.error(f"Evaluation failed for {scene_name}: {e}", exc_info=True)
+                scene_results['evaluation'] = {
+                    'status': 'failed',
+                    'error': str(e)
+                }
+
+        return scene_results
+
+    except Exception as e:
+        logger.error(f"Scene processing failed for {scene_name}: {e}", exc_info=True)
+        scene_results['status'] = 'failed'
+        scene_results['error'] = str(e)
+        return scene_results
+
+
+def generate_multi_scene_report(
+    scene_results: List[Dict],
+    aggregated: Dict,
+    output_path: Path
+):
+    """
+    Generate multi-scene summary report.
+
+    Args:
+        scene_results: List of scene result dictionaries
+        aggregated: Aggregated metrics dictionary
+        output_path: Path to save the report
+    """
+    logger.info(f"Generating multi-scene summary report...")
+
+    report_lines = [
+        "# Multi-Scene Pipeline Summary Report",
+        "",
+        f"**Generated**: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        "## Overview",
+        "",
+        f"- **Total Scenes**: {aggregated['total_scenes']}",
+        f"- **Successful**: {aggregated['successful_scenes']}",
+        f"- **Failed**: {aggregated['failed_scenes']}",
+        "",
+        "## Overall Metrics",
+        "",
+    ]
+
+    # Add overall metrics table
+    if aggregated['overall_metrics']:
+        report_lines.append("| Strategy | Mean mAP | Mean AP50 | Mean AP25 | Std mAP | Std AP50 | Std AP25 | Scenes |")
+        report_lines.append("|----------|----------|-----------|-----------|---------|----------|----------|--------|")
+
+        for strategy, metrics in aggregated['overall_metrics'].items():
+            report_lines.append(
+                f"| **{strategy}** | "
+                f"{metrics['mean_mAP']:.3f} | "
+                f"{metrics['mean_AP50']:.3f} | "
+                f"{metrics['mean_AP25']:.3f} | "
+                f"{metrics['std_mAP']:.3f} | "
+                f"{metrics['std_AP50']:.3f} | "
+                f"{metrics['std_AP25']:.3f} | "
+                f"{metrics['num_scenes']} |"
+            )
+    else:
+        report_lines.append("*No metrics available*")
+
+    report_lines.extend([
+        "",
+        "## Per-Scene Results",
+        "",
+    ])
+
+    # Add per-scene results table
+    report_lines.append("| Scene | Status | mAP | AP50 | AP25 | Error |")
+    report_lines.append("|-------|--------|-----|------|------|-------|")
+
+    for scene_name, scene_info in aggregated['scenes'].items():
+        status = scene_info['status']
+
+        # Get metrics from first available strategy
+        metrics_str = "-"
+        ap50_str = "-"
+        ap25_str = "-"
+        error_str = ""
+
+        if status == 'success':
+            # Find first strategy with metrics
+            for key, value in scene_info.items():
+                if isinstance(value, dict) and 'mAP' in value:
+                    metrics_str = f"{value['mAP']:.3f}"
+                    ap50_str = f"{value['AP50']:.3f}"
+                    ap25_str = f"{value['AP25']:.3f}"
+                    break
+        else:
+            error_str = scene_info.get('error', 'Unknown error')
+
+        report_lines.append(
+            f"| {scene_name} | {status} | {metrics_str} | {ap50_str} | {ap25_str} | {error_str} |"
+        )
+
+    report_lines.extend([
+        "",
+        "## Detailed Scene Results",
+        "",
+    ])
+
+    # Add detailed results for each scene
+    for scene_result in scene_results:
+        scene_name = scene_result['scene_name']
+        status = scene_result['status']
+
+        report_lines.extend([
+            f"### {scene_name}",
+            "",
+            f"- **Status**: {status}",
+            f"- **Experiment Dir**: `{scene_result['exp_dir']}`",
+            f"- **Scene Path**: `{scene_result['scene_path']}`",
+            "",
+        ])
+
+        if status == 'success':
+            # Aggregation info
+            if 'aggregation' in scene_result:
+                agg = scene_result['aggregation']
+                report_lines.extend([
+                    "**Aggregation**:",
+                    f"- Status: {agg.get('status', 'unknown')}",
+                    "",
+                ])
+
+            # Inference info
+            if 'inference' in scene_result and scene_result['inference'].get('status') == 'success':
+                inf = scene_result['inference']
+                strategies = inf.get('strategies', {})
+                report_lines.append("**Inference**:")
+                for strategy_name, strategy_stats in strategies.items():
+                    report_lines.append(f"- {strategy_name}: {strategy_stats.get('num_predictions', 0)} predictions")
+                report_lines.append("")
+
+            # Evaluation info
+            if 'evaluation' in scene_result and scene_result['evaluation'].get('status') == 'success':
+                eval_results = scene_result['evaluation'].get('results', {})
+                report_lines.append("**Evaluation**:")
+
+                for strategy_name, eval_result in eval_results.items():
+                    if 'obj_part' in eval_result and eval_result['obj_part'].get('status') == 'success':
+                        metrics = eval_result['obj_part']['metrics']
+                        report_lines.extend([
+                            f"- {strategy_name}:",
+                            f"  - mAP: {metrics.get('all_ap', 0):.3f}",
+                            f"  - AP50: {metrics.get('all_ap_50%', 0):.3f}",
+                            f"  - AP25: {metrics.get('all_ap_25%', 0):.3f}",
+                        ])
+                report_lines.append("")
+        else:
+            error = scene_result.get('error', 'Unknown error')
+            report_lines.extend([
+                f"**Error**: {error}",
+                "",
+            ])
+
+    report_lines.extend([
+        "---",
+        "",
+        f"Report generated by My3DIS multi-scene pipeline at {time.strftime('%Y-%m-%d %H:%M:%S')}",
+    ])
+
+    # Write report
+    with open(output_path, 'w') as f:
+        f.write('\n'.join(report_lines))
+
+    logger.info(f"  Multi-scene report saved: {output_path}")
+
+
+def aggregate_scene_metrics(scene_results: List[Dict], output_path: Path):
+    """
+    Aggregate metrics from all scenes and save to file.
+
+    Args:
+        scene_results: List of scene result dictionaries
+        output_path: Path to save aggregated metrics
+    """
+    import numpy as np  # Import numpy for metric aggregation
+
+    logger.info("="*80)
+    logger.info("AGGREGATING METRICS ACROSS ALL SCENES")
+    logger.info("="*80)
+
+    # Initialize aggregated metrics
+    aggregated = {
+        'total_scenes': len(scene_results),
+        'successful_scenes': 0,
+        'failed_scenes': 0,
+        'scenes': {},
+        'overall_metrics': {}
+    }
+
+    # Collect per-scene metrics
+    all_eval_results = []
+
+    for scene_result in scene_results:
+        scene_name = scene_result['scene_name']
+        aggregated['scenes'][scene_name] = {
+            'status': scene_result['status'],
+            'exp_dir': scene_result['exp_dir'],
+            'scene_path': scene_result['scene_path']
+        }
+
+        if scene_result['status'] == 'success':
+            aggregated['successful_scenes'] += 1
+
+            # Extract evaluation metrics
+            if 'evaluation' in scene_result and scene_result['evaluation'].get('status') == 'success':
+                eval_results = scene_result['evaluation'].get('results', {})
+
+                for strategy_name, eval_result in eval_results.items():
+                    if 'obj_part' in eval_result and eval_result['obj_part'].get('status') == 'success':
+                        metrics = eval_result['obj_part']['metrics']
+                        all_eval_results.append({
+                            'scene': scene_name,
+                            'strategy': strategy_name,
+                            'mAP': metrics.get('all_ap', 0),
+                            'AP50': metrics.get('all_ap_50%', 0),
+                            'AP25': metrics.get('all_ap_25%', 0),
+                        })
+
+                        # Store per-scene metrics
+                        aggregated['scenes'][scene_name][strategy_name] = {
+                            'mAP': metrics.get('all_ap', 0),
+                            'AP50': metrics.get('all_ap_50%', 0),
+                            'AP25': metrics.get('all_ap_25%', 0),
+                        }
+        else:
+            aggregated['failed_scenes'] += 1
+            if 'error' in scene_result:
+                aggregated['scenes'][scene_name]['error'] = scene_result['error']
+
+    # Compute overall metrics (average across scenes)
+    if all_eval_results:
+        # Group by strategy
+        strategy_metrics = {}
+        for result in all_eval_results:
+            strategy = result['strategy']
+            if strategy not in strategy_metrics:
+                strategy_metrics[strategy] = {
+                    'mAP': [],
+                    'AP50': [],
+                    'AP25': []
+                }
+
+            strategy_metrics[strategy]['mAP'].append(result['mAP'])
+            strategy_metrics[strategy]['AP50'].append(result['AP50'])
+            strategy_metrics[strategy]['AP25'].append(result['AP25'])
+
+        # Compute averages
+        for strategy, metrics in strategy_metrics.items():
+            aggregated['overall_metrics'][strategy] = {
+                'mean_mAP': float(np.mean(metrics['mAP'])),
+                'mean_AP50': float(np.mean(metrics['AP50'])),
+                'mean_AP25': float(np.mean(metrics['AP25'])),
+                'std_mAP': float(np.std(metrics['mAP'])),
+                'std_AP50': float(np.std(metrics['AP50'])),
+                'std_AP25': float(np.std(metrics['AP25'])),
+                'num_scenes': len(metrics['mAP'])
+            }
+
+    # Save to file
+    with open(output_path, 'w') as f:
+        json.dump(aggregated, f, indent=2)
+
+    logger.info(f"✓ Aggregated metrics saved to {output_path}")
+    logger.info(f"  Total scenes: {aggregated['total_scenes']}")
+    logger.info(f"  Successful: {aggregated['successful_scenes']}")
+    logger.info(f"  Failed: {aggregated['failed_scenes']}")
+
+    # Print overall metrics
+    for strategy, metrics in aggregated['overall_metrics'].items():
+        logger.info(f"\n  {strategy.upper()} strategy (averaged over {metrics['num_scenes']} scenes):")
+        logger.info(f"    mAP:  {metrics['mean_mAP']:.3f} ± {metrics['std_mAP']:.3f}")
+        logger.info(f"    AP50: {metrics['mean_AP50']:.3f} ± {metrics['std_AP50']:.3f}")
+        logger.info(f"    AP25: {metrics['mean_AP25']:.3f} ± {metrics['std_AP25']:.3f}")
+
+    return aggregated
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Run full My3DIS pipeline (Aggregation + Inference + Evaluation)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run full pipeline with config file
+  # Run full pipeline with config file (single scene mode)
   python scripts/run_full_pipeline.py --config configs/inference/full_pipeline.yaml
+
+  # Run multi-scene pipeline
+  python scripts/run_full_pipeline.py --config configs/inference/full_pipeline.yaml --multi-scene
 
   # Override experiment directory
   python scripts/run_full_pipeline.py \\
@@ -1227,12 +1817,29 @@ Examples:
         help='Path to YAML configuration file'
     )
     parser.add_argument(
+        '--multi-scene', action='store_true',
+        help='Enable multi-scene processing mode'
+    )
+    parser.add_argument(
         '--exp-dir',
-        help='Override experiment directory path from config'
+        help='Override experiment directory path from config (single scene mode)'
+    )
+    parser.add_argument(
+        '--exp-root',
+        help='Override experiment root directory from config (multi-scene mode)'
     )
     parser.add_argument(
         '--scene-path',
-        help='Override scene path from config'
+        help='Override scene path from config (single scene mode)'
+    )
+    parser.add_argument(
+        '--dataset-root',
+        help='Override dataset root directory from config (multi-scene mode)'
+    )
+    parser.add_argument(
+        '--scenes',
+        nargs='*',
+        help='Specific scenes to process in multi-scene mode (e.g., scene_00005_00 scene_00093_01)'
     )
     parser.add_argument(
         '--skip-aggregation', action='store_true',
@@ -1267,10 +1874,18 @@ Examples:
     config = load_config(args.config)
 
     # Apply command-line overrides
+    if args.multi_scene:
+        config['experiment']['multi_scene_mode'] = True
     if args.exp_dir:
         config['experiment']['exp_dir'] = args.exp_dir
+    if args.exp_root:
+        config['experiment']['exp_root'] = args.exp_root
     if args.scene_path:
         config['experiment']['scene_path'] = args.scene_path
+    if args.dataset_root:
+        config['experiment']['dataset_root'] = args.dataset_root
+    if args.scenes:
+        config['experiment']['scenes'] = args.scenes
     if args.skip_aggregation:
         config['aggregation']['enabled'] = False
     if args.skip_inference:
@@ -1284,6 +1899,77 @@ Examples:
     if args.device:
         config['experiment']['device'] = args.device
 
+    # Check for multi-scene mode
+    multi_scene_mode = config['experiment'].get('multi_scene_mode', False)
+
+    if multi_scene_mode:
+        # ===== MULTI-SCENE MODE =====
+        logger.info("="*80)
+        logger.info("MULTI-SCENE PROCESSING MODE")
+        logger.info("="*80)
+
+        exp_root = Path(config['experiment']['exp_root'])
+        dataset_root = Path(config['experiment'].get('dataset_root', '/media/public_dataset2/multiscan'))
+        scenes_config = config['experiment'].get('scenes', 'all')
+
+        logger.info(f"Experiment root: {exp_root}")
+        logger.info(f"Dataset root: {dataset_root}")
+        logger.info(f"Scenes config: {scenes_config}")
+
+        # Discover scenes to process
+        scene_list = discover_scenes(exp_root, scenes_config)
+
+        if not scene_list:
+            logger.error("No scenes found to process")
+            return 1
+
+        logger.info(f"\nProcessing {len(scene_list)} scenes:")
+        for scene_name, scene_exp_dir, _ in scene_list:
+            logger.info(f"  - {scene_name}")
+
+        # Process each scene
+        all_scene_results = []
+        for i, (scene_name, scene_exp_dir, scene_data_path) in enumerate(scene_list, 1):
+            logger.info(f"\n{'='*80}")
+            logger.info(f"SCENE {i}/{len(scene_list)}: {scene_name}")
+            logger.info(f"{'='*80}")
+
+            scene_result = process_single_scene(
+                scene_name=scene_name,
+                scene_exp_dir=scene_exp_dir,
+                scene_data_path=scene_data_path,
+                config=config,
+                dataset_root=dataset_root
+            )
+            all_scene_results.append(scene_result)
+
+            # Save per-scene results
+            scene_results_path = scene_exp_dir / "pipeline_results.json"
+            with open(scene_results_path, 'w') as f:
+                json.dump(scene_result, f, indent=2)
+            logger.info(f"  Per-scene results saved: {scene_results_path}")
+
+        # Aggregate metrics across all scenes
+        aggregated_metrics_path = exp_root / "aggregated_metrics.json"
+        aggregated = aggregate_scene_metrics(all_scene_results, aggregated_metrics_path)
+
+        # Generate summary report
+        summary_report_path = exp_root / "multi_scene_summary.md"
+        generate_multi_scene_report(all_scene_results, aggregated, summary_report_path)
+
+        logger.info("")
+        logger.info("="*80)
+        logger.info("✓ MULTI-SCENE PIPELINE COMPLETED")
+        logger.info("="*80)
+        logger.info(f"Total scenes processed: {len(all_scene_results)}")
+        logger.info(f"Successful: {aggregated['successful_scenes']}")
+        logger.info(f"Failed: {aggregated['failed_scenes']}")
+        logger.info(f"Aggregated metrics: {aggregated_metrics_path}")
+        logger.info(f"Summary report: {summary_report_path}")
+
+        return 0
+
+    # ===== SINGLE SCENE MODE (Legacy) =====
     # Setup paths
     config = setup_paths(config)
 

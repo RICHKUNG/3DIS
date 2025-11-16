@@ -87,12 +87,12 @@ aggregation:
   enabled: true
 
   # IoU threshold for merging overlapping proposals
-  iou_threshold: 0.5  # LOWERED from 0.8 to merge more overlapping masks → better coverage
+  iou_threshold: 0.8  # Keep original value (works better)
 
   # Minimum area as fraction of total 3D points
   # Formula: min_points = num_points * area_fraction
   # Default 1/500 means proposals must have at least P/500 points
-  area_fraction: 0.001  # LOWERED from 0.002 (1/1000) to preserve smaller regions → better coverage
+  area_fraction: 0.002  # Keep original (1/500 - balanced quality/coverage)
 
   # Per-level area fractions (optional)
   # If specified, overrides area_fraction for specific levels
@@ -114,7 +114,7 @@ aggregation:
   # Options:
   #   - average: Average point features, then L2 normalize
   #   - voting: Average point features, NO L2 normalization (preserves magnitude)
-  pooling_mode: average  # CHANGED from voting to average for better feature similarity
+  pooling_mode: voting
 
   # Configuration for 3D projection (from pipeline.ipynb)
   projection:
@@ -163,8 +163,8 @@ inference:
   # Multi-level retrieval configuration
   retrieval:
     temperature: 0.2              # Temperature for similarity scoring (lower = sharper)
-    min_similarity: 0.005         # LOWERED from 0.01 to capture more candidates
-    top_k_per_level: 500          # INCREASED from 200 to get more candidates
+    min_similarity: 0.01          # LOWERED from 0.05 to capture more candidates
+    top_k_per_level: 200          # INCREASED from 100 to get more candidates
     object_levels: auto           # Auto-detect from aggregation output (coarser levels)
     part_levels: auto             # Auto-detect from aggregation output (finer levels)
 
@@ -177,11 +177,11 @@ inference:
 
   # Non-Maximum Suppression configuration (multi-instance aware)
   nms:
-    iou_threshold: 0.25           # LOWERED from 0.35 to preserve more predictions
+    iou_threshold: 0.35           # IoU threshold for suppression (lower = preserve more)
     use_soft_nms: false           # Use soft NMS (score decay) instead of hard removal
     soft_nms_sigma: 0.5           # Sigma for soft NMS Gaussian decay
     centroid_distance_ratio: 0.2  # Spatial separation threshold (as ratio of mask size)
-    keep_top_k: 300               # INCREASED from 200 to keep more predictions
+    keep_top_k: 200               # Max predictions to keep per scene (null = no limit)
 
   # Score aggregation configuration
   scoring:

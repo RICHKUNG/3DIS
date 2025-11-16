@@ -483,8 +483,9 @@ class AggregationPipeline:
                 logger.info("EXTRACTING SIGLIP FEATURES")
                 logger.info("="*60)
 
-                # Import feature extraction function
-                from utils_new.feature_extraction import generate_grounding_features_siglip_batched
+                # Import FIXED feature extraction function (2025-11-16: bug fixes for proper averaging)
+                # See: SIGLIP_FIXED_TEST_RESULTS_2025_11_16.md for details
+                from utils_new.feature_extraction_fixed import generate_grounding_features_siglip_batched
 
                 for level in levels:
                     if level not in masks_by_level:

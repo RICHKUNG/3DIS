@@ -128,9 +128,12 @@ def export_predictions_search3d(
         logger.info(f"  Total instances: {len(label_distribution)}")
 
     elif format_type == 'obj_part':
-        # Object-part format: Use composite IDs from queries
+        # Object-part format: composite_id * 1000 + instance_number
+        # GT format: 11001001 = composite_id=11001, instance=1
         logger.info(f"Exporting {len(predictions)} predictions in object-part format")
 
+        # Group predictions by label_id for instance numbering
+        predictions_by_label = {}
         for idx, pred in enumerate(predictions):
             # Get label_id from prediction
             if hasattr(pred, 'label_id') and pred.label_id is not None:
@@ -153,9 +156,25 @@ def export_predictions_search3d(
                 )
                 continue
 
-            # Assign label_id to masked points
-            labels[mask] = label_id
-            label_distribution[label_id] = label_distribution.get(label_id, 0) + int(mask.sum())
+            # Store prediction with its mask
+            if label_id not in predictions_by_label:
+                predictions_by_label[label_id] = []
+            predictions_by_label[label_id].append((pred, mask))
+
+        # Assign instance IDs: composite_id * 1000 + instance_number
+        for label_id, label_preds in predictions_by_label.items():
+            logger.info(f"  Label {label_id}: {len(label_preds)} instances")
+
+            for instance_num, (pred, mask) in enumerate(label_preds, start=1):
+                # Create 8-digit instance ID: composite_id * 1000 + instance_number
+                instance_id = label_id * 1000 + instance_num
+
+                # Assign instance ID to masked points
+                labels[mask] = instance_id
+                label_distribution[instance_id] = int(mask.sum())
+
+        logger.info(f"  Total unique labels: {len(predictions_by_label)}")
+        logger.info(f"  Total instances: {sum(len(preds) for preds in predictions_by_label.values())}")
 
     else:
         raise ValueError(f"Unknown format_type: {format_type}. Must be 'obj' or 'obj_part'")

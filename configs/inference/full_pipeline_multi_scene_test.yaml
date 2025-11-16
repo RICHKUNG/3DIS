@@ -1,0 +1,160 @@
+# Multi-Scene Full Pipeline Configuration (Test)
+# Test configuration for validating multi-scene processing
+#
+# Usage:
+#   conda run -n 3Dsiglip python scripts/run_full_pipeline.py \
+#     --config configs/inference/full_pipeline_multi_scene_test.yaml \
+#     --multi-scene \
+#     --skip-aggregation
+
+# ============================================================================
+# Experiment Settings
+# ============================================================================
+experiment:
+  # Multi-scene mode settings
+  multi_scene_mode: true
+
+  # Experiment root directory for multi-scene mode
+  exp_root: /media/Pluto/richkung/My3DIS/outputs/experiments/test_v7_246_ssam4_filter200_fill200_prop30_1116
+
+  # Dataset root for MultiScan scenes
+  dataset_root: /media/public_dataset2/multiscan
+
+  # Scene selection for testing
+  # Use 'all' to process all scenes found in exp_root
+  scenes: all
+
+  # Levels to process (auto-detect from each scene)
+  levels: null
+
+  # Device configuration
+  device: cuda:0
+
+# ============================================================================
+# Aggregation Stage Configuration
+# ============================================================================
+aggregation:
+  # Skip aggregation for testing (assumes aggregation already done)
+  enabled: false
+
+  # Aggregation settings (used if enabled=true)
+  iou_threshold: 0.8
+  area_fraction: 0.002
+  extract_features: true
+  siglip_model: google/siglip-so400m-patch14-384
+  pooling_mode: voting
+
+  projection:
+    vis_depth_threshold: 0.1
+    frequency: 50
+    resize_ratio: 0.3
+    depth_scale: 1000.0
+
+# ============================================================================
+# Inference Stage Configuration
+# ============================================================================
+inference:
+  # Enable inference stage
+  enabled: true
+
+  # Export predictions as PLY
+  export_predictions_ply: false  # Disable for faster testing
+
+  # Multi-Strategy Testing
+  test_all_strategies: false  # Single strategy for faster testing
+  strategy: exhaustive_pairing
+
+  # Retrieval configuration
+  retrieval:
+    temperature: 0.2
+    min_similarity: 0.01
+    top_k_per_level: 200
+    object_levels: [L1, L3]
+    part_levels: [L3, L5]
+
+  # Pairing configuration
+  pairing:
+    containment_threshold: 0.001
+    scale_range: [0.0001, 20.0]
+    use_geometric_score: false
+    use_tree_pruning: false
+
+  # NMS configuration
+  nms:
+    iou_threshold: 0.35
+    use_soft_nms: false
+    soft_nms_sigma: 0.5
+    centroid_distance_ratio: 0.2
+    keep_top_k: 200
+
+  # Scoring configuration
+  scoring:
+    method: arithmetic
+    weights:
+      object: 0.5
+      part: 0.5
+      geometric: 0.0
+    temperature: 1.0
+    hierarchy_bonus: 0.05
+
+  # Output formatting
+  formatter:
+    use_part_mask: true
+    min_mask_size: 10
+
+  # Exhaustive pairing strategy
+  exhaustive_pairing:
+    available_levels: [L1, L3, L5]
+    top_k_per_level: 200
+    retrieval_threshold: 0.05
+    min_retrieval_threshold: 0.005
+    threshold_backoff_step: 0.01
+    fallback_to_topk: true
+    selection_metric: max
+    use_tree_pruning: false
+    return_all_pairs: false
+    use_combined_query: true
+    siglip_model: google/siglip-so400m-patch14-384
+    siglip_device: cuda:0
+
+# ============================================================================
+# Evaluation Stage Configuration
+# ============================================================================
+evaluation:
+  # Enable evaluation stage
+  enabled: true
+
+  # Ground truth paths
+  gt_paths:
+    obj_part: /media/Pluto/richkung/My3DIS/data/search3d_gt/multiscan_data_search3d/multiscan_annotations_search3d/ov_part_annotations
+
+  # GT PLY files directory
+  gt_ply_path: /media/Pluto/richkung/My3DIS/data/search3d_gt/multiscan_data_search3d/multiscan_test_plys_only
+
+  # Evaluation modes
+  eval_modes: ['obj_part']
+
+  # Evaluation scripts
+  eval_scripts:
+    obj_part: eval/search3d/eval_semantic_instance_parts_OV.py
+
+  # Dataset root
+  dataset_root: /media/public_dataset2/multiscan
+
+  # Scene filtering
+  scenes: null
+
+  # Number of workers
+  num_workers: 4
+
+  # Output settings
+  save_per_scene_metrics: true
+  save_per_class_metrics: true
+
+# ============================================================================
+# Logging and Debugging
+# ============================================================================
+logging:
+  level: INFO
+  save_logs: true
+  log_file: multi_scene_pipeline.log

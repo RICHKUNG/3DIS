@@ -1,7 +1,7 @@
 # Production-like test configuration (matches base.yaml workflow behavior)
 # Only difference: limited scene range for faster testing
 ###############################################################
-# v7_246_ssam4_filter10_fill50_propinf aniki 1
+# v7_246_ssam4_filter10_fill50_propinf aniki 1 FAIL
 # v7_135_ssam4_filter10_fill50_propinf mercury 1 FAIL
 # v7_135_ssam8_filter10_fill50_propinf mercury 2 FAIL
 # v7_135_ssam4_filter100_fill100_prop30 bourbon 0 FAIL
@@ -11,9 +11,12 @@
 # v7_246_ssam4_filter100_fill100_prop10_max3k_m_2 FAIL
 # v7_135_ssam4_filter200_fill200_prop30_max3k_b_0 FAIL
 # v7_135_ssam2_filter200_fill200_prop30_max3k_b_1 FAIL
+# v7_135_ssam2_filter500_fill500_prop10_max3k_m_2
+# v7_135_ssam4_filter500_fill500_prop10_max3k_b_0
+# v7_135_ssam4_filter500_fill500_prop30_max3k_b_1
 ###############################################################
 experiment:
-  name: v7_135_ssam2_filter500_fill500_prop10_max3k_m_2
+  name: v7_246_ssam4_filter500_fill500_prop30_max3k_a_1
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   scene_start: scene_00005_00  
@@ -21,9 +24,9 @@ experiment:
   parallel_scenes: 1
   force_parallel: true  # Match base.yaml: bypass OOM monitoring
   levels:
-    - 1
-    - 3
-    - 5
+    - 2
+    - 4
+    - 6
   tag: tag
   tag_in_path: false
   aggregate_output: false
@@ -33,10 +36,10 @@ experiment:
     step: 50
 
 stages:
-  gpu: 2
+  gpu: 1
   ssam:
     enabled: true
-    ssam_freq: 2
+    ssam_freq: 4
     min_area: 500
     stability_threshold: null  # Don't use stability filtering at SSAM stage
     persist_raw: true
@@ -56,7 +59,7 @@ stages:
   tracker:
     enabled: true
     prompt_mode: all_mask
-    max_propagate: 10  # Limit propagation to reduce GPU memory usage
+    max_propagate: 30  # Limit propagation to reduce GPU memory usage
     iou_threshold: 0.6
     downscale_masks: true
     downscale_ratio: 0.3  # Match base.yaml: full resolution

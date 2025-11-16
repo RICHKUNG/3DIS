@@ -17,8 +17,9 @@ import json
 from .retrieval import MultiLevelRetriever, Proposal
 from .pairing import ObjectPartPairer, FamilyTree
 from .nms import Prediction
-from .scoring import ScoreAggregator
+from .scoring import ScoreAggregator, ScoreAggregationMethod
 from .formatter import Search3DFormatter
+from .config import InferenceConfig
 from .strategies import (
     InferenceStrategy,
     IndependentStrategy,
@@ -62,6 +63,7 @@ class InferencePipeline:
         family_tree: Optional[FamilyTree] = None,
         strategy: str = "independent",
         num_points: Optional[int] = None,
+        config: Optional[InferenceConfig] = None,
         **strategy_kwargs
     ):
         """
@@ -73,10 +75,12 @@ class InferencePipeline:
             family_tree: Pre-loaded FamilyTree object (alternative to path)
             strategy: Strategy name ('independent' or 'hierarchical')
             num_points: Number of points in scene (for formatting)
+            config: InferenceConfig object with scoring/pairing/nms settings
             **strategy_kwargs: Additional arguments for strategy
         """
         self.proposals_by_level = proposals_by_level
         self.num_points = num_points
+        self.config = config or InferenceConfig()  # Use default if not provided
 
         # Infer num_points if not provided
         if self.num_points is None and len(proposals_by_level) > 0:
@@ -94,10 +98,45 @@ class InferencePipeline:
             logger.warning("No family tree provided, tree-based strategies unavailable")
             self.family_tree = None
 
-        # Initialize components
+        # Initialize components with config
         self.retriever = MultiLevelRetriever(proposals_by_level)
-        self.pairer = ObjectPartPairer(family_tree=self.family_tree)
-        self.score_aggregator = ScoreAggregator()
+
+        # Create ScoreAggregator from config
+        scoring_cfg = self.config.scoring
+        try:
+            # Convert method string to enum
+            if scoring_cfg.method.upper() == 'ARITHMETIC':
+                method = ScoreAggregationMethod.ARITHMETIC_MEAN
+            elif scoring_cfg.method.upper() == 'GEOMETRIC':
+                method = ScoreAggregationMethod.GEOMETRIC_MEAN
+            elif scoring_cfg.method.upper() == 'WEIGHTED_SUM':
+                method = ScoreAggregationMethod.WEIGHTED_SUM
+            elif scoring_cfg.method.upper() == 'MAX':
+                method = ScoreAggregationMethod.MAX
+            elif scoring_cfg.method.upper() == 'MIN':
+                method = ScoreAggregationMethod.MIN
+            else:
+                logger.warning(f"Unknown scoring method '{scoring_cfg.method}', using WEIGHTED_SUM")
+                method = ScoreAggregationMethod.WEIGHTED_SUM
+        except Exception as e:
+            logger.warning(f"Error parsing scoring method: {e}, using WEIGHTED_SUM")
+            method = ScoreAggregationMethod.WEIGHTED_SUM
+
+        self.score_aggregator = ScoreAggregator(
+            method=method,
+            weights=scoring_cfg.weights,
+            temperature=scoring_cfg.temperature
+        )
+
+        # Create ObjectPartPairer from config
+        pairing_cfg = self.config.pairing
+        self.pairer = ObjectPartPairer(
+            score_aggregator=self.score_aggregator,
+            family_tree=self.family_tree,
+            containment_threshold=pairing_cfg.containment_threshold,
+            scale_range=tuple(pairing_cfg.scale_range),
+            use_geometric_score=pairing_cfg.use_geometric_score
+        )
 
         # Initialize strategy
         self.strategy_name = strategy
