@@ -147,7 +147,7 @@ inference:
 
   # Multi-Strategy Testing (NEW)
   # When enabled, runs inference with all specified strategies and generates comparison report
-  test_all_strategies: false  # RESTORED: Single strategy mode
+  test_all_strategies: false  # CHANGED: Use single best strategy
 
   # Strategies to test when test_all_strategies=true
   # Available: independent, hierarchical, exhaustive_pairing
@@ -158,7 +158,7 @@ inference:
   # - independent: Retrieve objects and parts independently, then pair
   # - hierarchical: Coarse-to-fine retrieval using hierarchy
   # - exhaustive_pairing: Exhaustive level-pair evaluation with smart selection
-  strategy: hierarchical  # Use Hierarchical strategy (best mAP = 0.006)
+  strategy: hierarchical  # CHANGED: Use Hierarchical as default (best performance)
 
   # Multi-level retrieval configuration
   retrieval:
@@ -168,20 +168,20 @@ inference:
     object_levels: auto           # Auto-detect from aggregation output (coarser levels)
     part_levels: auto             # Auto-detect from aggregation output (finer levels)
 
-  # Object-Part pairing configuration (RESTORED: Hierarchical working config)
+  # Object-Part pairing configuration
   pairing:
-    containment_threshold: 0.001  # RESTORED: Essential for geometric validation
-    scale_range: [0.0001, 20.0]   # RESTORED: Reasonable size range
+    containment_threshold: 0.001  # Min containment ratio (part in object) - EXTREMELY RELAXED (0.1% overlap)
+    scale_range: [0.0001, 20.0]   # Valid size ratio range (part/object) - Allow part up to 20x object
     use_geometric_score: false    # Include geometric score in final score - DISABLED for combined query
     use_tree_pruning: false       # Use family tree to prune infeasible pairs - DISABLED for debugging
 
-  # Non-Maximum Suppression configuration (RESTORED: Hierarchical working config)
+  # Non-Maximum Suppression configuration (multi-instance aware)
   nms:
-    iou_threshold: 0.25           # RESTORED: Original threshold that worked
-    use_soft_nms: false           # RESTORED: Hard NMS worked better for Hierarchical
-    soft_nms_sigma: 0.3           # Not used when use_soft_nms=false
+    iou_threshold: 0.25           # LOWERED from 0.35 to preserve more predictions
+    use_soft_nms: false           # Use soft NMS (score decay) instead of hard removal
+    soft_nms_sigma: 0.5           # Sigma for soft NMS Gaussian decay
     centroid_distance_ratio: 0.2  # Spatial separation threshold (as ratio of mask size)
-    keep_top_k: 300               # RESTORED: Original value
+    keep_top_k: 300               # INCREASED from 200 to keep more predictions
 
   # Score aggregation configuration
   scoring:
@@ -214,13 +214,13 @@ inference:
     siglip_model: google/siglip-so400m-patch14-384
     siglip_device: cuda:0
 
-  # Hierarchical strategy specific parameters (RESTORED: Working configuration)
+  # Hierarchical strategy specific parameters (OPTIMIZED for best performance)
   hierarchical:
-    coarse_top_k: 500             # KEPT: More initial candidates helps
-    object_top_k: 500             # KEPT: Larger object pool
-    part_top_k: 200               # KEPT: More parts per object
-    coarse_threshold: 0.01        # RESTORED: Less noise at coarse level (was 0.005)
-    refinement_threshold: 0.01    # RESTORED: Better quality filtering (was 0.005)
+    coarse_top_k: 500             # INCREASED from 200 → more initial candidates
+    object_top_k: 500             # INCREASED from 200 → larger object pool
+    part_top_k: 200               # INCREASED from 100 → more parts per object
+    coarse_threshold: 0.005       # LOWERED from 0.01 → even more permissive
+    refinement_threshold: 0.005   # LOWERED from 0.01 → even more permissive
     refinement_margin: 0.01       # Keep same as before
 
     # Combined Query Settings (DEFAULT)

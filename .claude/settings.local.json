@@ -99,7 +99,9 @@
       "Bash(else)",
       "Bash(break)",
       "Bash(__NEW_LINE__ if ps -p 3735643)",
-      "Bash(ps:*)"
+      "Bash(ps:*)",
+      "Bash(echo:*)",
+      "Bash(LOGFILE=logs/eval/run_hierarchical_restore_20251116_235500.log:*)"
     ],
     "deny": [],
     "ask": []
