@@ -62,7 +62,9 @@ class ExhaustivePairingWithCombinedQuery(CombinedQueryMixin, ExhaustivePairingSt
         feature_extractor: Optional[SigLIPFeatureExtractor] = None,
         siglip_model: str = "google/siglip-so400m-patch14-384",
         device: str = "cuda",
-        skip_model_load: bool = False,
+        scale_semantic_score: float = 100.0,
+        apply_softmax: bool = True,
+        text_template: str = "in_room",
         **kwargs
     ):
         """
@@ -74,18 +76,25 @@ class ExhaustivePairingWithCombinedQuery(CombinedQueryMixin, ExhaustivePairingSt
             feature_extractor: Pre-initialized feature extractor (optional)
             siglip_model: SigLIP model name (if feature_extractor not provided)
             device: Device for feature extraction
-            skip_model_load: Skip SigLIP model loading (for testing)
+            scale_semantic_score: Scaling factor for semantic scores (default 100)
+            apply_softmax: Whether to apply softmax to scores
+            text_template: Text template for queries (default "in_room")
             **kwargs: Additional arguments for base class
         """
         super().__init__(retriever, pairer, **kwargs)
 
         # Setup combined query using Mixin
         logger.info("ExhaustivePairingWithCombinedQuery: Enabling combined query mode")
+        self.scale_semantic_score = scale_semantic_score
+        self.apply_softmax = apply_softmax
+
         self.setup_combined_query(
             siglip_model=siglip_model,
             device=device,
-            skip_model_load=skip_model_load,
-            feature_extractor=feature_extractor
+            feature_extractor=feature_extractor,
+            scale_semantic_score=scale_semantic_score,
+            apply_softmax=apply_softmax,
+            text_template=text_template
         )
 
     def infer_with_text_queries(
@@ -159,8 +168,18 @@ class ExhaustivePairingWithCombinedQuery(CombinedQueryMixin, ExhaustivePairingSt
                 continue
 
             # Update proposal scores with combined feature similarity using Mixin
-            self.update_proposals_with_combined_feature(obj_results.proposals, combined_feat)
-            self.update_proposals_with_combined_feature(part_results.proposals, combined_feat)
+            self.update_proposals_with_combined_feature(
+                obj_results.proposals,
+                combined_feat,
+                scale_semantic_score=self.scale_semantic_score,
+                apply_softmax=self.apply_softmax
+            )
+            self.update_proposals_with_combined_feature(
+                part_results.proposals,
+                combined_feat,
+                scale_semantic_score=self.scale_semantic_score,
+                apply_softmax=self.apply_softmax
+            )
 
             # Pair proposals
             pairs = self.pairer.pair_all(
@@ -271,8 +290,18 @@ class ExhaustivePairingWithCombinedQuery(CombinedQueryMixin, ExhaustivePairingSt
             )
 
             # Update scores using Mixin
-            self.update_proposals_with_combined_feature(obj_results.proposals, combined_feat)
-            self.update_proposals_with_combined_feature(part_results.proposals, combined_feat)
+            self.update_proposals_with_combined_feature(
+                obj_results.proposals,
+                combined_feat,
+                scale_semantic_score=self.scale_semantic_score,
+                apply_softmax=self.apply_softmax
+            )
+            self.update_proposals_with_combined_feature(
+                part_results.proposals,
+                combined_feat,
+                scale_semantic_score=self.scale_semantic_score,
+                apply_softmax=self.apply_softmax
+            )
 
             # Compute pairs
             pairs = []

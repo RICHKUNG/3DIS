@@ -99,7 +99,13 @@ class InferencePipeline:
             self.family_tree = None
 
         # Initialize components with config
-        self.retriever = MultiLevelRetriever(proposals_by_level)
+        self.retriever = MultiLevelRetriever(
+            proposals_by_level,
+            temperature=self.config.retrieval.temperature,
+            min_similarity=self.config.retrieval.min_similarity,
+            scale_semantic_score=self.config.retrieval.scale_semantic_score,
+            apply_softmax=self.config.retrieval.apply_softmax
+        )
 
         # Create ScoreAggregator from config
         scoring_cfg = self.config.scoring
@@ -223,7 +229,6 @@ class InferencePipeline:
                 # Extract SigLIP-related parameters for combined query strategy
                 siglip_model = kwargs.pop('siglip_model', 'google/siglip-so400m-patch14-384')
                 siglip_device = kwargs.pop('siglip_device', 'cuda')
-                skip_model_load = kwargs.pop('skip_model_load', False)
 
                 return ExhaustivePairingWithCombinedQuery(
                     retriever=self.retriever,
@@ -232,7 +237,6 @@ class InferencePipeline:
                     family_tree=self.family_tree,
                     siglip_model=siglip_model,
                     device=siglip_device,
-                    skip_model_load=skip_model_load,
                     **kwargs
                 )
             else:
@@ -240,7 +244,6 @@ class InferencePipeline:
                 # Remove SigLIP-related parameters that base strategy doesn't use
                 kwargs.pop('siglip_model', None)
                 kwargs.pop('siglip_device', None)
-                kwargs.pop('skip_model_load', None)
 
                 return ExhaustivePairingStrategy(
                     retriever=self.retriever,

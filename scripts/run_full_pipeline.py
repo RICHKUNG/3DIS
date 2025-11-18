@@ -66,6 +66,120 @@ def load_config(config_path: str) -> Dict:
     return config
 
 
+def apply_model_preset(config: Dict, model_type: Optional[str] = None) -> Dict:
+    """
+    Apply model preset configuration based on model type.
+
+    This function:
+    1. Selects the model preset (siglip, laion_clip, etc.)
+    2. Populates siglip_model, scale_semantic_score, apply_softmax across all sections
+    3. Generates output directory names with model_id and pooling
+
+    Args:
+        config: Full configuration dictionary
+        model_type: Override model type (from CLI --model argument)
+
+    Returns:
+        Updated configuration dictionary
+    """
+    # Check if model config exists
+    model_config = config.get('model', {})
+    if not model_config:
+        logger.info("No model config section found, skipping preset application")
+        return config
+
+    # Determine which model type to use
+    if model_type:
+        selected_type = model_type
+    else:
+        selected_type = model_config.get('type', 'siglip')
+
+    # Get presets
+    presets = model_config.get('presets', {})
+    if selected_type not in presets:
+        logger.warning(f"Model type '{selected_type}' not found in presets, using siglip")
+        selected_type = 'siglip'
+
+    preset = presets[selected_type]
+    model_name = preset['model_name']
+    model_id = preset['model_id']
+    scale_score = preset['scale_semantic_score']
+    apply_softmax = preset['apply_softmax']
+    text_template = preset.get('text_template', 'in_room')
+
+    logger.info(f"Applying model preset: {selected_type}")
+    logger.info(f"  Model: {model_name}")
+    logger.info(f"  Model ID: {model_id}")
+    logger.info(f"  Scale: {scale_score}, Softmax: {apply_softmax}")
+
+    # Get pooling mode
+    pooling_mode = config.get('aggregation', {}).get('pooling_mode', 'average')
+
+    # Generate output directory suffix
+    output_suffix = f"{model_id}_{pooling_mode}"
+
+    # Store model info for reference
+    config['_model_info'] = {
+        'type': selected_type,
+        'model_name': model_name,
+        'model_id': model_id,
+        'output_suffix': output_suffix,
+    }
+
+    # Apply to aggregation
+    if 'aggregation' in config:
+        config['aggregation']['siglip_model'] = model_name
+
+    # Apply to retrieval
+    if 'inference' in config and 'retrieval' in config['inference']:
+        config['inference']['retrieval']['scale_semantic_score'] = scale_score
+        config['inference']['retrieval']['apply_softmax'] = apply_softmax
+        config['inference']['retrieval']['text_template'] = text_template
+
+    # Apply to all strategies
+    for strategy in ['independent', 'hierarchical', 'exhaustive_pairing']:
+        if 'inference' in config and strategy in config['inference']:
+            config['inference'][strategy]['siglip_model'] = model_name
+            config['inference'][strategy]['scale_semantic_score'] = scale_score
+            config['inference'][strategy]['apply_softmax'] = apply_softmax
+            if 'text_template' not in config['inference'][strategy]:
+                config['inference'][strategy]['text_template'] = text_template
+
+    return config
+
+
+def setup_output_directories(config: Dict, exp_dir: Path) -> Dict:
+    """
+    Setup output directories with model-based naming.
+
+    Directory format: {exp_dir}/aggregation_output_{model_id}_{pooling}/
+
+    Args:
+        config: Configuration dictionary (must have _model_info applied)
+        exp_dir: Experiment directory path
+
+    Returns:
+        Updated configuration with resolved output paths
+    """
+    # Get model info
+    model_info = config.get('_model_info', {})
+    output_suffix = model_info.get('output_suffix', 'default')
+
+    # Resolve aggregation output directory
+    if config['experiment'].get('aggregation_output_dir') is None:
+        config['experiment']['aggregation_output_dir'] = str(
+            exp_dir / f'aggregation_output_{output_suffix}'
+        )
+
+    # Resolve inference output directory
+    if config['experiment'].get('inference_output_dir') is None:
+        config['experiment']['inference_output_dir'] = str(
+            exp_dir / f'inference_output_{output_suffix}'
+        )
+
+    return config
+
+
 def setup_paths(config: Dict) -> Dict:
     """
     Setup paths for aggregation and inference outputs.
@@ -90,13 +204,15 @@ def setup_paths(config: Dict) -> Dict:
             config['experiment']['levels'] = [2, 4, 6]
             logger.warning(f"Could not auto-detect levels, using default: [2, 4, 6]")
 
-    # Resolve aggregation output directory
-    if config['experiment'].get('aggregation_output_dir') is None:
-        config['experiment']['aggregation_output_dir'] = str(exp_dir / 'aggregation_output')
-
-    # Resolve inference output directory
-    if config['experiment'].get('inference_output_dir') is None:
-        config['experiment']['inference_output_dir'] = str(exp_dir / 'inference_output')
+    # Use model-based directory naming if model info is available
+    if '_model_info' in config:
+        config = setup_output_directories(config, exp_dir)
+    else:
+        # Fallback to legacy naming
+        if config['experiment'].get('aggregation_output_dir') is None:
+            config['experiment']['aggregation_output_dir'] = str(exp_dir / 'aggregation_output')
+        if config['experiment'].get('inference_output_dir') is None:
+            config['experiment']['inference_output_dir'] = str(exp_dir / 'inference_output')
 
     return config
 
@@ -454,50 +570,87 @@ def run_inference_stage(
         family_tree_path_str = str(family_tree_path)
         logger.info(f"Found family tree: {family_tree_path_str}")
 
+    strategy = inference_config.strategy
+
+    # Determine SigLIP/CLIP weights for inference + combined queries
+    if strategy in config['inference'] and 'siglip_model' in config['inference'][strategy]:
+        text_model = config['inference'][strategy]['siglip_model']
+        logger.info(f"Loading SigLIP model for text encoding (from {strategy} strategy config): {text_model}")
+    else:
+        text_model = config['aggregation']['siglip_model']
+        logger.info(f"Loading SigLIP model for text encoding (from aggregation config): {text_model}")
+
+    feature_extractor = SigLIPFeatureExtractor(
+        text_model,
+        exp_config['device']
+    )
+
     # Initialize inference pipeline
-    logger.info(f"Initializing inference pipeline (strategy: {inference_config.strategy})")
+    logger.info(f"Initializing inference pipeline (strategy: {strategy})")
 
     # Extract strategy-specific kwargs
     strategy_kwargs = {}
-    if inference_config.strategy == 'independent':
+    if strategy == 'independent':
+        ind_cfg = inference_config.independent
         strategy_kwargs = {
-            'object_levels': inference_config.independent.object_levels,
-            'part_levels': inference_config.independent.part_levels,
-            'top_k_per_level': inference_config.independent.top_k_per_level,
-            'retrieval_threshold': inference_config.independent.retrieval_threshold,
-            'min_retrieval_threshold': inference_config.independent.min_retrieval_threshold,
-            'threshold_backoff_step': inference_config.independent.threshold_backoff_step,
-            'fallback_to_topk': inference_config.independent.fallback_to_topk,
+            'object_levels': ind_cfg.object_levels,
+            'part_levels': ind_cfg.part_levels,
+            'top_k_per_level': ind_cfg.top_k_per_level,
+            'retrieval_threshold': ind_cfg.retrieval_threshold,
+            'min_retrieval_threshold': ind_cfg.min_retrieval_threshold,
+            'threshold_backoff_step': ind_cfg.threshold_backoff_step,
+            'fallback_to_topk': ind_cfg.fallback_to_topk,
+            'use_combined_query': ind_cfg.use_combined_query,
+            'siglip_model': ind_cfg.siglip_model,
+            'siglip_device': ind_cfg.siglip_device,
+            'scale_semantic_score': ind_cfg.scale_semantic_score,
+            'apply_softmax': ind_cfg.apply_softmax,
+            'feature_extractor': feature_extractor,
         }
-    elif inference_config.strategy == 'hierarchical':
+    elif strategy == 'hierarchical':
+        hier_cfg = inference_config.hierarchical
         strategy_kwargs = {
-            'coarse_top_k': inference_config.hierarchical.coarse_top_k,
-            'object_top_k': inference_config.hierarchical.object_top_k,
-            'part_top_k': inference_config.hierarchical.part_top_k,
-            'coarse_threshold': inference_config.hierarchical.coarse_threshold,
-            'refinement_threshold': inference_config.hierarchical.refinement_threshold,
-            'refinement_margin': inference_config.hierarchical.refinement_margin,
+            'coarse_top_k': hier_cfg.coarse_top_k,
+            'object_top_k': hier_cfg.object_top_k,
+            'part_top_k': hier_cfg.part_top_k,
+            'coarse_threshold': hier_cfg.coarse_threshold,
+            'refinement_threshold': hier_cfg.refinement_threshold,
+            'refinement_margin': hier_cfg.refinement_margin,
+            'use_combined_query': hier_cfg.use_combined_query,
+            'siglip_model': hier_cfg.siglip_model,
+            'siglip_device': hier_cfg.siglip_device,
+            'scale_semantic_score': hier_cfg.scale_semantic_score,
+            'apply_softmax': hier_cfg.apply_softmax,
+            'feature_extractor': feature_extractor,
         }
-    elif inference_config.strategy == 'exhaustive_pairing':
+    elif strategy == 'exhaustive_pairing':
+        exh_cfg = inference_config.exhaustive_pairing
         strategy_kwargs = {
-            'available_levels': inference_config.exhaustive_pairing.available_levels,
-            'top_k_per_level': inference_config.exhaustive_pairing.top_k_per_level,
-            'retrieval_threshold': inference_config.exhaustive_pairing.retrieval_threshold,
-            'min_retrieval_threshold': inference_config.exhaustive_pairing.min_retrieval_threshold,
-            'threshold_backoff_step': inference_config.exhaustive_pairing.threshold_backoff_step,
-            'fallback_to_topk': inference_config.exhaustive_pairing.fallback_to_topk,
-            'selection_metric': inference_config.exhaustive_pairing.selection_metric,
-            'use_tree_pruning': inference_config.exhaustive_pairing.use_tree_pruning,
-            'return_all_pairs': inference_config.exhaustive_pairing.return_all_pairs,
-            'use_combined_query': inference_config.exhaustive_pairing.use_combined_query,
-            'siglip_model': inference_config.exhaustive_pairing.siglip_model,
-            'siglip_device': inference_config.exhaustive_pairing.siglip_device,
+            'available_levels': exh_cfg.available_levels,
+            'top_k_per_level': exh_cfg.top_k_per_level,
+            'retrieval_threshold': exh_cfg.retrieval_threshold,
+            'min_retrieval_threshold': exh_cfg.min_retrieval_threshold,
+            'threshold_backoff_step': exh_cfg.threshold_backoff_step,
+            'fallback_to_topk': exh_cfg.fallback_to_topk,
+            'selection_metric': exh_cfg.selection_metric,
+            'use_tree_pruning': exh_cfg.use_tree_pruning,
+            'return_all_pairs': exh_cfg.return_all_pairs,
+            'use_combined_query': exh_cfg.use_combined_query,
         }
+
+        if exh_cfg.use_combined_query:
+            strategy_kwargs.update({
+                'siglip_model': exh_cfg.siglip_model,
+                'siglip_device': exh_cfg.siglip_device,
+                'scale_semantic_score': exh_cfg.scale_semantic_score,
+                'apply_softmax': exh_cfg.apply_softmax,
+                'feature_extractor': feature_extractor,
+            })
 
     pipeline = InferencePipeline(
         proposals_by_level=proposals_by_level,
         family_tree_path=family_tree_path_str,  # Pass path instead of dict
-        strategy=inference_config.strategy,
+        strategy=strategy,
         config=inference_config,  # Pass config for scoring/pairing/nms
         **strategy_kwargs
     )
@@ -505,13 +658,6 @@ def run_inference_stage(
         scene_num_points = pipeline.num_points
     elif pipeline.num_points is not None:
         scene_num_points = pipeline.num_points
-
-    # Load SigLIP model for text encoding
-    logger.info(f"Loading SigLIP model for text encoding...")
-    feature_extractor = SigLIPFeatureExtractor(
-        config['aggregation']['siglip_model'],
-        exp_config['device']
-    )
 
     # Load Search3D queries
     logger.info("Loading Search3D queries...")
@@ -1399,7 +1545,11 @@ def process_single_scene(
     scene_config['experiment']['exp_dir'] = str(scene_exp_dir)
     scene_config['experiment']['scene_path'] = str(scene_data_path)
 
-    # Setup paths for this scene
+    # Reset output directories for this scene (to trigger model-based naming)
+    scene_config['experiment']['aggregation_output_dir'] = None
+    scene_config['experiment']['inference_output_dir'] = None
+
+    # Setup paths for this scene (will use model-based naming if _model_info exists)
     scene_config = setup_paths(scene_config)
 
     scene_results = {
@@ -1866,12 +2016,20 @@ Examples:
         '--device',
         help='Override device (cuda, cuda:0, cuda:1, cpu)'
     )
+    parser.add_argument(
+        '--model',
+        choices=['siglip', 'laion_clip', 'openai_clip'],
+        help='Model type to use (overrides config model.type)'
+    )
 
     args = parser.parse_args()
 
     # Load configuration
     logger.info(f"Loading configuration from: {args.config}")
     config = load_config(args.config)
+
+    # Apply model preset (must be done before other overrides)
+    config = apply_model_preset(config, args.model)
 
     # Apply command-line overrides
     if args.multi_scene:

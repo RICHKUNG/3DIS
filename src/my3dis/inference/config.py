@@ -15,6 +15,9 @@ class RetrievalConfig:
     top_k_per_level: int = 50
     object_levels: List[str] = field(default_factory=lambda: ['L1', 'L3'])
     part_levels: List[str] = field(default_factory=lambda: ['L3', 'L5'])
+    scale_semantic_score: float = 300.0
+    apply_softmax: bool = True
+    text_template: str = "in_room"  # raw, in_room, photo_of
 
 
 @dataclass
@@ -64,6 +67,8 @@ class IndependentStrategyConfig:
     use_combined_query: bool = True
     siglip_model: str = "google/siglip-so400m-patch14-384"
     siglip_device: str = "cuda:0"
+    scale_semantic_score: float = 300.0
+    apply_softmax: bool = True
 
 
 @dataclass
@@ -80,6 +85,8 @@ class HierarchicalStrategyConfig:
     use_combined_query: bool = True
     siglip_model: str = "google/siglip-so400m-patch14-384"
     siglip_device: str = "cuda:0"
+    scale_semantic_score: float = 300.0
+    apply_softmax: bool = True
 
 
 @dataclass
@@ -99,6 +106,8 @@ class ExhaustivePairingConfig:
     use_combined_query: bool = True
     siglip_model: str = "google/siglip-so400m-patch14-384"
     siglip_device: str = "cuda:0"
+    scale_semantic_score: float = 300.0
+    apply_softmax: bool = True
 
 
 @dataclass
@@ -178,6 +187,9 @@ class InferenceConfig:
                 'top_k_per_level': self.retrieval.top_k_per_level,
                 'object_levels': self.retrieval.object_levels,
                 'part_levels': self.retrieval.part_levels,
+                'scale_semantic_score': self.retrieval.scale_semantic_score,
+                'apply_softmax': self.retrieval.apply_softmax,
+                'text_template': self.retrieval.text_template,
             },
             'pairing': {
                 'containment_threshold': self.pairing.containment_threshold,
@@ -213,6 +225,8 @@ class InferenceConfig:
                 'use_combined_query': self.independent.use_combined_query,
                 'siglip_model': self.independent.siglip_model,
                 'siglip_device': self.independent.siglip_device,
+                'scale_semantic_score': self.independent.scale_semantic_score,
+                'apply_softmax': self.independent.apply_softmax,
             },
             'hierarchical': {
                 'coarse_top_k': self.hierarchical.coarse_top_k,
@@ -224,6 +238,8 @@ class InferenceConfig:
                 'use_combined_query': self.hierarchical.use_combined_query,
                 'siglip_model': self.hierarchical.siglip_model,
                 'siglip_device': self.hierarchical.siglip_device,
+                'scale_semantic_score': self.hierarchical.scale_semantic_score,
+                'apply_softmax': self.hierarchical.apply_softmax,
             },
             'exhaustive_pairing': {
                 'available_levels': self.exhaustive_pairing.available_levels,
@@ -238,6 +254,8 @@ class InferenceConfig:
                 'use_combined_query': self.exhaustive_pairing.use_combined_query,
                 'siglip_model': self.exhaustive_pairing.siglip_model,
                 'siglip_device': self.exhaustive_pairing.siglip_device,
+                'scale_semantic_score': self.exhaustive_pairing.scale_semantic_score,
+                'apply_softmax': self.exhaustive_pairing.apply_softmax,
             },
         }
 
@@ -255,6 +273,8 @@ class InferenceConfig:
                 'use_combined_query': self.independent.use_combined_query,
                 'siglip_model': self.independent.siglip_model,
                 'siglip_device': self.independent.siglip_device,
+                'scale_semantic_score': self.independent.scale_semantic_score,
+                'apply_softmax': self.independent.apply_softmax,
             }
         elif self.strategy == "hierarchical":
             return {
@@ -267,6 +287,8 @@ class InferenceConfig:
                 'use_combined_query': self.hierarchical.use_combined_query,
                 'siglip_model': self.hierarchical.siglip_model,
                 'siglip_device': self.hierarchical.siglip_device,
+                'scale_semantic_score': self.hierarchical.scale_semantic_score,
+                'apply_softmax': self.hierarchical.apply_softmax,
             }
         elif self.strategy == "exhaustive_pairing":
             return {
@@ -282,6 +304,8 @@ class InferenceConfig:
                 'use_combined_query': self.exhaustive_pairing.use_combined_query,
                 'siglip_model': self.exhaustive_pairing.siglip_model,
                 'siglip_device': self.exhaustive_pairing.siglip_device,
+                'scale_semantic_score': self.exhaustive_pairing.scale_semantic_score,
+                'apply_softmax': self.exhaustive_pairing.apply_softmax,
             }
         else:
             return {}

@@ -55,8 +55,10 @@ class IndependentStrategy(CombinedQueryMixin, InferenceStrategy):
         use_combined_query: bool = True,
         siglip_model: str = "google/siglip-so400m-patch14-384",
         siglip_device: str = "cuda",
-        skip_model_load: bool = False,
         feature_extractor = None,
+        scale_semantic_score: float = 100.0,
+        apply_softmax: bool = True,
+        text_template: str = "in_room",
         **kwargs
     ):
         """
@@ -72,7 +74,6 @@ class IndependentStrategy(CombinedQueryMixin, InferenceStrategy):
             use_combined_query: Use "part of object" combined queries (DEFAULT: True)
             siglip_model: SigLIP model for combined query features
             siglip_device: Device for SigLIP (cuda:0, cuda:1, or cpu)
-            skip_model_load: Skip SigLIP loading (for testing)
             feature_extractor: Pre-initialized feature extractor (optional)
             **kwargs: Additional arguments for base class
         """
@@ -86,6 +87,10 @@ class IndependentStrategy(CombinedQueryMixin, InferenceStrategy):
         self.threshold_backoff_step = max(0.0, threshold_backoff_step)
         self.fallback_to_topk = fallback_to_topk
 
+        # Combined-query settings / scaling
+        self.scale_semantic_score = scale_semantic_score
+        self.apply_softmax = apply_softmax
+
         # Setup combined query if enabled
         self.use_combined_query = use_combined_query
         if use_combined_query:
@@ -93,8 +98,10 @@ class IndependentStrategy(CombinedQueryMixin, InferenceStrategy):
             self.setup_combined_query(
                 siglip_model=siglip_model,
                 device=siglip_device,
-                skip_model_load=skip_model_load,
-                feature_extractor=feature_extractor
+                feature_extractor=feature_extractor,
+                scale_semantic_score=scale_semantic_score,
+                apply_softmax=apply_softmax,
+                text_template=text_template,
             )
         else:
             logger.info("IndependentStrategy: Using separate query mode")
@@ -390,7 +397,12 @@ class IndependentStrategy(CombinedQueryMixin, InferenceStrategy):
             target_name="object"
         )
         # Update scores with combined feature
-        self.update_proposals_with_combined_feature(object_results.proposals, combined_feat)
+        self.update_proposals_with_combined_feature(
+            object_results.proposals,
+            combined_feat,
+            scale_semantic_score=self.scale_semantic_score,
+            apply_softmax=self.apply_softmax
+        )
 
         logger.info(f"Retrieved {len(object_results.proposals)} object proposals")
 
@@ -402,7 +414,12 @@ class IndependentStrategy(CombinedQueryMixin, InferenceStrategy):
             target_name="part"
         )
         # Update scores with combined feature
-        self.update_proposals_with_combined_feature(part_results.proposals, combined_feat)
+        self.update_proposals_with_combined_feature(
+            part_results.proposals,
+            combined_feat,
+            scale_semantic_score=self.scale_semantic_score,
+            apply_softmax=self.apply_softmax
+        )
 
         logger.info(f"Retrieved {len(part_results.proposals)} part proposals")
 

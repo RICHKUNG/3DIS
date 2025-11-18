@@ -59,11 +59,13 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
         use_combined_query: bool = True,
         siglip_model: str = "google/siglip-so400m-patch14-384",
         siglip_device: str = "cuda",
-        skip_model_load: bool = False,
         feature_extractor = None,
         coarse_level: str = None,
         refinement_level: str = None,
         part_levels: List[str] = None,
+        scale_semantic_score: float = 100.0,
+        apply_softmax: bool = True,
+        text_template: str = "in_room",
         **kwargs
     ):
         """
@@ -82,7 +84,6 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
             use_combined_query: Use "part of object" combined queries (DEFAULT: True)
             siglip_model: SigLIP model for combined query features
             siglip_device: Device for SigLIP (cuda:0, cuda:1, or cpu)
-            skip_model_load: Skip SigLIP loading (for testing)
             feature_extractor: Pre-initialized feature extractor (optional)
             coarse_level: Level for coarse localization (default: auto-detect)
             refinement_level: Level for refinement (default: auto-detect)
@@ -110,6 +111,9 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
 
         logger.info(f"HierarchicalStrategy: Using levels - coarse={self.coarse_level}, refinement={self.refinement_level}, parts={self.part_levels}")
 
+        self.scale_semantic_score = scale_semantic_score
+        self.apply_softmax = apply_softmax
+
         # Setup combined query if enabled
         self.use_combined_query = use_combined_query
         if use_combined_query:
@@ -117,8 +121,10 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
             self.setup_combined_query(
                 siglip_model=siglip_model,
                 device=siglip_device,
-                skip_model_load=skip_model_load,
-                feature_extractor=feature_extractor
+                feature_extractor=feature_extractor,
+                scale_semantic_score=scale_semantic_score,
+                apply_softmax=apply_softmax,
+                text_template=text_template
             )
         else:
             logger.info("HierarchicalStrategy: Using separate query mode")
@@ -516,7 +522,12 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
         )
 
         # Update scores with combined feature
-        self.update_proposals_with_combined_feature(result.proposals, combined_feat)
+        self.update_proposals_with_combined_feature(
+            result.proposals,
+            combined_feat,
+            scale_semantic_score=self.scale_semantic_score,
+            apply_softmax=self.apply_softmax
+        )
 
         logger.info(f"Coarse localization: {len(result.proposals)} candidates from L2")
 

@@ -36,7 +36,8 @@ def compute_cosine_similarity(
     query_feat: np.ndarray,
     proposal_feats: np.ndarray,
     temperature: float = 1.0,
-    scale_semantic_score: float = 300.0
+    scale_semantic_score: float = 300.0,
+    apply_softmax: bool = True
 ) -> np.ndarray:
     """
     Compute cosine similarity between query and proposal features.
@@ -62,16 +63,14 @@ def compute_cosine_similarity(
     # Compute cosine similarity
     similarities = proposal_norms.dot(query_norm)  # [N]
 
-    # Scale by semantic score (matching utils_ov_inference.py line 48)
-    scaled_similarities = scale_semantic_score * similarities  # [N]
+    if apply_softmax:
+        scaled_similarities = scale_semantic_score * similarities  # [N]
+        exp_scores = np.exp(scaled_similarities - np.max(scaled_similarities))
+        softmax_scores = exp_scores / (np.sum(exp_scores) + 1e-8)
+        return softmax_scores
 
-    # Apply softmax across all proposals
-    # exp_scores = exp(scaled_similarities)
-    # softmax_scores = exp_scores / sum(exp_scores)
-    exp_scores = np.exp(scaled_similarities - np.max(scaled_similarities))  # Numerical stability
-    softmax_scores = exp_scores / (np.sum(exp_scores) + 1e-8)
-
-    return softmax_scores
+    # When不使用 softmax 時直接回傳 cosine 相似度（[-1,1] 範圍）
+    return similarities
 
 
 class MultiLevelRetriever:
@@ -89,7 +88,8 @@ class MultiLevelRetriever:
         proposals_by_level: Dict[str, List[Proposal]],
         temperature: float = 0.2,
         min_similarity: float = 0.2,
-        scale_semantic_score: float = 300.0
+        scale_semantic_score: float = 300.0,
+        apply_softmax: bool = True
     ):
         """
         Initialize retriever with proposals at different levels.
@@ -104,6 +104,7 @@ class MultiLevelRetriever:
         self.temperature = temperature  # Kept for backward compatibility
         self.min_similarity = min_similarity
         self.scale_semantic_score = scale_semantic_score
+        self.apply_softmax = apply_softmax
 
     def retrieve_single_level(
         self,
@@ -140,7 +141,8 @@ class MultiLevelRetriever:
             query_feat,
             features,
             temperature=self.temperature,  # Kept for backward compatibility but not used
-            scale_semantic_score=self.scale_semantic_score
+            scale_semantic_score=self.scale_semantic_score,
+            apply_softmax=self.apply_softmax
         )
 
         # Apply threshold

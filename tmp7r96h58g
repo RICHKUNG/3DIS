@@ -1,0 +1,3 @@
+eval "$(/home/rich/miniconda3/bin/conda shell.posix hook)"
+conda activate  /home/rich/miniconda3/envs/3Dsiglip
+python scripts/quick_eval_experiment.py --exp-dir outputs/experiments/test_v7_246_ssam4_filter10_fill50_propinf_1114/scene_00005_00 --dataset-root /media/public_dataset2/multiscan --gt-path data/search3d_gt/multiscan_data_search3d/multiscan_annotations_search3d/ov_part_annotations --config configs/inference/independent_strict.yaml --output-dir tmp/quick_eval_runs/strict_scene_00005_00_cpu --device cpu

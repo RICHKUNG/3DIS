@@ -1,0 +1,244 @@
+# Unified Experiment Pipeline Configuration
+# Supports multiple vision-language models for feature extraction and inference
+#
+# Usage:
+#   # Run with SigLIP (default)
+#   python scripts/run_full_pipeline.py --config configs/inference/experiment_pipeline.yaml
+#
+#   # Run with LAION CLIP
+#   python scripts/run_full_pipeline.py --config configs/inference/experiment_pipeline.yaml --model laion_clip
+#
+# Output directories are automatically named based on model and pooling mode:
+#   - aggregation_output_{model_id}_{pooling}/
+#   - inference_output_{model_id}_{pooling}/
+#
+# This prevents result overwriting when comparing different models.
+
+# ============================================================================
+# Model Configuration
+# ============================================================================
+model:
+  # Model type: siglip or laion_clip
+  # Can be overridden with --model CLI argument
+  type: siglip
+
+  # Pre-defined model configurations
+  # Each model has optimized parameters for best performance
+  presets:
+    siglip:
+      model_name: google/siglip-so400m-patch14-384
+      model_id: siglip_so400m  # Short identifier for output directories
+      scale_semantic_score: 100.0  # Optimized for SigLIP
+      apply_softmax: true
+      text_template: in_room  # "a {class} in a room" template
+
+    laion_clip:
+      model_name: laion/CLIP-ViT-L-14-laion2B-s32B-b82K
+      model_id: laion_clip_vitl14  # Short identifier for output directories
+      scale_semantic_score: 300.0  # Optimized for LAION CLIP
+      apply_softmax: true
+      text_template: in_room  # "a {class} in a room" template
+
+    # openai_clip:
+    #   model_name: openai/clip-vit-large-patch14
+    #   model_id: openai_clip_vitl14
+    #   scale_semantic_score: 200.0
+    #   apply_softmax: true
+    #   text_template: in_room
+
+# ============================================================================
+# Experiment Settings
+# ============================================================================
+experiment:
+  # Multi-scene mode (recommended)
+  multi_scene_mode: true
+
+  # Experiment root directory containing scene subdirectories
+  exp_root: /media/Pluto/richkung/My3DIS/outputs/experiments/SUCCESS/v7_246_ssam4_filter100_fill100_prop30_max3k_m_1
+
+  # Dataset root for MultiScan scenes
+  dataset_root: /media/public_dataset2/multiscan
+
+  # Scene selection: all, list, or pattern
+  scenes: all
+
+  # Levels to process (auto-detect if null)
+  levels: null
+
+  # Output directories - AUTO-GENERATED based on model
+  # Format: {exp_dir}/aggregation_output_{model_id}_{pooling}/
+  # Leave as null for automatic naming
+  aggregation_output_dir: null
+  inference_output_dir: null
+
+  # Device configuration
+  device: &device cuda:0
+
+# ============================================================================
+# Aggregation Stage Configuration
+# ============================================================================
+aggregation:
+  enabled: true
+
+  # IoU threshold for merging overlapping proposals
+  iou_threshold: 0.5
+
+  # Minimum area as fraction of total 3D points
+  area_fraction: 0.0005
+  area_fraction_per_level: null
+
+  # Feature extraction (always enabled)
+  extract_features: true
+
+  # NOTE: siglip_model is auto-populated from model.presets based on model.type
+  # Do not set manually unless you want to override
+
+  # Feature pooling mode average,voting,max, weighted
+  pooling_mode: average
+
+  # 3D projection configuration
+  projection:
+    vis_depth_threshold: 0.1
+    frequency: 50
+    resize_ratio: 0.3
+    depth_scale: 1000.0
+
+# ============================================================================
+# Inference Stage Configuration
+# ============================================================================
+inference:
+  enabled: true
+
+  # PLY export settings
+  export_predictions_ply: true
+  ply_export_max_predictions: 50
+  ply_export_include_full_scene: true
+  ply_export_background_color: [80, 80, 80]
+  ply_export_colors:
+    - [255, 99, 71]
+    - [102, 205, 170]
+    - [65, 105, 225]
+    - [218, 112, 214]
+    - [255, 215, 0]
+    - [0, 191, 255]
+    - [144, 238, 144]
+    - [255, 140, 0]
+
+  # Multi-Strategy Testing (DEFAULT: test all strategies)
+  test_all_strategies: true
+  strategies_to_test: [independent, hierarchical, exhaustive_pairing]
+
+  # Single strategy (used when test_all_strategies=false)
+  strategy: hierarchical
+
+  # Retrieval configuration
+  # NOTE: scale_semantic_score and apply_softmax are auto-populated from model preset
+  retrieval:
+    temperature: 0.2
+    min_similarity: 0.005
+    top_k_per_level: 500
+    object_levels: auto
+    part_levels: auto
+    # scale_semantic_score and apply_softmax are set from model preset
+    text_template: in_room
+
+  # Object-Part pairing configuration
+  pairing:
+    containment_threshold: 0.0
+    scale_range: [0.00001, 100.0]
+    use_geometric_score: false
+    use_tree_pruning: false
+
+  # NMS configuration
+  nms:
+    iou_threshold: 0.15
+    use_soft_nms: true
+    soft_nms_sigma: 0.3
+    centroid_distance_ratio: 0.2
+    keep_top_k: 500
+
+  # Scoring configuration
+  scoring:
+    method: arithmetic
+    weights:
+      object: 0.5
+      part: 0.5
+      geometric: 0.0
+    temperature: 1.0
+    hierarchy_bonus: 0.05
+
+  # Formatter configuration
+  formatter:
+    use_part_mask: true
+    min_mask_size: 10
+
+  # Independent strategy parameters
+  # NOTE: siglip_model, scale_semantic_score, apply_softmax are auto-populated
+  independent:
+    object_levels: auto
+    part_levels: auto
+    top_k_per_level: 500
+    retrieval_threshold: 0.01
+    min_retrieval_threshold: 0.001
+    threshold_backoff_step: 0.005
+    fallback_to_topk: true
+    use_combined_query: true
+    siglip_device: *device
+
+  # Hierarchical strategy parameters
+  hierarchical:
+    coarse_top_k: 500
+    object_top_k: 500
+    part_top_k: 200
+    coarse_threshold: 0.01
+    refinement_threshold: 0.01
+    refinement_margin: 0.01
+    use_combined_query: true
+    siglip_device: *device
+
+  # Exhaustive pairing strategy parameters
+  exhaustive_pairing:
+    available_levels: auto
+    top_k_per_level: 500
+    retrieval_threshold: 0.01
+    min_retrieval_threshold: 0.001
+    threshold_backoff_step: 0.005
+    fallback_to_topk: true
+    selection_metric: sum
+    use_tree_pruning: false
+    return_all_pairs: true
+    use_combined_query: true
+    siglip_device: *device
+
+# ============================================================================
+# Evaluation Stage Configuration
+# ============================================================================
+evaluation:
+  enabled: true
+
+  gt_paths:
+    obj_part: /media/Pluto/richkung/My3DIS/data/search3d_gt/multiscan_data_search3d/multiscan_annotations_search3d/ov_part_annotations
+
+  gt_ply_path: /media/Pluto/richkung/My3DIS/data/search3d_gt/multiscan_data_search3d/multiscan_test_plys_only
+
+  eval_modes: ['obj_part']
+
+  eval_scripts:
+    obj_part: eval/search3d/eval_semantic_instance_parts_OV.py
+
+  query_file: /media/Pluto/richkung/My3DIS/eval/search3d/eval_semantic_instance_parts_OV.py
+
+  dataset_root: /media/public_dataset2/multiscan
+
+  scenes: null
+  num_workers: 4
+  save_per_scene_metrics: true
+  save_per_class_metrics: true
+
+# ============================================================================
+# Logging Configuration
+# ============================================================================
+logging:
+  level: INFO
+  save_logs: true
+  log_file: pipeline.log

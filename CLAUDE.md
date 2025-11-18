@@ -727,3 +727,5 @@ stages:
 - **[`scripts/compare_trees.py`](scripts/compare_trees.py)** - Compare provenance vs containment trees (NEW)
 - **[`scripts/check_scene_timings.py`](scripts/check_scene_timings.py)** - Performance analysis tool
 - **[`scripts/validate_formats.py`](scripts/validate_formats.py)** - Format validation tool for relations.json, tree.json, index.json
+- 現在aggregation以及inference的程式是在src/
+- 刪除使用隨機feature的功能

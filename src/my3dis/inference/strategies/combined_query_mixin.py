@@ -42,8 +42,10 @@ class CombinedQueryMixin:
         self,
         siglip_model: str = "google/siglip-so400m-patch14-384",
         device: str = "cuda",
-        skip_model_load: bool = False,
-        feature_extractor = None
+        feature_extractor = None,
+        scale_semantic_score: float = 100.0,
+        apply_softmax: bool = True,
+        text_template: str = "in_room",
     ):
         """
         Initialize combined query functionality.
@@ -51,9 +53,19 @@ class CombinedQueryMixin:
         Args:
             siglip_model: SigLIP model name
             device: Device for feature extraction
-            skip_model_load: Skip model loading (for testing)
             feature_extractor: Pre-initialized feature extractor (optional)
+            scale_semantic_score: Scaling factor for semantic scores (default 100)
+            apply_softmax: Whether to apply softmax to scores
+            text_template: Text template for queries (default "in_room")
+                - "raw": Use class name directly
+                - "in_room": "a {class} in a room" (BEST)
+                - "photo_of": "a photo of a {class}"
+                - "indoor": "a {class} in an indoor scene"
         """
+        self.scale_semantic_score = scale_semantic_score
+        self.apply_softmax = apply_softmax
+        self.text_template = text_template
+
         if feature_extractor is not None:
             self.feature_extractor = feature_extractor
             self.has_combined_query = True
@@ -64,10 +76,11 @@ class CombinedQueryMixin:
             logger.info(f"Initializing SigLIP for combined queries: {siglip_model}")
             self.feature_extractor = SigLIPFeatureExtractor(
                 model_name=siglip_model,
-                device=device,
-                skip_model_load=skip_model_load
+                device=device
             )
             self.has_combined_query = True
+
+        logger.info(f"Combined query config: template={text_template}, scale={scale_semantic_score}, softmax={apply_softmax}")
 
     def create_combined_query(self, object_text: str, part_text: str) -> str:
         """
@@ -104,10 +117,14 @@ class CombinedQueryMixin:
             )
 
         combined_text = self.create_combined_query(object_text, part_text)
-        logger.debug(f"Extracting feature for: '{combined_text}'")
+        template = getattr(self, 'text_template', 'in_room')
+        logger.debug(f"Extracting feature for: '{combined_text}' with template={template}")
 
-        # Extract features (returns torch.Tensor)
-        feat_tensor = self.feature_extractor.extract_text_features([combined_text])
+        # Extract features with template (returns torch.Tensor)
+        feat_tensor = self.feature_extractor.extract_text_features(
+            [combined_text],
+            template=template
+        )
 
         # Convert to numpy and squeeze
         feat_np = feat_tensor.cpu().numpy().squeeze()
@@ -118,7 +135,8 @@ class CombinedQueryMixin:
         self,
         proposals: List[Proposal],
         combined_feat: np.ndarray,
-        scale_semantic_score: float = 300.0
+        scale_semantic_score: Optional[float] = None,
+        apply_softmax: Optional[bool] = None,
     ):
         """
         Update proposal scores using combined feature similarity.
@@ -146,7 +164,8 @@ class CombinedQueryMixin:
             combined_feat,
             proposal_feats,
             temperature=1.0,  # Not used
-            scale_semantic_score=scale_semantic_score
+            scale_semantic_score=scale_semantic_score if scale_semantic_score is not None else getattr(self, 'scale_semantic_score', 300.0),
+            apply_softmax=apply_softmax if apply_softmax is not None else getattr(self, 'apply_softmax', True)
         )
 
         # Update proposal scores
