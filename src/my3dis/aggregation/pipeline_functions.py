@@ -166,6 +166,7 @@ def _ids_to_cols(
     id_to_col: Dict[int, int] = None,
     total_cols: int = None,
     level_label: str = "",
+    suppress_warning: bool = False,
 ):
     """
     Map proposal IDs to zero-based column indices.
@@ -175,6 +176,7 @@ def _ids_to_cols(
         id_to_col: optional explicit mapping {proposal_id -> column_index}
         total_cols: optional column count for range checking
         level_label: optional string for logging context
+        suppress_warning: if True, do not log warnings (caller will handle)
 
     Returns:
         valid_ids: list[int] ids present in the mask
@@ -209,7 +211,7 @@ def _ids_to_cols(
         valid_ids.append(pid)
         cols.append(col_idx)
 
-    if missing and level_label:
+    if missing and level_label and not suppress_warning:
         preview = ", ".join(str(x) for x in missing[:5])
         logger.warning(
             f"{level_label}: skipping {len(missing)} ids without proposal masks (showing up to 5): {preview}"
@@ -424,6 +426,7 @@ def merge_drop_level4_within_siblings(
     old_to_rep = {}
     merged_groups = {}
     dropped_small_ids = set()
+    all_missing_ids = []  # Collect all missing IDs for summary warning
 
     for parent_id, l4_ids in groups.items():
         if len(l4_ids) == 0:
@@ -433,9 +436,11 @@ def merge_drop_level4_within_siblings(
             l4_ids,
             id_to_col=id_to_col,
             total_cols=N,
-            level_label="Level 4"
+            level_label="Level 4",
+            suppress_warning=True  # Suppress per-call warning
         )
         if missing_ids:
+            all_missing_ids.extend(missing_ids)
             for mid in missing_ids:
                 try:
                     dropped_small_ids.add(int(mid))
@@ -541,6 +546,14 @@ def merge_drop_level4_within_siblings(
     survivors_ids = [survivors_ids[k] for k in order]
     new_mask_l4 = new_mask_l4[:, order]
 
+    # Log summary warning for all missing IDs (instead of per-call warnings)
+    if all_missing_ids:
+        preview = ", ".join(str(x) for x in all_missing_ids[:10])
+        logger.warning(
+            f"Level 4: skipped {len(all_missing_ids)} ids without proposal masks "
+            f"(showing up to 10): {preview}"
+        )
+
     return new_mask_l4, survivors_ids, old_to_rep, dropped_small_ids, merged_groups
 
 
@@ -579,6 +592,7 @@ def merge_drop_level6_within_siblings(
     old_to_rep = {}
     merged_groups = {}
     dropped_small_ids = set()
+    all_missing_ids = []  # Collect all missing IDs for summary warning
 
     for parent_id, l6_ids in groups.items():
         if len(l6_ids) == 0:
@@ -587,9 +601,11 @@ def merge_drop_level6_within_siblings(
             l6_ids,
             id_to_col=id_to_col,
             total_cols=N,
-            level_label="Level 6"
+            level_label="Level 6",
+            suppress_warning=True  # Suppress per-call warning
         )
         if missing_ids:
+            all_missing_ids.extend(missing_ids)
             for mid in missing_ids:
                 try:
                     dropped_small_ids.add(int(mid))
@@ -673,6 +689,14 @@ def merge_drop_level6_within_siblings(
     order = sorted(range(len(survivors_ids)), key=lambda k: survivors_ids[k])
     survivors_ids = [survivors_ids[k] for k in order]
     new_mask_l6 = new_mask_l6[:, order]
+
+    # Log summary warning for all missing IDs (instead of per-call warnings)
+    if all_missing_ids:
+        preview = ", ".join(str(x) for x in all_missing_ids[:10])
+        logger.warning(
+            f"Level 6: skipped {len(all_missing_ids)} ids without proposal masks "
+            f"(showing up to 10): {preview}"
+        )
 
     return new_mask_l6, survivors_ids, old_to_rep, dropped_small_ids, merged_groups
 

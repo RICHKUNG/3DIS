@@ -20,7 +20,7 @@
 model:
   # Model type: siglip or laion_clip
   # Can be overridden with --model CLI argument
-  type: siglip
+  type: laion_clip  # siglip | laion_clip
 
   # Pre-defined model configurations
   # Each model has optimized parameters for best performance
@@ -54,13 +54,13 @@ experiment:
   multi_scene_mode: true
 
   # Experiment root directory containing scene subdirectories
-  exp_root: /media/Pluto/richkung/My3DIS/outputs/experiments/SUCCESS/v7_246_ssam4_filter100_fill100_prop30_max3k_m_1
+  exp_root: /media/Pluto/richkung/My3DIS/outputs/experiments/SUCCESS/v7_135_ssam4_filter100_fill100_prop10_max3k_m_2
 
   # Dataset root for MultiScan scenes
   dataset_root: /media/public_dataset2/multiscan
 
   # Scene selection: all, list, or pattern
-  scenes: all
+  scenes: all  # all | list | pattern
 
   # Levels to process (auto-detect if null)
   levels: null
@@ -93,8 +93,8 @@ aggregation:
   # NOTE: siglip_model is auto-populated from model.presets based on model.type
   # Do not set manually unless you want to override
 
-  # Feature pooling mode average,voting,max, weighted
-  pooling_mode: average
+  # Feature pooling mode controls SigLIP feature averaging
+  pooling_mode: average  # average | voting
 
   # 3D projection configuration
   projection:
@@ -126,10 +126,10 @@ inference:
 
   # Multi-Strategy Testing (DEFAULT: test all strategies)
   test_all_strategies: true
-  strategies_to_test: [independent, hierarchical, exhaustive_pairing]
+  strategies_to_test: [independent, hierarchical, exhaustive_pairing]  # Any subset of [independent, hierarchical, exhaustive_pairing]
 
   # Single strategy (used when test_all_strategies=false)
-  strategy: hierarchical
+  strategy: hierarchical  # independent | hierarchical | exhaustive_pairing
 
   # Retrieval configuration
   # NOTE: scale_semantic_score and apply_softmax are auto-populated from model preset
@@ -140,32 +140,32 @@ inference:
     object_levels: auto
     part_levels: auto
     # scale_semantic_score and apply_softmax are set from model preset
-    text_template: in_room
+    text_template: in_room  # raw | in_room | photo_of
 
   # Object-Part pairing configuration
   pairing:
-    containment_threshold: 0.0
-    scale_range: [0.00001, 100.0]
-    use_geometric_score: false
-    use_tree_pruning: false
+    containment_threshold: 0.3      # Require part to be at least 30% contained in object
+    scale_range: [0.005, 0.95]      # Reasonable part/object size ratios
+    use_geometric_score: true       # Enable geometric constraints
+    use_tree_pruning: true          # Leverage family tree relationships
 
   # NMS configuration
   nms:
-    iou_threshold: 0.15
-    use_soft_nms: true
+    iou_threshold: 0.35             # Increased to reduce over-filtering
+    use_soft_nms: false             # Use hard NMS for clearer decisions
     soft_nms_sigma: 0.3
     centroid_distance_ratio: 0.2
-    keep_top_k: 500
+    keep_top_k: 1000                # Allow more predictions
 
   # Scoring configuration
   scoring:
-    method: arithmetic
+    method: weighted_sum            # More flexible scoring method
     weights:
-      object: 0.5
-      part: 0.5
-      geometric: 0.0
+      object: 0.4
+      part: 0.4
+      geometric: 0.2               # Reward geometrically valid pairs
     temperature: 1.0
-    hierarchy_bonus: 0.05
+    hierarchy_bonus: 0.1           # Higher bonus for tree-consistent pairs
 
   # Formatter configuration
   formatter:
@@ -189,10 +189,10 @@ inference:
   hierarchical:
     coarse_top_k: 500
     object_top_k: 500
-    part_top_k: 200
-    coarse_threshold: 0.01
-    refinement_threshold: 0.01
-    refinement_margin: 0.01
+    part_top_k: 300                # Increased from 200 for more part candidates
+    coarse_threshold: 0.005        # Lowered from 0.01 for more initial candidates
+    refinement_threshold: 0.005    # Lowered from 0.01 for more refined candidates
+    refinement_margin: 0.05        # Increased from 0.01 to prefer children more
     use_combined_query: true
     siglip_device: *device
 
@@ -204,7 +204,7 @@ inference:
     min_retrieval_threshold: 0.001
     threshold_backoff_step: 0.005
     fallback_to_topk: true
-    selection_metric: sum
+    selection_metric: sum  # max | mean | sum
     use_tree_pruning: false
     return_all_pairs: true
     use_combined_query: true

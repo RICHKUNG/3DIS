@@ -69,6 +69,7 @@ class IndependentStrategyConfig:
     siglip_device: str = "cuda:0"
     scale_semantic_score: float = 300.0
     apply_softmax: bool = True
+    text_template: str = "in_room"  # raw, in_room, photo_of
 
 
 @dataclass
@@ -87,6 +88,7 @@ class HierarchicalStrategyConfig:
     siglip_device: str = "cuda:0"
     scale_semantic_score: float = 300.0
     apply_softmax: bool = True
+    text_template: str = "in_room"  # raw, in_room, photo_of
 
 
 @dataclass
@@ -108,6 +110,7 @@ class ExhaustivePairingConfig:
     siglip_device: str = "cuda:0"
     scale_semantic_score: float = 300.0
     apply_softmax: bool = True
+    text_template: str = "in_room"  # raw, in_room, photo_of
 
 
 @dataclass
@@ -227,6 +230,7 @@ class InferenceConfig:
                 'siglip_device': self.independent.siglip_device,
                 'scale_semantic_score': self.independent.scale_semantic_score,
                 'apply_softmax': self.independent.apply_softmax,
+                'text_template': self.independent.text_template,
             },
             'hierarchical': {
                 'coarse_top_k': self.hierarchical.coarse_top_k,
@@ -240,6 +244,7 @@ class InferenceConfig:
                 'siglip_device': self.hierarchical.siglip_device,
                 'scale_semantic_score': self.hierarchical.scale_semantic_score,
                 'apply_softmax': self.hierarchical.apply_softmax,
+                'text_template': self.hierarchical.text_template,
             },
             'exhaustive_pairing': {
                 'available_levels': self.exhaustive_pairing.available_levels,
@@ -256,6 +261,7 @@ class InferenceConfig:
                 'siglip_device': self.exhaustive_pairing.siglip_device,
                 'scale_semantic_score': self.exhaustive_pairing.scale_semantic_score,
                 'apply_softmax': self.exhaustive_pairing.apply_softmax,
+                'text_template': self.exhaustive_pairing.text_template,
             },
         }
 

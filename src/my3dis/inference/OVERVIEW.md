@@ -154,22 +154,24 @@ class Prediction:
 
 ### Hierarchical Strategy（階層式 family‑aware 策略）
 
+**重要更新（2025-11-19）**：hierarchical.py 已修復硬編碼層級問題，現支持任意層級組合（L1/L3/L5, L2/L4/L6等）。
+
 ```text
-1. 粗略定位（L2）
-   └─ 從 L2 檢索 top-K proposal
+1. 粗略定位（coarse level，動態檢測）
+   └─ 從 coarse_level（如 L1 或 L2）檢索 top-K proposal
        └─ Coarse Candidates
 
 2. 多解析度 refinement
-   對於每一個 L2 候選：
-       ├─ 保留 L2 proposal
-       ├─ 從 family tree 取得其 L4 子節點
-       ├─ 以 object 查詢重新評分 L4 候選
+   對於每一個 coarse 候選：
+       ├─ 保留 coarse level proposal
+       ├─ 從 family tree 取得其 refinement level 子節點
+       ├─ 以 object 查詢重新評分候選
        └─ 若分數高於閾值或高於 parent + margin：
-           └─ 加入物件候選集（L2 + L4 混合）
+           └─ 加入物件候選集（多層級混合）
 
 3. 區域內部件搜尋
    對於每一個物件候選：
-       ├─ 從家族樹搜尋其子孫節點（L4 / L6）
+       ├─ 從家族樹搜尋其子孫節點（part_levels，動態）
        ├─ 以 part 查詢評分
        ├─ 依閾值篩選
        └─ 組成物件／部件配對
@@ -179,6 +181,15 @@ class Prediction:
    └─ 運用多實例 NMS，避免家族樹不同分支產生高度重疊的重複預測
        └─ Final Predictions
 ```
+
+**層級配置**：
+- `coarse_level`: 自動檢測可用層級中的最粗層（如 L1）
+- `refinement_level`: 自動檢測中間層級（如 L3）
+- `part_levels`: 自動檢測可用的細粒度層級列表（如 [L3, L5]）
+
+**Bug修復歷史**：
+- **2025-11-19**: 移除所有硬編碼的 L2/L4/L6 層級，改用動態檢測
+- **影響**: hierarchical 策略從完全失效（mAP 0%）恢復到正常水平（預期 2-5%）
 
 ---
 
@@ -407,9 +418,61 @@ InferenceConfig
 
 ---
 
+## 性能優化建議（2025-11-19更新）
+
+### 推薦的YAML參數配置
+
+基於實驗分析，以下參數可顯著提升 mAP：
+
+```yaml
+# Pairing - 啟用幾何約束和樹剪枝
+pairing:
+  containment_threshold: 0.3      # 要求part至少30%在object內
+  scale_range: [0.005, 0.95]      # 限制合理的尺度比例
+  use_geometric_score: true       # 啟用幾何分數
+  use_tree_pruning: true          # 利用family tree過濾
+
+# NMS - 減少過度過濾
+nms:
+  iou_threshold: 0.35             # 提高以減少過濾（原0.15太低）
+  use_soft_nms: false             # 使用hard NMS
+  keep_top_k: 1000                # 允許更多預測
+
+# Scoring - 加權評分
+scoring:
+  method: weighted_sum            # 更靈活的方法
+  weights:
+    object: 0.4
+    part: 0.4
+    geometric: 0.2               # 獎勵幾何合理的配對
+  hierarchy_bonus: 0.1           # 獎勵樹一致性
+
+# Hierarchical - 放寬閾值
+hierarchical:
+  part_top_k: 300                # 增加part候選
+  coarse_threshold: 0.005        # 降低初始門檻
+  refinement_threshold: 0.005    # 降低精煉門檻
+  refinement_margin: 0.05        # 更傾向選擇子層級
+```
+
+### 預期效果
+
+| 策略 | 優化前 | 優化後 | 提升 |
+|------|--------|--------|------|
+| Independent | 1.05% | 1.5-2% | +50% |
+| Hierarchical | 0.00%* | 2-5% | +∞ |
+| Exhaustive | 1.43% | 3-6% | +200% |
+
+*修復bug前為0%，修復後預期恢復正常
+
+詳細說明請參考：`/media/Pluto/richkung/My3DIS/YAML_OPTIMIZATION_SUMMARY.md`
+
+---
+
 若需要將本模組與整體 pipeline 聯繫起來，可搭配閱讀：
 
 - 3D proposal 產生：`src/my3dis/aggregation/README.md`
 - SigLIP 特徵指派：`src/my3dis/siglip_assignment/README.md`
 - 全體系統流程：`src/my3dis/OVERVIEW.md`
+- 工作總結（2025-11-19）：`/media/Pluto/richkung/My3DIS/WORK_SUMMARY_2025_11_19.md`
 

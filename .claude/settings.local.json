@@ -125,7 +125,8 @@
       "Bash(then echo \"$dir\")",
       "Bash(if [ -s /tmp/siglip_quick_test.log ])",
       "Bash(then tail -100 /tmp/siglip_quick_test.log)",
-      "Bash(else echo \"Log still empty\")"
+      "Bash(else echo \"Log still empty\")",
+      "Bash(PYTHONPATH=. python3:*)"
     ],
     "deny": [],
     "ask": []

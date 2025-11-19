@@ -457,7 +457,7 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
         combined_feat = self.extract_combined_feature(object_query_text, part_query_text)
 
         # Stage 1: Coarse Object Localization with combined feature
-        logger.info("Stage 1: Coarse object localization at L2")
+        logger.info(f"Stage 1: Coarse object localization at {self.coarse_level}")
         coarse_candidates = self._coarse_localization_with_combined_feature(combined_feat)
 
         if len(coarse_candidates) == 0:
@@ -506,17 +506,17 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
         combined_feat: np.ndarray
     ) -> List[Proposal]:
         """
-        Stage 1: Coarse localization at L2 using combined feature.
+        Stage 1: Coarse localization using combined feature.
 
         Args:
             combined_feat: Combined query feature
 
         Returns:
-            Top-K L2 proposals as coarse candidates
+            Top-K coarse level proposals as candidates
         """
         result = self.retriever.retrieve_single_level(
             combined_feat,
-            level='L2',
+            level=self.coarse_level,
             top_k=self.coarse_top_k,
             threshold=self.coarse_threshold
         )
@@ -529,7 +529,7 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
             apply_softmax=self.apply_softmax
         )
 
-        logger.info(f"Coarse localization: {len(result.proposals)} candidates from L2")
+        logger.info(f"Coarse localization: {len(result.proposals)} candidates from {self.coarse_level}")
 
         return result.proposals
 
@@ -541,44 +541,44 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
         """
         Stage 2: Multi-resolution refinement using combined feature.
 
-        For each L2 coarse candidate:
-        1. Keep the L2 proposal itself
-        2. Check its L4 children
+        For each coarse candidate:
+        1. Keep the coarse proposal itself
+        2. Check its refinement level children
         3. If any child scores higher (+ margin), include it
 
         Args:
             combined_feat: Combined query feature
-            coarse_candidates: L2 coarse candidates
+            coarse_candidates: Coarse level candidates
 
         Returns:
-            Refined list of object candidates (mix of L2 and L4)
+            Refined list of object candidates (mix of coarse and refinement levels)
         """
         object_candidates = []
 
-        for l2_prop in coarse_candidates:
-            # Keep the L2 proposal
-            object_candidates.append(l2_prop)
+        for coarse_prop in coarse_candidates:
+            # Keep the coarse proposal
+            object_candidates.append(coarse_prop)
 
-            # Get L4 children
-            if l2_prop.object_id is not None:
+            # Get refinement level children
+            if coarse_prop.object_id is not None:
                 children_ids = self.family_tree.get_children(
-                    l2_prop.object_id,
-                    target_level='L4'
+                    coarse_prop.object_id,
+                    target_level=self.refinement_level
                 )
 
                 if len(children_ids) > 0:
-                    # Get L4 proposals
-                    l4_proposals = self.retriever.proposals_by_level.get('L4', [])
-                    l4_children = [
-                        p for p in l4_proposals
+                    # Get refinement level proposals
+                    refinement_proposals = self.retriever.proposals_by_level.get(self.refinement_level, [])
+                    refinement_children = [
+                        p for p in refinement_proposals
                         if p.object_id in children_ids
                     ]
 
-                    if len(l4_children) > 0:
+                    if len(refinement_children) > 0:
                         # Compute scores for children using combined feature
                         from ..retrieval import compute_cosine_similarity
 
-                        child_features = np.stack([p.feature for p in l4_children])
+                        child_features = np.stack([p.feature for p in refinement_children])
                         child_scores = compute_cosine_similarity(
                             combined_feat,
                             child_features,
@@ -587,10 +587,10 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
                         )
 
                         # Add children that score well
-                        for child, score in zip(l4_children, child_scores):
+                        for child, score in zip(refinement_children, child_scores):
                             # Include if score is high enough or better than parent
                             if (score > self.refinement_threshold or
-                                score > l2_prop.score + self.refinement_margin):
+                                score > coarse_prop.score + self.refinement_margin):
                                 child.score = float(score)
                                 object_candidates.append(child)
 
@@ -671,26 +671,29 @@ class HierarchicalStrategy(CombinedQueryMixin, InferenceStrategy):
 
         # Get descendants based on object level
         if obj_prop.object_id is not None:
-            if obj_prop.level == 'L2':
-                # Get L4 and L6 descendants
+            if obj_prop.level == self.coarse_level:
+                # Get descendants at part levels
                 descendants = self.family_tree.get_descendants(
                     obj_prop.object_id,
-                    levels=['L4', 'L6']
+                    levels=self.part_levels
                 )
                 part_pool_ids.update(descendants)
 
-            elif obj_prop.level == 'L4':
-                # Get L6 children + include the object itself (part could be same level)
-                children = self.family_tree.get_children(
-                    obj_prop.object_id,
-                    target_level='L6'
-                )
-                part_pool_ids.update(children)
+            elif obj_prop.level == self.refinement_level:
+                # Get children at finer part levels + include the object itself (part could be same level)
+                # Find finer levels than current object level
+                finer_levels = [level for level in self.part_levels if level >= obj_prop.level]
+                if finer_levels:
+                    descendants = self.family_tree.get_descendants(
+                        obj_prop.object_id,
+                        levels=finer_levels
+                    )
+                    part_pool_ids.update(descendants)
                 part_pool_ids.add(obj_prop.object_id)  # Include itself
 
         # Get proposals from pool
         part_proposals = []
-        for level in ['L4', 'L6']:
+        for level in self.part_levels:
             level_proposals = self.retriever.proposals_by_level.get(level, [])
             part_proposals.extend([
                 p for p in level_proposals

@@ -1673,22 +1673,39 @@ def process_single_scene(
 def generate_multi_scene_report(
     scene_results: List[Dict],
     aggregated: Dict,
-    output_path: Path
+    output_path: Path,
+    config: Optional[Dict] = None
 ):
     """
-    Generate multi-scene summary report.
+    Generate multi-scene summary report with detailed statistics.
 
     Args:
         scene_results: List of scene result dictionaries
         aggregated: Aggregated metrics dictionary
         output_path: Path to save the report
+        config: Configuration dictionary (for model info)
     """
+    import numpy as np
+
     logger.info(f"Generating multi-scene summary report...")
+
+    # Extract model info if available
+    model_info = config.get('_model_info', {}) if config else {}
+    model_type = model_info.get('type', 'unknown')
+    model_name = model_info.get('model_name', 'unknown')
+    pooling_mode = config.get('aggregation', {}).get('pooling_mode', 'unknown') if config else 'unknown'
 
     report_lines = [
         "# Multi-Scene Pipeline Summary Report",
         "",
         f"**Generated**: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        "## Configuration",
+        "",
+        f"- **Model Type**: {model_type}",
+        f"- **Model Name**: `{model_name}`",
+        f"- **Pooling Mode**: {pooling_mode}",
+        f"- **Device**: {config.get('experiment', {}).get('device', 'unknown') if config else 'unknown'}",
         "",
         "## Overview",
         "",
@@ -1696,11 +1713,70 @@ def generate_multi_scene_report(
         f"- **Successful**: {aggregated['successful_scenes']}",
         f"- **Failed**: {aggregated['failed_scenes']}",
         "",
-        "## Overall Metrics",
-        "",
     ]
 
-    # Add overall metrics table
+    # Collect timing and proposal statistics
+    timing_stats = {'aggregation': [], 'inference': [], 'total': []}
+    proposal_stats = []
+
+    for scene_result in scene_results:
+        if scene_result['status'] != 'success':
+            continue
+
+        # Collect inference timing and proposals
+        if 'inference' in scene_result and scene_result['inference'].get('status') == 'success':
+            strategies = scene_result['inference'].get('strategies', {})
+            for strategy_name, stats in strategies.items():
+                if 'elapsed_time' in stats:
+                    timing_stats['inference'].append(stats['elapsed_time'])
+                if 'num_predictions' in stats:
+                    proposal_stats.append(stats['num_predictions'])
+
+    # Add timing statistics section
+    report_lines.extend([
+        "## Timing Statistics",
+        "",
+    ])
+
+    if timing_stats['inference']:
+        inf_times = timing_stats['inference']
+        report_lines.extend([
+            f"- **Inference Time (per scene)**:",
+            f"  - Mean: {np.mean(inf_times):.2f}s",
+            f"  - Std: {np.std(inf_times):.2f}s",
+            f"  - Min: {np.min(inf_times):.2f}s",
+            f"  - Max: {np.max(inf_times):.2f}s",
+            f"  - Total: {np.sum(inf_times):.2f}s",
+            "",
+        ])
+    else:
+        report_lines.append("*No timing data available*\n")
+
+    # Add proposal statistics section
+    report_lines.extend([
+        "## Proposal Statistics",
+        "",
+    ])
+
+    if proposal_stats:
+        report_lines.extend([
+            f"- **Predictions per Scene**:",
+            f"  - Mean: {np.mean(proposal_stats):.1f}",
+            f"  - Std: {np.std(proposal_stats):.1f}",
+            f"  - Min: {np.min(proposal_stats)}",
+            f"  - Max: {np.max(proposal_stats)}",
+            f"  - Total: {np.sum(proposal_stats)}",
+            "",
+        ])
+    else:
+        report_lines.append("*No proposal data available*\n")
+
+    # Add overall metrics section
+    report_lines.extend([
+        "## Overall Metrics (Average across scenes)",
+        "",
+    ])
+
     if aggregated['overall_metrics']:
         report_lines.append("| Strategy | Mean mAP | Mean AP50 | Mean AP25 | Std mAP | Std AP50 | Std AP25 | Scenes |")
         report_lines.append("|----------|----------|-----------|-----------|---------|----------|----------|--------|")
@@ -1708,111 +1784,118 @@ def generate_multi_scene_report(
         for strategy, metrics in aggregated['overall_metrics'].items():
             report_lines.append(
                 f"| **{strategy}** | "
-                f"{metrics['mean_mAP']:.3f} | "
-                f"{metrics['mean_AP50']:.3f} | "
-                f"{metrics['mean_AP25']:.3f} | "
-                f"{metrics['std_mAP']:.3f} | "
-                f"{metrics['std_AP50']:.3f} | "
-                f"{metrics['std_AP25']:.3f} | "
+                f"{metrics['mean_mAP']:.4f} | "
+                f"{metrics['mean_AP50']:.4f} | "
+                f"{metrics['mean_AP25']:.4f} | "
+                f"{metrics['std_mAP']:.4f} | "
+                f"{metrics['std_AP50']:.4f} | "
+                f"{metrics['std_AP25']:.4f} | "
                 f"{metrics['num_scenes']} |"
             )
     else:
         report_lines.append("*No metrics available*")
 
+    # Add detailed per-scene results table
     report_lines.extend([
         "",
-        "## Per-Scene Results",
+        "## Per-Scene Detailed Results",
         "",
     ])
 
-    # Add per-scene results table
-    report_lines.append("| Scene | Status | mAP | AP50 | AP25 | Error |")
-    report_lines.append("|-------|--------|-----|------|------|-------|")
+    # Create comprehensive table header
+    report_lines.append("| Scene | Status | Predictions | Time (s) | mAP | AP50 | AP25 |")
+    report_lines.append("|-------|--------|-------------|----------|-----|------|------|")
 
-    for scene_name, scene_info in aggregated['scenes'].items():
-        status = scene_info['status']
-
-        # Get metrics from first available strategy
-        metrics_str = "-"
-        ap50_str = "-"
-        ap25_str = "-"
-        error_str = ""
-
-        if status == 'success':
-            # Find first strategy with metrics
-            for key, value in scene_info.items():
-                if isinstance(value, dict) and 'mAP' in value:
-                    metrics_str = f"{value['mAP']:.3f}"
-                    ap50_str = f"{value['AP50']:.3f}"
-                    ap25_str = f"{value['AP25']:.3f}"
-                    break
-        else:
-            error_str = scene_info.get('error', 'Unknown error')
-
-        report_lines.append(
-            f"| {scene_name} | {status} | {metrics_str} | {ap50_str} | {ap25_str} | {error_str} |"
-        )
-
-    report_lines.extend([
-        "",
-        "## Detailed Scene Results",
-        "",
-    ])
-
-    # Add detailed results for each scene
     for scene_result in scene_results:
         scene_name = scene_result['scene_name']
         status = scene_result['status']
 
-        report_lines.extend([
-            f"### {scene_name}",
-            "",
-            f"- **Status**: {status}",
-            f"- **Experiment Dir**: `{scene_result['exp_dir']}`",
-            f"- **Scene Path**: `{scene_result['scene_path']}`",
-            "",
-        ])
+        # Default values
+        predictions_str = "-"
+        time_str = "-"
+        map_str = "-"
+        ap50_str = "-"
+        ap25_str = "-"
 
         if status == 'success':
-            # Aggregation info
-            if 'aggregation' in scene_result:
-                agg = scene_result['aggregation']
-                report_lines.extend([
-                    "**Aggregation**:",
-                    f"- Status: {agg.get('status', 'unknown')}",
-                    "",
-                ])
-
-            # Inference info
+            # Get predictions count and time from inference
             if 'inference' in scene_result and scene_result['inference'].get('status') == 'success':
-                inf = scene_result['inference']
-                strategies = inf.get('strategies', {})
-                report_lines.append("**Inference**:")
-                for strategy_name, strategy_stats in strategies.items():
-                    report_lines.append(f"- {strategy_name}: {strategy_stats.get('num_predictions', 0)} predictions")
-                report_lines.append("")
+                strategies = scene_result['inference'].get('strategies', {})
+                # Use first strategy's data
+                for strategy_name, stats in strategies.items():
+                    predictions_str = str(stats.get('num_predictions', '-'))
+                    if 'elapsed_time' in stats:
+                        time_str = f"{stats['elapsed_time']:.1f}"
+                    break
 
-            # Evaluation info
+            # Get metrics from evaluation
             if 'evaluation' in scene_result and scene_result['evaluation'].get('status') == 'success':
                 eval_results = scene_result['evaluation'].get('results', {})
-                report_lines.append("**Evaluation**:")
-
+                # Use first strategy's metrics
                 for strategy_name, eval_result in eval_results.items():
                     if 'obj_part' in eval_result and eval_result['obj_part'].get('status') == 'success':
                         metrics = eval_result['obj_part']['metrics']
-                        report_lines.extend([
-                            f"- {strategy_name}:",
-                            f"  - mAP: {metrics.get('all_ap', 0):.3f}",
-                            f"  - AP50: {metrics.get('all_ap_50%', 0):.3f}",
-                            f"  - AP25: {metrics.get('all_ap_25%', 0):.3f}",
-                        ])
-                report_lines.append("")
-        else:
-            error = scene_result.get('error', 'Unknown error')
+                        map_str = f"{metrics.get('all_ap', 0):.4f}"
+                        ap50_str = f"{metrics.get('all_ap_50%', 0):.4f}"
+                        ap25_str = f"{metrics.get('all_ap_25%', 0):.4f}"
+                        break
+
+        report_lines.append(
+            f"| {scene_name} | {status} | {predictions_str} | {time_str} | {map_str} | {ap50_str} | {ap25_str} |"
+        )
+
+    # Add per-strategy breakdown if multiple strategies
+    if aggregated['overall_metrics'] and len(aggregated['overall_metrics']) > 1:
+        report_lines.extend([
+            "",
+            "## Per-Strategy Per-Scene Breakdown",
+            "",
+        ])
+
+        for strategy in aggregated['overall_metrics'].keys():
             report_lines.extend([
-                f"**Error**: {error}",
+                f"### {strategy.upper()} Strategy",
                 "",
+                "| Scene | mAP | AP50 | AP25 | Predictions | Time (s) |",
+                "|-------|-----|------|------|-------------|----------|",
             ])
+
+            for scene_result in scene_results:
+                scene_name = scene_result['scene_name']
+                if scene_result['status'] != 'success':
+                    report_lines.append(f"| {scene_name} | - | - | - | - | - |")
+                    continue
+
+                # Get strategy-specific data
+                predictions = "-"
+                time_val = "-"
+                map_val = "-"
+                ap50_val = "-"
+                ap25_val = "-"
+
+                if 'inference' in scene_result and scene_result['inference'].get('status') == 'success':
+                    strategies = scene_result['inference'].get('strategies', {})
+                    if strategy in strategies:
+                        stats = strategies[strategy]
+                        predictions = str(stats.get('num_predictions', '-'))
+                        if 'elapsed_time' in stats:
+                            time_val = f"{stats['elapsed_time']:.1f}"
+
+                if 'evaluation' in scene_result and scene_result['evaluation'].get('status') == 'success':
+                    eval_results = scene_result['evaluation'].get('results', {})
+                    if strategy in eval_results:
+                        eval_result = eval_results[strategy]
+                        if 'obj_part' in eval_result and eval_result['obj_part'].get('status') == 'success':
+                            metrics = eval_result['obj_part']['metrics']
+                            map_val = f"{metrics.get('all_ap', 0):.4f}"
+                            ap50_val = f"{metrics.get('all_ap_50%', 0):.4f}"
+                            ap25_val = f"{metrics.get('all_ap_25%', 0):.4f}"
+
+                report_lines.append(
+                    f"| {scene_name} | {map_val} | {ap50_val} | {ap25_val} | {predictions} | {time_val} |"
+                )
+
+            report_lines.append("")
 
     report_lines.extend([
         "---",
@@ -1907,17 +1990,35 @@ def aggregate_scene_metrics(scene_results: List[Dict], output_path: Path):
             strategy_metrics[strategy]['AP50'].append(result['AP50'])
             strategy_metrics[strategy]['AP25'].append(result['AP25'])
 
-        # Compute averages
+        # Compute averages (using nanmean/nanstd to handle potential NaN values)
         for strategy, metrics in strategy_metrics.items():
+            # Convert to numpy arrays for proper NaN handling
+            mAP_arr = np.array(metrics['mAP'])
+            AP50_arr = np.array(metrics['AP50'])
+            AP25_arr = np.array(metrics['AP25'])
+
+            # Count valid (non-NaN) values
+            valid_mAP = np.sum(~np.isnan(mAP_arr))
+            valid_AP50 = np.sum(~np.isnan(AP50_arr))
+            valid_AP25 = np.sum(~np.isnan(AP25_arr))
+
+            # Use nanmean/nanstd to ignore NaN values
             aggregated['overall_metrics'][strategy] = {
-                'mean_mAP': float(np.mean(metrics['mAP'])),
-                'mean_AP50': float(np.mean(metrics['AP50'])),
-                'mean_AP25': float(np.mean(metrics['AP25'])),
-                'std_mAP': float(np.std(metrics['mAP'])),
-                'std_AP50': float(np.std(metrics['AP50'])),
-                'std_AP25': float(np.std(metrics['AP25'])),
-                'num_scenes': len(metrics['mAP'])
+                'mean_mAP': float(np.nanmean(mAP_arr)) if valid_mAP > 0 else 0.0,
+                'mean_AP50': float(np.nanmean(AP50_arr)) if valid_AP50 > 0 else 0.0,
+                'mean_AP25': float(np.nanmean(AP25_arr)) if valid_AP25 > 0 else 0.0,
+                'std_mAP': float(np.nanstd(mAP_arr)) if valid_mAP > 0 else 0.0,
+                'std_AP50': float(np.nanstd(AP50_arr)) if valid_AP50 > 0 else 0.0,
+                'std_AP25': float(np.nanstd(AP25_arr)) if valid_AP25 > 0 else 0.0,
+                'num_scenes': len(metrics['mAP']),
+                'valid_scenes_mAP': int(valid_mAP),
+                'valid_scenes_AP50': int(valid_AP50),
+                'valid_scenes_AP25': int(valid_AP25),
             }
+
+            # Log warning if some scenes had NaN values
+            if valid_mAP < len(metrics['mAP']):
+                logger.warning(f"  {strategy}: {len(metrics['mAP']) - valid_mAP} scenes had NaN mAP values")
 
     # Save to file
     with open(output_path, 'w') as f:
@@ -2108,12 +2209,16 @@ Examples:
             logger.info(f"  Per-scene results saved: {scene_results_path}")
 
         # Aggregate metrics across all scenes
-        aggregated_metrics_path = exp_root / "aggregated_metrics.json"
+        # Use model-based naming to avoid overwriting different configurations
+        model_info = config.get('_model_info', {})
+        output_suffix = model_info.get('output_suffix', 'default')
+
+        aggregated_metrics_path = exp_root / f"aggregated_metrics_{output_suffix}.json"
         aggregated = aggregate_scene_metrics(all_scene_results, aggregated_metrics_path)
 
-        # Generate summary report
-        summary_report_path = exp_root / "multi_scene_summary.md"
-        generate_multi_scene_report(all_scene_results, aggregated, summary_report_path)
+        # Generate summary report with model-based naming
+        summary_report_path = exp_root / f"multi_scene_summary_{output_suffix}.md"
+        generate_multi_scene_report(all_scene_results, aggregated, summary_report_path, config)
 
         logger.info("")
         logger.info("="*80)

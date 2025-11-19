@@ -729,3 +729,4 @@ stages:
 - **[`scripts/validate_formats.py`](scripts/validate_formats.py)** - Format validation tool for relations.json, tree.json, index.json
 - 現在aggregation以及inference的程式是在src/
 - 刪除使用隨機feature的功能
+- 不要使用/tmp資料夾，要放在My3DIS/

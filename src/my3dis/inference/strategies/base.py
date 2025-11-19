@@ -91,17 +91,19 @@ class InferenceStrategy(ABC):
         if len(pairs) == 0:
             return []
 
-        # Convert pairs to predictions (using union of object and part masks)
+        # Convert pairs to predictions (using part mask for NMS)
+        # NOTE: We use part_mask instead of joint_mask because:
+        # 1. Search3D evaluation is based on part-level predictions
+        # 2. Multiple object-part pairs may share the same part
+        # 3. Using joint_mask would keep pairs with same part but different objects
+        # 4. This leads to duplicate part predictions that overwrite each other during export
         predictions = []
         for pair in pairs:
-            # Create joint mask (union of object and part)
-            joint_mask = np.logical_or(
-                pair.object_proposal.mask,
-                pair.part_proposal.mask
-            ).astype(np.uint8)
+            # Use part mask for NMS to properly deduplicate same-part predictions
+            part_mask = pair.part_proposal.mask.astype(np.uint8)
 
             pred = Prediction(
-                mask=joint_mask,
+                mask=part_mask,
                 score=pair.combined_score,
                 label_id=pair.label_id,
                 metadata={'pair': pair}

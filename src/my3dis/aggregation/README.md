@@ -7,8 +7,13 @@
 
 ## 整體概觀
 
-**輸入**：SAM2 追蹤階段輸出的 `family_tree.json`（或 legacy `relations.json`）  
-**輸出**：各層級的 3D proposal NPZ 檔案（`proposal_data_level{2,4,6}.npz`），以及聚合 metadata。
+**輸入**：SAM2 追蹤階段輸出的 `family_tree.json`（或 legacy `relations.json`）
+**輸出**：各層級的 3D proposal NPZ 檔案（`proposal_data_level{L}.npz`，如 L1/L3/L5 或 L2/L4/L6），以及聚合 metadata。
+
+**支援的層級配置**：
+- 標準配置：L1/L3/L5（常用於MultiScan數據）
+- 替代配置：L2/L4/L6 或其他自定義層級組合
+- 層級自動檢測：由 `detect_available_levels()` 根據SAM2輸出動態決定
 
 ### 管線流程（概念）
 
@@ -92,7 +97,7 @@ PYTHONPATH=src python -m my3dis.run_aggregation \
   --depth-maps-dir  path/to/scene/depth \
   --color-frames-dir path/to/scene/color \
   --output-dir outputs/aggregation/scene_00065_00 \
-  --levels 2 4 6 \
+  --levels 1 3 5 \  # 或使用 2 4 6，視數據而定
   --iou-threshold 0.6 \
   --min-volume 0.001 \
   --device cuda:0
@@ -248,9 +253,9 @@ PYTHONPATH=src python -m my3dis.run_aggregation \
   "iou_threshold": 0.6,
   "min_volume": 0.001,
   "outputs": {
-    "2": "proposal_data_level2.npz",
-    "4": "proposal_data_level4.npz",
-    "6": "proposal_data_level6.npz"
+    "1": "proposal_data_level1.npz",  // 或 "2" 視層級配置而定
+    "3": "proposal_data_level3.npz",  // 或 "4"
+    "5": "proposal_data_level5.npz"   // 或 "6"
   },
   "statistics": {
     "total_objects": 150,
@@ -279,6 +284,11 @@ for obj_id in obj_ids:
     # 將 masks 投影至 3D，並交由 AggregationPipeline 處理
 ```
 
-聚合完成後，`proposal_data_level{L}.npz` 會成為 SigLIP assignment 模組（`my3dis.siglip_assignment`）與開放詞彙推論（`my3dis.inference`）的共同輸入。  
+聚合完成後，`proposal_data_level{L}.npz` 會成為 SigLIP assignment 模組（`my3dis.siglip_assignment`）與開放詞彙推論（`my3dis.inference`）的共同輸入。
 因此，Aggregation 模組的正確性直接影響後續特徵指派與檢索結果的品質。
+
+**注意事項（2025-11-19更新）**：
+- Inference 模組（特別是 hierarchical 策略）已支持動態層級檢測
+- 無需手動配置層級對應關係，系統會自動從可用的 proposal 文件中檢測
+- 確保 aggregation 輸出的層級與 SAM2 追蹤輸出一致（通常為 L1/L3/L5）
 
