@@ -215,15 +215,29 @@ class SigLIPFeatureExtractor:
                 object_map = load_object_segments_manifest(str(object_npz))
 
                 level_features = []
+                skipped_objects = []
 
                 for prop in tqdm(proposals, desc=f"Extracting {level} features"):
                     obj_id = prop['object_id']
-                    feature = self._extract_single_proposal_feature(
-                        obj_id, object_map, video_frames, color_dir, max_frames_per_object
-                    )
-                    level_features.append(feature)
+                    try:
+                        feature = self._extract_single_proposal_feature(
+                            obj_id, object_map, video_frames, color_dir, max_frames_per_object
+                        )
+                        level_features.append(feature)
+                    except RuntimeError as e:
+                        # Object has no valid frames (e.g., all crops too small)
+                        # Use zero vector as placeholder
+                        logger.warning(f"Object {obj_id}: {e}. Using zero vector.")
+                        zero_feature = torch.zeros(self.feature_dim, device=self.device)
+                        level_features.append(zero_feature)
+                        skipped_objects.append(obj_id)
 
                 features_by_level[level] = level_features
+                if skipped_objects:
+                    logger.warning(
+                        f"{level}: {len(skipped_objects)} objects used zero vectors: "
+                        f"{skipped_objects[:5]}{'...' if len(skipped_objects) > 5 else ''}"
+                    )
                 logger.info(f"Extracted {len(level_features)} features for {level}")
 
             except Exception as e:
@@ -316,6 +330,16 @@ class SigLIPFeatureExtractor:
                     bbox_width = x2 - x1
                     bbox_height = y2 - y1
                     bbox_size = bbox_width * bbox_height
+
+                    # Skip crops that are too small (causes channel ambiguity warnings)
+                    # Minimum 10x10 to ensure valid feature extraction
+                    MIN_CROP_SIZE = 10
+                    if bbox_width < MIN_CROP_SIZE or bbox_height < MIN_CROP_SIZE:
+                        logger.debug(
+                            f"Skipping frame {frame_idx} for object {object_id}: "
+                            f"crop too small ({bbox_width}x{bbox_height})"
+                        )
+                        continue
 
                     # Expand bbox slightly
                     margin = 20

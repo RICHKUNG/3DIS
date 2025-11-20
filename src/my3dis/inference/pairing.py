@@ -88,11 +88,22 @@ class FamilyTree:
         children = self.tree_data[obj_id].get('children', [])
 
         if target_level is not None:
-            # Filter by level (level is encoded in ID: L1→1XXX, L2→2XXX, etc.)
+            # Try level-based ID format first (L1→1000+, L2→2000+, etc.)
             try:
                 prefix = parse_level_to_prefix(target_level)
-                children = [c for c in children if prefix <= c < prefix + 1000]
-            except ValueError as e:
+                filtered = [c for c in children if prefix <= c < prefix + 1000]
+
+                # If no matches found, try using level field from tree_data
+                if len(filtered) == 0 and len(children) > 0:
+                    # Extract target level number (e.g., 'L3' -> 3)
+                    target_level_num = int(target_level[1:])
+                    filtered = [
+                        c for c in children
+                        if c in self.tree_data and self.tree_data[c].get('level') == target_level_num
+                    ]
+
+                children = filtered
+            except (ValueError, KeyError) as e:
                 logger.warning(f"Invalid target_level '{target_level}': {e}")
                 return []
 
@@ -115,14 +126,25 @@ class FamilyTree:
             queue.extend(children)
 
         if levels is not None:
-            # Parse level prefixes dynamically
+            # Try level-based ID format first
             try:
                 level_prefixes = [parse_level_to_prefix(l) for l in levels]
-                descendants = [
+                filtered = [
                     d for d in descendants
                     if any(prefix <= d < prefix + 1000 for prefix in level_prefixes)
                 ]
-            except ValueError as e:
+
+                # If no matches found, try using level field from tree_data
+                if len(filtered) == 0 and len(descendants) > 0:
+                    # Extract target level numbers (e.g., ['L3', 'L5'] -> [3, 5])
+                    target_level_nums = [int(level[1:]) for level in levels]
+                    filtered = [
+                        d for d in descendants
+                        if d in self.tree_data and self.tree_data[d].get('level') in target_level_nums
+                    ]
+
+                descendants = filtered
+            except (ValueError, KeyError) as e:
                 logger.error(f"Invalid level in levels list: {e}")
                 # Return all descendants if level parsing fails
                 pass

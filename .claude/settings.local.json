@@ -126,7 +126,9 @@
       "Bash(if [ -s /tmp/siglip_quick_test.log ])",
       "Bash(then tail -100 /tmp/siglip_quick_test.log)",
       "Bash(else echo \"Log still empty\")",
-      "Bash(PYTHONPATH=. python3:*)"
+      "Bash(PYTHONPATH=. python3:*)",
+      "Bash(PYTHONPATH=src timeout 10 conda run -n 3Dsiglip python3:*)",
+      "Bash(PYTHONPATH=src timeout 60 conda run -n 3Dsiglip python:*)"
     ],
     "deny": [],
     "ask": []

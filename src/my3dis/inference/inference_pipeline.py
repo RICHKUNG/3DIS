@@ -164,7 +164,7 @@ class InferencePipeline:
 
         # Convert to FamilyTree format
         # Assuming tree_data has structure like:
-        # {"objects": {obj_id: {"parent": ..., "children": [...], ...}}}
+        # {"objects": {obj_id: {"parent": ..., "children": [...], "level": ..., ...}}}
 
         if 'objects' in tree_data:
             tree_dict = {}
@@ -172,7 +172,8 @@ class InferencePipeline:
                 obj_id = int(obj_id_str)
                 tree_dict[obj_id] = {
                     'parent': obj_info.get('parent'),
-                    'children': obj_info.get('children', [])
+                    'children': obj_info.get('children', []),
+                    'level': obj_info.get('level')  # Include level for non-level-based ID format
                 }
         else:
             tree_dict = tree_data

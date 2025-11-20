@@ -20,6 +20,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import torch
+from PIL import Image
 from tqdm import tqdm
 
 # Add src to path
@@ -35,9 +36,19 @@ try:
         VALID_JOINT_LABEL_LIST,
     )
 except ImportError:
-    print("Warning: Could not import Search3D constants, using dummy values")
-    VALID_JOINT_SEMANTIC_IDS = []
-    VALID_JOINT_LABEL_LIST = []
+    # Try alternative path
+    try:
+        import runpy
+        constants_path = Path(__file__).parent.parent / "eval" / "search3d" / "data" / "multiscan_search3d_constants.py"
+        if not constants_path.exists():
+            constants_path = Path(__file__).parent.parent / "data" / "search3d_gt" / "multiscan_data_search3d" / "multiscan_search3d_constants.py"
+        constants = runpy.run_path(str(constants_path))
+        VALID_JOINT_SEMANTIC_IDS = constants["VALID_JOINT_SEMANTIC_IDS"]
+        VALID_JOINT_LABEL_LIST = constants["VALID_JOINT_LABEL_LIST"]
+    except Exception as e:
+        print(f"Warning: Could not import Search3D constants: {e}")
+        VALID_JOINT_SEMANTIC_IDS = []
+        VALID_JOINT_LABEL_LIST = []
 
 logging.basicConfig(
     level=logging.INFO,
@@ -567,8 +578,6 @@ def main():
                         help='Semantic score scaling factor')
     parser.add_argument('--output', type=Path, default=None,
                         help='Output JSON file for detailed results')
-    parser.add_argument('--skip-model-load', action='store_true',
-                        help='Skip SigLIP model loading (use random features for testing)')
 
     args = parser.parse_args()
 
@@ -604,14 +613,13 @@ def main():
     logger.info("Initializing SigLIP feature extractor...")
     extractor = SigLIPFeatureExtractor(
         model_name=args.model_name,
-        device=args.device,
-        skip_model_load=args.skip_model_load
+        device=args.device
     )
 
     # Extract visual features
     logger.info("Extracting visual features from GT proposals...")
     visual_features = extract_visual_features_from_gt(
-        proposals, scene_path, extractor, max_proposals=args.max_proposals
+        proposals, points, scene_path, extractor, max_proposals=args.max_proposals
     )
 
     # Extract text features

@@ -16,6 +16,8 @@
 # v7_246_ssam4_filter1000_fill1000_prop30_max3k_b_0 FAIL
 # v7_135_ssam4_filter1000_fill1000_prop30_max3k_b_1 FAIL
 # v7_135_ssam4_filter100_fill100_prop30_max3k_m_1 FAIL
+# v7_135_ssam4_filter100_fill100_prop50_max3k_a_1 FAIL
+# v7_135_ssam4_filter100_fill100_prop30_max3k_m_1 FAIL
 ###############################################################
 # v7_135_ssam4_filter100_fill100_prop10_max3k_m_2 SUCCESS filter less Prop less 135
 # v7_246_ssam4_filter100_fill100_prop30_max3k_m_1 SUCCESS filter less
@@ -23,7 +25,7 @@
 # v7_135_ssam4_filter500_fill500_prop30_max3k_a_1 SUCCESS 135 version
 ###############################################################
 experiment:
-  name: v7_135_ssam4_filter100_fill100_prop50_max3k_a_1
+  name: v7_135_ssam4_filter100_fill100_prop30_max3k_m_1
   dataset_root: /media/public_dataset2/multiscan
   scenes: null
   scene_start: scene_00005_00  
@@ -66,7 +68,7 @@ stages:
   tracker:
     enabled: true
     prompt_mode: all_mask
-    max_propagate: 50  # Limit propagation to reduce GPU memory usage
+    max_propagate: 30  # Limit propagation to reduce GPU memory usage
     iou_threshold: 0.6
     downscale_masks: true
     downscale_ratio: 0.3  # Match base.yaml: full resolution

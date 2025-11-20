@@ -1258,6 +1258,7 @@ def convert_predictions_to_eval_format(
 def run_evaluation_stage(
     config: Dict,
     inference_output_dir: str,
+    strategy: Optional[str] = None,
 ) -> Dict:
     """
     Run evaluation stage: Compute mAP for OV part-level predictions using the Search3D protocol.
@@ -1269,6 +1270,7 @@ def run_evaluation_stage(
             - predictions.json
             - prediction_masks.npz (old format, for backward compat)
             - scene_*_obj_part_inst.txt (Search3D part-level format)
+        strategy: Strategy name (for logging purposes)
 
     Returns:
         Dictionary with evaluation metrics:
@@ -1277,8 +1279,9 @@ def run_evaluation_stage(
             'summary': {...}      # Combined summary
         }
     """
+    strategy_suffix = f" ({strategy})" if strategy else ""
     logger.info("="*80)
-    logger.info("STAGE 3: EVALUATION (Search3D OV-Part)")
+    logger.info(f"STAGE 3: EVALUATION (Search3D OV-Part){strategy_suffix}")
     logger.info("="*80)
 
     eval_config = config['evaluation']
@@ -1403,7 +1406,7 @@ def run_evaluation_stage(
             ap = evaluate_matches({scene_name: matches})
             avgs = compute_averages(ap)
 
-            logger.info(f"✓ {mode.upper()} evaluation completed")
+            logger.info(f"✓ {mode.upper()} evaluation completed{strategy_suffix}")
             logger.info(f"  mAP: {avgs['all_ap']:.3f}")
             logger.info(f"  AP@50: {avgs['all_ap_50%']:.3f}")
             logger.info(f"  AP@25: {avgs['all_ap_25%']:.3f}")
@@ -1443,7 +1446,7 @@ def run_evaluation_stage(
     # Print detailed results
     for mode, result in results.items():
         if result.get('status') == 'success':
-            logger.info(f"\n  {mode.upper()}:")
+            logger.info(f"\n  {mode.upper()}{strategy_suffix}:")
             logger.info(f"    mAP: {result['mAP']:.3f}")
             logger.info(f"    AP@50: {result['AP50']:.3f}")
             logger.info(f"    AP@25: {result['AP25']:.3f}")
@@ -1647,6 +1650,7 @@ def process_single_scene(
                     eval_result = run_evaluation_stage(
                         config=scene_config,
                         inference_output_dir=stats['output_dir'],
+                        strategy=strategy_name,
                     )
                     eval_results[strategy_name] = eval_result
 
@@ -2385,6 +2389,7 @@ Examples:
                 eval_result = run_evaluation_stage(
                     config=config,
                     inference_output_dir=stats['output_dir'],
+                    strategy=strategy_name,
                 )
                 eval_results[strategy_name] = eval_result
 
