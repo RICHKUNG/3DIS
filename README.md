@@ -184,7 +184,7 @@ PYTHONPATH=src python -m my3dis.run_workflow \
 **Stage 3-4: Aggregation + Inference (After Tracking)**:
 ```bash
 python scripts/run_full_pipeline.py \
-  --config configs/inference/full_pipeline.yaml \
+  --config configs/inference/experiment_pipeline.yaml \
   --exp-dir outputs/experiments/<your_experiment_name>
 ```
 
@@ -384,23 +384,6 @@ export PYTHONPATH=src
 python -m my3dis.run_workflow --config config.yaml
 ```
 
----
-
-## Contributing
-
-This is a research codebase developed for exploring hierarchical 3D instance segmentation. The code is provided as-is for reference and experimentation. Feel free to:
-- Open issues for bugs or questions
-- Submit pull requests for bug fixes or improvements
-- Fork and adapt for your own research
-
----
-
-## License
-
-[Add your license here]
-
----
-
 ## Acknowledgments
 
 FamilyPart builds upon:
@@ -408,9 +391,3 @@ FamilyPart builds upon:
 - **SAM2** for temporal mask tracking
 - **SigLIP** for open-vocabulary feature extraction
 - **MultiScan** dataset for evaluation
-
----
-
-## Contact
-
-[Add contact information if desired]

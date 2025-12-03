@@ -11,11 +11,11 @@ to open-vocabulary instance segmentation predictions:
 4. (Optional) Evaluation: Compute mAP using Search3D protocol
 
 Usage:
-    python scripts/run_full_pipeline.py --config configs/inference/full_pipeline.yaml
+    python scripts/run_full_pipeline.py --config configs/inference/experiment_pipeline.yaml
 
     # Override specific parameters
     python scripts/run_full_pipeline.py \
-        --config configs/inference/full_pipeline.yaml \
+        --config configs/inference/experiment_pipeline.yaml \
         --exp-dir /path/to/experiment \
         --skip-aggregation  # Skip if aggregation already done
 
