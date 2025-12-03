@@ -166,7 +166,7 @@ Frame 1200:
 
 ### Quick Start
 
-**Single Scene Experiment**:
+**Stage 1-2: Segmentation + Tracking (Single Scene)**:
 ```bash
 ./run_experiment.sh \
   --levels 2,4,6 \
@@ -175,17 +175,20 @@ Frame 1200:
   --sam2-max-propagate 30
 ```
 
-**Multi-Scene Batch Processing**:
+**Stage 1-2: Multi-Scene Batch Processing**:
 ```bash
 PYTHONPATH=src python -m my3dis.run_workflow \
   --config configs/multiscan/base.yaml
 ```
 
-**Run Full Pipeline (Segmentation → Aggregation → Inference)**:
+**Stage 3-4: Aggregation + Inference (After Tracking)**:
 ```bash
-PYTHONPATH=src python scripts/run_full_pipeline.py \
-  --config configs/multiscan/base.yaml
+python scripts/run_full_pipeline.py \
+  --config configs/inference/full_pipeline.yaml \
+  --exp-dir outputs/experiments/<your_experiment_name>
 ```
+
+**Complete Pipeline**: Run workflow first (Stages 1-2), then run full_pipeline (Stages 3-4) with the output directory.
 
 ### Configuration
 
