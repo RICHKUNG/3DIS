@@ -1,168 +1,216 @@
-# FamilyPart: Hierarchical 3D Instance Segmentation with Family Provenance Tracking
+# FamilyPart: Training-free Open-vocabulary 3D Hierarchical Part Instance Segmentation via a Multi-level Family Tree
 
-FamilyPart is a research system for building hierarchical 3D instance proposals from indoor RGB sequences, where objects and their parts maintain explicit family relationships through provenance tracking. The system addresses a key challenge in 3D scene understanding: **how to simultaneously capture both coarse objects and fine-grained parts while preserving their semantic relationships across space and time**.
+FamilyPart is a **training-free** research system for open-vocabulary 3D part-level instance segmentation. It constructs a family-like hierarchical structure by progressively segmenting images at multiple levels of granularity and aggregates 2D masklets into 3D proposals with cross-frame consistency enforced by class-agnostic mask supervision between deep learning models.
+
+**Important Note**: This is an experimental research system. While it demonstrates the potential of training-free approaches using only posed RGB-D image sequences and 3D point clouds, the current mean average precision is not fully satisfactory compared to existing methods. We identify key failure modes and propose several directions for improvement.
 
 ---
 
 ## Research Motivation
 
-Traditional 3D instance segmentation approaches treat objects at a single granularity level, missing the hierarchical nature of real-world scenes:
-- A **chair** contains **armrests**, **seat**, and **legs**
-- A **desk** includes **drawers** and a **tabletop**
-- These part-whole relationships are critical for fine-grained scene understanding, robotic manipulation, and open-vocabulary retrieval
+Traditional 3D instance segmentation approaches operate at a single granularity level, missing the hierarchical nature of real-world scenes. In more complex scenarios, it is crucial to identify specific parts of objects. However, conventional 3D part-level instance segmentation pipelines are often constrained to a closed set of objects or parts, causing them to lose functionality outside of their training datasets.
 
-**Key Challenge**: When generating proposals at multiple granularity levels (coarse, medium, fine), how do we:
-1. Maintain consistent identity across frames?
-2. Track which fine-level masks belong to which coarse-level objects?
-3. Handle deduplication when the same object is proposed at different levels?
-4. Preserve complete provenance from 2D masks → tracked objects → 3D proposals?
+**Key Challenge**:
+1. Maintain consistent identity across frames at multiple granularity levels
+2. Track which fine-level masks belong to which coarse-level objects
+3. Handle deduplication when the same object is proposed at different levels
+4. Preserve complete provenance from 2D masks → tracked objects → 3D proposals
 
-FamilyPart solves these challenges through a **provenance-aware two-stage pipeline** that builds an explicit **family tree** connecting objects and parts across levels.
-
----
-
-## Core Innovation
-
-### 1. Multi-Level Candidate Generation with Cascade Filtering
-- **Progressive Semantic-SAM**: Generates candidates at multiple semantic levels (L2=coarse, L4=medium, L6=fine)
-- **Cascade Filtering**: Parent-aware filtering prevents orphan creation—if a parent is rejected, all children are automatically rejected
-- **Gap Filling**: Optional infilling ensures continuous coverage across frames
-- **Result**: Clean hierarchical candidates with minimal orphans
-
-### 2. Provenance-Aware Temporal Tracking
-- **SAM2-Based Propagation**: Prompts from Semantic-SAM are propagated across frames via SAM2
-- **Deduplication with Memory**: IoU-based deduplication tracks rejected masks as "virtual children"
-- **Global Unique IDs**: Level-encoded object IDs (L2: 2000-2999, L4: 4000-4999, L6: 6000-6999) enable instant level identification
-- **Result**: Every tracked object knows its SSAM parent, SAM2 propagation history, and which masks merged into it
-
-### 3. Family Tree Construction
-- **Provenance Tracker**: Maintains SSAM → SAM2 mapping with O(1) parent lookup
-- **Virtual Children**: Tracks deduped masks as "virtual children" for complete lineage
-- **Cross-Level Hierarchy**: Unified family tree links L2/L4/L6 objects through parent-child relationships
-- **Result**: Query interface supports "find all parts of object X" or "which object does this part belong to?"
-
-### 4. 3D Aggregation with Family Awareness
-- **Temporal Fusion**: Projects tracked 2D masks into 3D space via multi-view geometry
-- **Hierarchical Proposals**: Exports per-level proposals (NPZ/JSON) with family tree metadata
-- **Search3D Integration**: Family-aware proposal format enables part-level open-vocabulary retrieval
-- **Result**: 3D proposals preserve 2D→3D provenance and part-whole semantics
-
-### 5. Open-Vocabulary Retrieval with Family Context
-- **SigLIP Feature Extraction**: Optimized multi-resolution feature extraction for tracked masks
-- **Geometry-Aware Pairing**: Uses family tree to avoid pairing parent-child pairs incorrectly
-- **Hierarchical Scoring**: Combines text-similarity and 3D geometry for ranking
-- **Result**: "Find all chair armrests" returns fine-level instances with correct parent context
+**Our Approach**: Develop a **training-free pipeline** that:
+- Constructs hierarchical, family-like structures based on different granularities
+- Resolves ambiguity inherent in coarse-to-fine segmentation backbone models
+- Does NOT require pre-segmented superpoint structures or 3D masks
+- Depends solely on posed RGB-D image sequences and 3D point cloud structure
 
 ---
 
-## System Architecture
+## Method Overview
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Input: RGB-D Video Sequence                  │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                ┌────────────▼────────────┐
-                │  Stage 1: Semantic-SAM  │
-                │  Multi-Level Candidates │
-                └────────────┬────────────┘
-                             │
-                    ┌────────▼─────────┐
-                    │  Cascade Filter  │
-                    │  (Parent-Aware)  │
-                    └────────┬─────────┘
-                             │
-                ┌────────────▼────────────┐
-                │   Stage 2: SAM2 Track   │
-                │   + Dedup + Provenance  │
-                └────────────┬────────────┘
-                             │
-                    ┌────────▼─────────┐
-                    │  Family Tree     │
-                    │  Construction    │
-                    └────────┬─────────┘
-                             │
-                ┌────────────▼────────────┐
-                │  Stage 3: 3D Aggregate  │
-                │  Multi-View Fusion      │
-                └────────────┬────────────┘
-                             │
-                ┌────────────▼────────────┐
-                │  Stage 4: SigLIP Assign │
-                │  Open-Vocab Features    │
-                └────────────┬────────────┘
-                             │
-            ┌────────────────▼─────────────────┐
-            │  Output: Hierarchical 3D Proposals│
-            │  + Family Tree + Feature Embeddings│
-            └──────────────────────────────────┘
-```
+### Stage 1: Multi-level Class-agnostic Family Tree Construction with Semantic-SAM
+
+**Solo Photo Method**:
+1. Prompt Semantic-SAM at three levels (e.g., L2=coarse, L4=medium, L6=fine)
+2. For each L2 instance, conduct logical AND operation between original image and mask, padding black pixels as background → "solo photo"
+3. Use solo photos as input and prompt Semantic-SAM at L4 to segment children
+4. Output binary masks of children are ANDed with parents, ensuring children masks are always inside parents
+5. Discard masks identical to parents or whose area is below threshold
+6. Apply same procedure for L6 instances
+7. Construct entire family tree and assign unique mask IDs via lookup table
+
+**Gap Filling**:
+- Extract connected pixel regions not covered by any highest-level mask
+- Record as independent mask if area exceeds threshold
+- Only applied at highest level to avoid missing objects
+
+### Stage 2: Provenance-aware SAM2 Tracking and Deduplication
+
+**Window-Based Method**:
+- Sampling strategy with propagation stride of 50 (retain one frame every 50 frames)
+- For each Semantic-SAM prompt frame, construct subsequence of length 2F+1 (F=30)
+- Run SAM2 propagation within each overlapping window
+- SAM2 maintains internal memory across windows
+
+**Deduplication and Virtual Children**:
+- Use Semantic-SAM masks as prompts for SAM2 video propagation
+- Compare SAM2-tracked masks with Semantic-SAM masks using IoU
+- If IoU > threshold, consider object already tracked
+- **Virtual children mechanism**: Rejected Semantic-SAM candidates preserved at provenance level
+  - System uses mask ID to determine which existing SAM2 object to merge into
+  - Updates lookup table with virtual child relationships
+  - O(1) time traceability to parent object
+  - Ensures semantic relationships not lost due to deduplication
+
+### Stage 3: 3D Proposal Aggregation and Feature Extraction
+
+**Family-aware Proposal Merging**:
+- Back-project 2D masklets into 3D space using camera intrinsic/extrinsic matrices
+- Aggregate per-frame 3D masks by taking spatial union
+- Apply minimum volume threshold to filter small proposals
+- Merge overlapping proposals using IoU threshold of 0.5:
+  - Top-level objects: merge and reassign child nodes to same parent
+  - Lower-level nodes: merge restricted to siblings within same family tree
+
+**3D Proposal Feature Extraction**:
+- Use LAION-CLIP (768-dim) or SigLIP (1152-dim) encoders
+- Multi-scale cropping (3 scales) by expanding bounding box outward
+- L₂ normalization followed by averaging
+- Temporal Gaussian weighting + bounding-box area weighting:
+  - `wₖ = exp(-(k-c/σ)²) × √Aₖ`
+  - `c = (K-1)/2`, `σ = K/4`
+- Template-based text encoding: "a {part} of {object} in a room"
+
+### Stage 4: Open-Vocabulary Query Inference
+
+Three retrieval strategies are designed:
+
+1. **Hierarchical Strategy** (Top-down family-tree guided):
+   - Retrieve top-K₁ L2 candidates with highest similarity to object query
+   - Collect L4 children if similarity exceeds threshold
+   - Search descendants (L4/L6) for top-K₂ part candidates
+   - Apply Cross-path NMS (only part proposals as NMS masks)
+   - Sensitive to quality of highest-level proposals
+
+2. **Exhaustive Pairing Strategy** (Enumerate all combinations):
+   - Consider six (object, part) level combinations: (L2,L2), (L2,L4), (L2,L6), (L4,L4), (L4,L6), (L6,L6)
+   - Retain top-K pairs with highest similarity scores
+   - Validate pairings in 3D space, discard non-overlapping
+   - Apply Cross-path NMS
+   - Higher pairing complexity but bypasses family tree limitations
+
+3. **Independent Strategy** (Decouple object and part retrieval):
+   - Match highest level (L2) against object query
+   - Match lower levels (L4/L6) against part query
+   - Compute geometric score based on IoU and size ratio
+   - Combine with retrieval scores via weighted average
+   - **Best performance** in experiments
 
 ---
 
-## Key Features
+## Experimental Results
 
-### Hierarchical Object Identity
-- **Level-Encoded IDs**: Object IDs immediately reveal their semantic level
-  - `2050` → L2 (coarse object)
-  - `4123` → L4 (medium part)
-  - `6789` → L6 (fine detail)
+### Dataset and Metrics
+- **Dataset**: MultiScan with Search3D benchmark
+  - 155 object + 15 part categories
+  - 47 (object, part) pairs
+  - 41 scenes (4 without ground-truth annotations)
+- **Metric**: Mean Average Precision (mAP) under Search3D protocol
 
-### Complete Provenance Tracking
-Every object maintains:
-- **Birth**: Which Semantic-SAM mask(es) created it
-- **Lineage**: Parent-child relationships across levels
-- **Merging**: Which child-level masks were deduped into it (virtual children)
-- **Tracking**: Frame-by-frame mask evolution
+### Performance Summary
 
-### Reproducible Experimentation
-- **YAML-Driven**: All experiments configured via YAML (no hardcoded paths)
-- **Resource Monitoring**: Automatic CPU/GPU/memory tracking
-- **Workflow History**: Complete audit trail of all runs
-- **Environment Snapshots**: Captures Python/CUDA/library versions
+| Configuration | mAP | AP50 | AP25 |
+|--------------|-----|------|------|
+| **FamilyPart (Best: L1/3/5, SigLIP, Independent)** | **1.0** | **3.4** | **14.7** |
+| Search3D [1] (Baseline) | 7.9 | 14.5 | 31.5 |
+
+### Strategy Comparison (Averaged over 7 Experiments)
+
+| Strategy | mAP | AP50 | AP25 |
+|----------|-----|------|------|
+| Independent | 0.84 | 2.90 | 8.59 |
+| Exhaustive | 0.51 | 1.54 | 8.39 |
+| Hierarchical | 0.25 | 0.75 | 7.01 |
+
+### Level Comparison (LAION-CLIP, min. area=500)
+
+| Level | Independent<br/>mAP/AP50/AP25 | Hierarchical<br/>mAP/AP50/AP25 | Exhaustive<br/>mAP/AP50/AP25 |
+|-------|------|------------|------------|
+| L1/L3/L5 | 1.2 / 3.7 / 8.0 | 0.0 / 0.1 / 4.3 | 1.1 / 3.2 / 11.0 |
+| L2/L4/L6 | 0.3 / 1.6 / 6.8 | 0.9 / 2.3 / 10.7 | 0.0 / 0.2 / 7.8 |
+
+### Feature Extractor Comparison (L1/3/5, min. area=100)
+
+| Model | Independent<br/>mAP/AP50/AP25 | Hierarchical<br/>mAP/AP50/AP25 | Exhaustive<br/>mAP/AP50/AP25 |
+|-------|------|------------|------------|
+| LAION-CLIP | 1.2 / 3.7 / 11.4 | 0.0 / 0.1 / 3.8 | 0.5 / 1.4 / 8.3 |
+| SigLIP | 1.1 / 3.1 / 11.8 | 0.1 / 0.4 / 6.6 | 0.9 / 2.7 / 9.7 |
+
+**Key Findings**:
+- Fewer than half of 41 scenes achieve non-zero mAP
+- Hierarchical strategy performs particularly poorly (only 1 scene with non-zero mAP)
+- Independent strategy achieves best AP
+- SigLIP generally outperforms LAION-CLIP
+- Performance still notably behind Search3D baseline
 
 ---
 
-## Output Examples
+## Key Failure Modes
 
-### Family Tree Structure
-```json
-{
-  "2050": {
-    "level": 2,
-    "children": [4100, 4101, 4102],
-    "virtual_children": ["1500_4_0023"],
-    "frames": [1200, 1220, 1240, ...],
-    "parent": null
-  },
-  "4100": {
-    "level": 4,
-    "children": [6200, 6201],
-    "parent": 2050,
-    "frames": [1200, 1220, ...]
-  }
-}
-```
+### 1. Deduplication Issue (Primary Problem)
 
-### Family Visualization
-FamilyPart can generate side-by-side visualizations showing how objects decompose across levels:
+**Problem**: IoU-only criterion destroys hierarchical structure
+- When SAM2 tracks across viewpoints, same object may be represented by masks of different granularities
+- Masks at different scales suppress each other using IoU-only comparison
+- Intended hierarchical structure is effectively destroyed
+- Part masks occasionally larger than corresponding object masks
 
-```
-Frame 1200:
-┌────────────┬────────────┬────────────┐
-│   L2: 2050 │  L4: 4100  │  L6: 6200  │
-│   (chair)  │  (armrest) │  (edge)    │
-└────────────┴────────────┴────────────┘
-```
+**Impact**:
+- Hierarchical strategy fails almost completely
+- Assumption that children are always contained inside parents no longer holds
+- L2/L4/L6 combination performs worse than L1/L3/L5
+
+### 2. Aggressive Filtering
+
+Due to hardware constraints:
+- Increased minimum area threshold to save memory
+- Many fine-grained part-level masks discarded
+- Further degrades part-level performance
+
+### 3. Feature Alignment
+
+- SigLIP and LAION-CLIP alone insufficient for tight alignment
+- Even with ground-truth 3D masks, not every label attains similarity > 0.8
+- Considerable variation across labels
+
+---
+
+## Future Directions
+
+Based on current findings, we identify promising directions for improvement:
+
+1. **Size-aware Deduplication Module**
+   - Distinguish whether two masks stand in containment relationship or are truly identical
+   - Explicitly account for relative mask size
+   - Preserve children when appropriate, rather than relying solely on IoU
+
+2. **Scale-adaptive Filtering**
+   - Different granularity levels should not share single, global minimum-area threshold
+   - Prevent fine-grained part-level masks from being discarded
+
+3. **Enhanced Scoring Mechanisms**
+   - More sophisticated weighting or feature fusion strategies
+   - Improve feature alignment between 3D proposals and text queries
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
-- Two conda environments (Semantic-SAM requires Detectron2 + Torch 1.13, SAM2 requires Torch 2.x)
-- MultiScan dataset (or custom RGB-D sequences)
-- Semantic-SAM and SAM2 checkpoints
+- Two conda environments:
+  - **Semantic-SAM**: Detectron2 0.6 + PyTorch 1.13
+  - **SAM2**: PyTorch 2.x
+- MultiScan dataset (or custom RGB-D sequences with camera poses)
+- **Semantic-SAM checkpoint**: `swinl_only_sam_many2many`
+- **SAM2 checkpoint**: `sam2.1_hiera_large`
 
 ### Quick Start
 
@@ -184,41 +232,42 @@ PYTHONPATH=src python -m my3dis.run_workflow \
 **Stage 3-4: Aggregation + Inference (After Tracking)**:
 ```bash
 python scripts/run_full_pipeline.py \
-  --config configs/inference/experiment_pipeline.yaml \
+  --config configs/inference/full_pipeline.yaml \
   --exp-dir outputs/experiments/<your_experiment_name>
 ```
 
-**Complete Pipeline**: Run workflow first (Stages 1-2), then run full_pipeline (Stages 3-4) with the output directory.
+### Configuration Example
 
-### Configuration
-
-Example YAML configuration:
 ```yaml
 experiment:
   dataset_root: /path/to/multiscan
   scenes: [scene_00065_00, scene_00093_01]
-  levels: [2, 4, 6]
+  levels: [1, 3, 5]  # or [2, 4, 6]
   frames: "1200:1600:20"
 
 stages:
   ssam:
     enabled: true
-    ssam_freq: 2
-    cascade_filtering: true  # Parent-aware filtering
+    ssam_freq: 4  # Sample every 4th frame (T/200 frames)
+    area_threshold: 100  # or 500 depending on memory
 
   tracker:
     enabled: true
-    sam2_max_propagate: 30
-    visualize_families: true  # Generate family visualizations
+    iou_threshold: 0.6
+    downscale_ratio: 0.3
+    propagation_stride: 50  # T/50 frames
+    window_size: 30  # 2F+1 frames
 
   aggregation:
     enabled: true
-    voxel_size: 0.02
+    iou_threshold: 0.5
+    min_visible_area_fraction: 0.0005
 
   inference:
     enabled: true
-    feature_extractor: "siglip"
-    scoring_strategy: "exhaustive_pairing"
+    feature_extractor: "siglip"  # or "laion-clip"
+    scoring_strategy: "independent"  # best performance
+    scale_semantic_score: 200  # 300 for laion-clip
 ```
 
 ---
@@ -227,11 +276,11 @@ stages:
 
 ```
 FamilyPart/
-├── src/my3dis/           # Core package (workflow, tracking, aggregation, inference)
+├── src/my3dis/           # Core package
 │   ├── workflow/         # Multi-scene orchestration
 │   ├── tracking/         # SAM2 tracking + provenance
 │   ├── aggregation/      # 3D proposal generation
-│   ├── inference/        # SigLIP features + retrieval
+│   ├── inference/        # Feature extraction + retrieval
 │   ├── mask/             # Mask encoding/geometry utilities
 │   └── utils/            # Shared utilities
 │
@@ -241,11 +290,9 @@ FamilyPart/
 │
 ├── scripts/              # Automation and analysis tools
 │   ├── run_full_pipeline.py
-│   ├── visualize_families.py
 │   └── benchmark_*.py
 │
 ├── run_experiment.sh     # Single-scene orchestrator
-├── env/                  # Conda environment specs
 └── README.md             # This file
 ```
 
@@ -254,117 +301,71 @@ FamilyPart/
 ## Output Format
 
 ### Per-Scene Outputs
-Each experimental run produces:
-
 ```
 outputs/<experiment_name>/<scene_id>/
-├── level_2/
+├── level_2/ (or level_1/)
 │   ├── raw/              # Raw Semantic-SAM candidates
 │   ├── filtered/         # Filtered candidates
 │   └── tracking/         # SAM2 tracked objects
-├── level_4/
-│   └── ...
-├── level_6/
-│   └── ...
+├── level_4/ (or level_3/)
+├── level_6/ (or level_5/)
 ├── relations/
 │   ├── provenance_tree_L2.json  # Per-level lineage
 │   ├── provenance_tree_L4.json
 │   ├── provenance_tree_L6.json
 │   └── family_tree.json         # Unified hierarchy
-├── visualizations/       # Family comparison images (optional)
 ├── proposals_L*.npz      # 3D aggregated proposals
-├── features_L*.npz       # SigLIP embeddings
+├── features_L*.npz       # Feature embeddings
 └── workflow_summary.json # Timing/resource statistics
 ```
 
-### Search3D Inference Outputs
+### Inference Outputs
 ```
 outputs/inference/<experiment_name>/
-├── predictions.json      # Standard Search3D format
+├── predictions.json      # Search3D format
 ├── object_counts.json    # Per-scene statistics
 └── inference_summary.json
 ```
 
 ---
 
-## Module Overview
+## Implementation Details
 
-### Workflow Orchestration (`my3dis.workflow`)
-- **SceneWorkflow**: Single-scene pipeline executor
-- **MultiSceneExecutor**: Parallel batch processing
-- **StageRunner Pattern**: Modular stage implementations (SSAM, Filter, Tracker, Aggregation, etc.)
-
-### Tracking System (`my3dis.tracking`)
-- **SAM2Runner**: Temporal mask propagation
-- **ProvenanceTracker**: SSAM → SAM2 mapping with O(1) parent lookup
-- **DedupStore**: IoU-based deduplication with rejection tracking
-- **FamilyTreeBuilder**: Cross-level hierarchy construction
-
-### Aggregation (`my3dis.aggregation`)
-- **MaskAggregator**: 2D→3D multi-view fusion
-- **ProposalExporter**: NPZ/JSON export with family metadata
-- **VoxelGridProcessor**: Spatial hashing and clustering
-
-### Inference (`my3dis.inference`)
-- **SigLIPFeatureExtractor**: Optimized multi-resolution feature extraction
-- **ExhaustivePairingStrategy**: Geometry-aware proposal-query pairing
-- **FamilyAwareScorer**: Uses family tree to improve ranking
+- **Semantic-SAM**: `swinl_only_sam_many2many` checkpoint
+- **SAM2**: `sam2.1_hiera_large` checkpoint
+- **Feature Extractors**:
+  - LAION-CLIP ViT-L/14: `laion/CLIP-ViT-L-14-laion2B-s32B-b82K`
+  - SigLIP: `google/siglip-so400m-patch14-384`
+- **Sampling**:
+  - Semantic-SAM: Every 4th frame (~T/200 frames)
+  - SAM2: Every 50th frame (~T/50 frames)
+- **Thresholds**:
+  - IoU for deduplication: 0.6
+  - IoU for merging: 0.5
+  - Downscale ratio: 0.3
+  - Minimum area: 100-500 (depends on memory)
+  - Minimum visible area fraction: 0.0005
 
 ---
 
 ## Design Philosophy
 
-### Provenance Over Heuristics
-Rather than relying on post-hoc spatial containment to infer part-whole relationships, FamilyPart tracks provenance from the moment masks are generated. This ensures:
-- **No false negatives**: Child objects are never orphaned due to tracking failures
-- **No false positives**: Spatially overlapping but unrelated objects aren't incorrectly linked
-- **Complete lineage**: Every relationship is traceable back to original Semantic-SAM proposals
+### Training-Free Approach
+This work demonstrates the potential of developing 3D part segmentation pipelines using only:
+- Posed RGB-D image sequences
+- 3D point clouds
+- Pre-trained foundation models (Semantic-SAM, SAM2, SigLIP/CLIP)
 
-### Reproducibility First
-Every experiment generates:
-- **Workflow Summary**: Stage timings, resource peaks, parameters used
-- **Environment Snapshot**: Python/CUDA/library versions, git commit
-- **Audit Trail**: Complete history of all runs in `workflow_history.csv`
+No training or fine-tuning required for novel environments.
 
-This ensures experiments can be:
-- Debugged months later with full context
-- Reproduced on different machines
-- Compared across parameter variations
+### Provenance Tracking
+Rather than post-hoc spatial containment, FamilyPart tracks provenance from mask generation:
+- Explicit parent-child relationships across levels
+- Virtual children for complete lineage preservation
+- O(1) parent lookup through unified mapping
 
-### Modular Architecture
-FamilyPart uses the **StageRunner pattern** for extensibility:
-- Each pipeline stage is an independent class implementing `StageRunner`
-- Easy to add custom stages (e.g., mesh generation, semantic labeling)
-- Stages can be toggled via YAML without code changes
-
----
-
-## Technical Details
-
-### Multi-Environment Design
-The pipeline requires two conda environments due to dependency conflicts:
-- **Semantic-SAM**: Requires Detectron2 0.6 + PyTorch 1.13
-- **SAM2**: Requires PyTorch 2.x
-
-`run_experiment.sh` automatically toggles environments via `conda run`, or use the YAML workflow for seamless multi-scene processing.
-
-### Streaming Architecture
-To handle large scenes efficiently:
-- **Chunked TAR Archives**: Raw SSAM candidates stored in tar chunks (not millions of individual files)
-- **Manifest-Backed NPZ**: Tracking outputs use NPZ archives with JSON manifests
-- **Lazy Loading**: Masks loaded on-demand, never materialize entire scenes in memory
-
-### Cascade Filtering Algorithm
-Traditional filtering (area + stability thresholds) can create orphans when parents are rejected but children pass. Cascade filtering fixes this:
-
-```
-if parent_rejected(mask):
-    reject_all_descendants(mask)
-else:
-    apply_traditional_filters(mask)
-```
-
-This simple change reduced orphan rates from ~2% to <0.5% in our experiments.
+### Honest Reporting
+We openly acknowledge that current results are not fully satisfactory. The deduplication issues significantly impact performance. This transparency helps future research identify and address these limitations.
 
 ---
 
@@ -378,16 +379,58 @@ from my3dis.workflow import SceneWorkflow
 from my3dis.tracking import ProvenanceTracker
 ```
 
-When running scripts directly:
+When running scripts:
 ```bash
 export PYTHONPATH=src
 python -m my3dis.run_workflow --config config.yaml
 ```
 
+---
+
 ## Acknowledgments
 
 FamilyPart builds upon:
-- **Semantic-SAM** for multi-level candidate generation
-- **SAM2** for temporal mask tracking
-- **SigLIP** for open-vocabulary feature extraction
-- **MultiScan** dataset for evaluation
+- **Semantic-SAM** [9] for multi-level candidate generation
+- **SAM2** [10] for temporal mask tracking
+- **SigLIP** [11] and **LAION-CLIP** [12] for open-vocabulary feature extraction
+- **MultiScan** [7] dataset and **Search3D** [1] benchmark
+
+**Mentors at Vision Science Lab, NTHU**:
+- Yen Hong-Xuan (PS3 author, Semantic-SAM API guidance)
+- Ou Yeh (3D aggregation and feature extraction implementation)
+- Chen Chia-Min and Wang Yan-Qing (brainstorming and guidance)
+
+---
+
+## References
+
+[1] A. Takmaz et al., "Search3D: Hierarchical Open-Vocabulary 3D Segmentation," IEEE RA-L, vol. 10, no. 3, pp. 2558-2565, 2025.
+
+[2] A. Takmaz et al., "OpenMask3D: Open-Vocabulary 3D Instance Segmentation," NeurIPS, vol. 36, 2023.
+
+[7] Y. Mao et al., "MultiScan: Scalable RGBD Scanning for 3D Environments with Articulated Objects," NeurIPS, vol. 35, 2022.
+
+[8] H. Yin et al., "Semantic Consistent Language Gaussian Splatting for Point-Level Open-vocabulary Querying," arXiv:2503.21767, 2025.
+
+[9] F. Li et al., "Semantic-SAM: Segment and Recognize Anything at Any Granularity," ECCV, pp. 467-484, 2024.
+
+[10] N. Ravi et al., "SAM 2: Segment Anything in Images and Videos," arXiv:2408.00714, 2024.
+
+[11] X. Zhai et al., "Sigmoid Loss for Language Image Pre-Training," ICCV, pp. 11975-11986, 2023.
+
+[12] LAION-AI, "LAION-CLIP: OpenCLIP Models Trained on the LAION-2B Dataset," Hugging Face / OpenCLIP, 2023-2024.
+
+---
+
+## License
+
+[Add your license here]
+
+---
+
+## Contact
+
+**Author**: Hsiang-Yu Kung (孔祥有)
+**Advisor**: Prof. Min Sun (孫民)
+**Institution**: Department of Electrical Engineering, National Tsing Hua University
+**Group**: B611
