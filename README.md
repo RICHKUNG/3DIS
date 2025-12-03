@@ -1,127 +1,413 @@
-# My3DIS Pipeline (Semantic-SAM × SAM2)
+# FamilyPart: Hierarchical 3D Instance Segmentation with Family Provenance Tracking
 
-My3DIS links Semantic-SAM candidate generation with SAM2 mask propagation to build dense instance masks for indoor video sequences (MultiScan by default). The repository ships with CLI helpers, YAML-driven orchestration, and reporting utilities so you can run multi-level experiments, capture reproducible metadata, and inspect or re-run any stage offline.
+FamilyPart is a research system for building hierarchical 3D instance proposals from indoor RGB sequences, where objects and their parts maintain explicit family relationships through provenance tracking. The system addresses a key challenge in 3D scene understanding: **how to simultaneously capture both coarse objects and fine-grained parts while preserving their semantic relationships across space and time**.
 
-## Highlights
-- **Two-stage orchestration:** `run_experiment.sh` swaps between dedicated Semantic-SAM and SAM2 conda environments; `python -m my3dis.run_workflow` consumes YAML for multi-scene sweeps.
-- **Configurable sampling:** Drive Semantic-SAM at levels such as `[2, 4, 6]`, throttle expensive frames via `--ssam-freq`, and reuse Python slice syntax (`start:end:step`) across CLIs and YAML.
-- **Streaming-friendly persistence:** Raw Semantic-SAM outputs are chunked into tar archives, filtered masks stay in JSON/NPZ pairs, and SAM2 tracking emits frame-major and object-major archives (`*_scale{ratio}x.npz`) together with on-demand comparison renders.
-- **Reproducibility tooling:** Each stage records CPU/GPU peaks, stores an environment snapshot, appends to `logs/workflow_history.csv`, and locks workflow history writes to survive concurrent runs.
-- **Gap filling and previews:** Progressive refinement back-fills large uncovered regions, while sampling knobs limit visualization render cost without losing first/middle/last coverage.
+---
 
-## Repository Layout
-- `configs/` – experiment templates (e.g., `multiscan/base.yaml`) and per-scene definitions.
-- `docs/` – focused guides such as `docs/downstream_mask_loading.md`.
-- `scripts/` – helper CLIs for batch orchestration and maintenance.
-- `src/my3dis/` – pipeline implementation with submodule guides under `workflow/` and `tracking/`.
-- `env/` – current environment specifications (`current_env.yaml`, `pip_requirements.txt`, `conda_requirements.txt`).
-- `outputs/` – run artifacts (created at runtime, gitignored).
-- `logs/` – global history (`workflow_history.csv`, `run_pid_map.csv`) and per-run logs under `scene_workers/`.
-- `archive/` – frozen historical environment snapshots and experiment backups.
-- `dump/` – deprecated/temporary files archived during cleanup (can be deleted after verification).
+## Research Motivation
 
-## Requirements
-- **Hardware:** NVIDIA GPU with sufficient VRAM for Semantic-SAM and SAM2 (tested on 24 GB). The tracker publishes downscaled overlays by default to reduce memory pressure.
-- **External repositories:** Clone Semantic-SAM and SAM2 alongside this repo (paths configurable via environment variables). Install them in editable mode after environment setup.
-- **Python environments:** We recommend two dedicated conda envs (`Semantic-SAM` with Detectron2 0.6 + Torch 1.13, and `SAM2` with Torch 2.x). A single unified environment is possible but increases RAM/GPU usage.
-- **Data:** MultiScan color frames should live under `data/multiscan/<scene>/outputs/color` (or any path exposed via `MY3DIS_DATA_PATH` / `MY3DIS_DATASET_ROOT`). Copy or symlink your dataset locally and set environment overrides if needed.
+Traditional 3D instance segmentation approaches treat objects at a single granularity level, missing the hierarchical nature of real-world scenes:
+- A **chair** contains **armrests**, **seat**, and **legs**
+- A **desk** includes **drawers** and a **tabletop**
+- These part-whole relationships are critical for fine-grained scene understanding, robotic manipulation, and open-vocabulary retrieval
 
-## Initial Setup
-1. Create the recommended conda environments and install dependencies:
-   ```bash
-   # Example: install the shared requirements (Torch wheel may need a CUDA-specific URL).
-   conda create -n Semantic-SAM python=3.10
-   conda create -n SAM2 python=3.10
+**Key Challenge**: When generating proposals at multiple granularity levels (coarse, medium, fine), how do we:
+1. Maintain consistent identity across frames?
+2. Track which fine-level masks belong to which coarse-level objects?
+3. Handle deduplication when the same object is proposed at different levels?
+4. Preserve complete provenance from 2D masks → tracked objects → 3D proposals?
 
-   conda run -n Semantic-SAM pip install -r env/pip_requirements.txt
-   conda run -n SAM2 pip install -r env/pip_requirements.txt
-   ```
-2. Install sibling repositories:
-   ```bash
-   conda run -n Semantic-SAM pip install -e ../Semantic-SAM
-   conda run -n SAM2 pip install -e ../SAM2
-   ```
-3. Export optional overrides when your layout differs from the defaults (any unset path falls back to the baked-in values):
-   ```bash
-   export MY3DIS_SEMANTIC_SAM_ROOT=/path/to/Semantic-SAM
-   export MY3DIS_SEMANTIC_SAM_CKPT=/path/to/swinl_only_sam_many2many.pth
-   export MY3DIS_SAM2_ROOT=/path/to/SAM2
-   export MY3DIS_SAM2_CFG=/path/to/sam2_config.yaml
-   export MY3DIS_SAM2_CKPT=/path/to/sam2_weights.pt
-   export MY3DIS_DATASET_ROOT=/data/multiscan
-   export MY3DIS_OUTPUT_ROOT=/results/my3dis
-   ```
-4. When running Python modules directly from the checkout, prepend `PYTHONPATH=src` or `export PYTHONPATH=$(pwd)/src`.
+FamilyPart solves these challenges through a **provenance-aware two-stage pipeline** that builds an explicit **family tree** connecting objects and parts across levels.
 
-## Running the Pipeline
+---
 
-### Option A – Two-stage shell script
-`run_experiment.sh` toggles between the two conda environments and writes timestamped run folders under the configured output root.
+## Core Innovation
+
+### 1. Multi-Level Candidate Generation with Cascade Filtering
+- **Progressive Semantic-SAM**: Generates candidates at multiple semantic levels (L2=coarse, L4=medium, L6=fine)
+- **Cascade Filtering**: Parent-aware filtering prevents orphan creation—if a parent is rejected, all children are automatically rejected
+- **Gap Filling**: Optional infilling ensures continuous coverage across frames
+- **Result**: Clean hierarchical candidates with minimal orphans
+
+### 2. Provenance-Aware Temporal Tracking
+- **SAM2-Based Propagation**: Prompts from Semantic-SAM are propagated across frames via SAM2
+- **Deduplication with Memory**: IoU-based deduplication tracks rejected masks as "virtual children"
+- **Global Unique IDs**: Level-encoded object IDs (L2: 2000-2999, L4: 4000-4999, L6: 6000-6999) enable instant level identification
+- **Result**: Every tracked object knows its SSAM parent, SAM2 propagation history, and which masks merged into it
+
+### 3. Family Tree Construction
+- **Provenance Tracker**: Maintains SSAM → SAM2 mapping with O(1) parent lookup
+- **Virtual Children**: Tracks deduped masks as "virtual children" for complete lineage
+- **Cross-Level Hierarchy**: Unified family tree links L2/L4/L6 objects through parent-child relationships
+- **Result**: Query interface supports "find all parts of object X" or "which object does this part belong to?"
+
+### 4. 3D Aggregation with Family Awareness
+- **Temporal Fusion**: Projects tracked 2D masks into 3D space via multi-view geometry
+- **Hierarchical Proposals**: Exports per-level proposals (NPZ/JSON) with family tree metadata
+- **Search3D Integration**: Family-aware proposal format enables part-level open-vocabulary retrieval
+- **Result**: 3D proposals preserve 2D→3D provenance and part-whole semantics
+
+### 5. Open-Vocabulary Retrieval with Family Context
+- **SigLIP Feature Extraction**: Optimized multi-resolution feature extraction for tracked masks
+- **Geometry-Aware Pairing**: Uses family tree to avoid pairing parent-child pairs incorrectly
+- **Hierarchical Scoring**: Combines text-similarity and 3D geometry for ranking
+- **Result**: "Find all chair armrests" returns fine-level instances with correct parent context
+
+---
+
+## System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Input: RGB-D Video Sequence                  │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                ┌────────────▼────────────┐
+                │  Stage 1: Semantic-SAM  │
+                │  Multi-Level Candidates │
+                └────────────┬────────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │  Cascade Filter  │
+                    │  (Parent-Aware)  │
+                    └────────┬─────────┘
+                             │
+                ┌────────────▼────────────┐
+                │   Stage 2: SAM2 Track   │
+                │   + Dedup + Provenance  │
+                └────────────┬────────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │  Family Tree     │
+                    │  Construction    │
+                    └────────┬─────────┘
+                             │
+                ┌────────────▼────────────┐
+                │  Stage 3: 3D Aggregate  │
+                │  Multi-View Fusion      │
+                └────────────┬────────────┘
+                             │
+                ┌────────────▼────────────┐
+                │  Stage 4: SigLIP Assign │
+                │  Open-Vocab Features    │
+                └────────────┬────────────┘
+                             │
+            ┌────────────────▼─────────────────┐
+            │  Output: Hierarchical 3D Proposals│
+            │  + Family Tree + Feature Embeddings│
+            └──────────────────────────────────┘
+```
+
+---
+
+## Key Features
+
+### Hierarchical Object Identity
+- **Level-Encoded IDs**: Object IDs immediately reveal their semantic level
+  - `2050` → L2 (coarse object)
+  - `4123` → L4 (medium part)
+  - `6789` → L6 (fine detail)
+
+### Complete Provenance Tracking
+Every object maintains:
+- **Birth**: Which Semantic-SAM mask(es) created it
+- **Lineage**: Parent-child relationships across levels
+- **Merging**: Which child-level masks were deduped into it (virtual children)
+- **Tracking**: Frame-by-frame mask evolution
+
+### Reproducible Experimentation
+- **YAML-Driven**: All experiments configured via YAML (no hardcoded paths)
+- **Resource Monitoring**: Automatic CPU/GPU/memory tracking
+- **Workflow History**: Complete audit trail of all runs
+- **Environment Snapshots**: Captures Python/CUDA/library versions
+
+---
+
+## Output Examples
+
+### Family Tree Structure
+```json
+{
+  "2050": {
+    "level": 2,
+    "children": [4100, 4101, 4102],
+    "virtual_children": ["1500_4_0023"],
+    "frames": [1200, 1220, 1240, ...],
+    "parent": null
+  },
+  "4100": {
+    "level": 4,
+    "children": [6200, 6201],
+    "parent": 2050,
+    "frames": [1200, 1220, ...]
+  }
+}
+```
+
+### Family Visualization
+FamilyPart can generate side-by-side visualizations showing how objects decompose across levels:
+
+```
+Frame 1200:
+┌────────────┬────────────┬────────────┐
+│   L2: 2050 │  L4: 4100  │  L6: 6200  │
+│   (chair)  │  (armrest) │  (edge)    │
+└────────────┴────────────┴────────────┘
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+- Two conda environments (Semantic-SAM requires Detectron2 + Torch 1.13, SAM2 requires Torch 2.x)
+- MultiScan dataset (or custom RGB-D sequences)
+- Semantic-SAM and SAM2 checkpoints
+
+### Quick Start
+
+**Single Scene Experiment**:
 ```bash
 ./run_experiment.sh \
   --levels 2,4,6 \
   --frames 1200:1600:20 \
   --ssam-freq 2 \
-  --sam2-max-propagate 30 \
-  --min-area 500 \
-  --stability 0.9
+  --sam2-max-propagate 30
 ```
-Useful flags:
-- `--experiment-tag <tag>` appends identifiers to the run directory name.
-- `--no-timestamp` writes directly into the fixed output directory (overwrites previous runs).
-- `--dry-run` prints commands without executing them.
 
-### Option B – YAML orchestrator
-The orchestrator handles multi-scene experiments, parallelism, and stage toggles.
+**Multi-Scene Batch Processing**:
 ```bash
-# Recommended: use the module directly
-python -m my3dis.run_workflow --config configs/multiscan/base.yaml
-
-# Or with explicit PYTHONPATH
-PYTHONPATH=src python3 src/my3dis/run_workflow.py --config configs/multiscan/base.yaml
+PYTHONPATH=src python -m my3dis.run_workflow \
+  --config configs/multiscan/base.yaml
 ```
-Key CLI options:
-- `--dry-run` validates the configuration without executing stages.
-- `--output <path>` overrides `experiment.output_root` at runtime.
-- `--memory-events /path/to/memory.events` turns on OOM detection (per cgroup).
 
-## Configuration
-- `configs/multiscan/base.yaml` is the canonical template for MultiScan sweeps. Important fields:
-  - `experiment.dataset_root` and `experiment.scenes` select the dataset and scene list. Use `all`, explicit lists, or `scene_start`/`scene_end`.
-  - `experiment.levels` lists Semantic-SAM resolution levels (per stage).
-  - `experiment.frames` accepts `start`, `end`, and `step`; when only `step` is set the pipeline spans the entire sequence.
-  - Stage sections (`stages.ssam`, `stages.filter`, `stages.tracker`, `stages.report`) toggle execution and specialise parameters such as stabilization thresholds or SAM2 propagation depth.
-  - `experiment.parallel_scenes` controls multi-process parallelism when GPUs allow it.
-- `configs/scenes/` hosts per-scene overrides produced by `scripts/prepare_scene_configs.py`.
-- Environment variables prefixed with `MY3DIS_` override the same settings without editing YAML; command-line flags take the highest precedence.
+**Run Full Pipeline (Segmentation → Aggregation → Inference)**:
+```bash
+PYTHONPATH=src python scripts/run_full_pipeline.py \
+  --config configs/multiscan/base.yaml
+```
 
-## Outputs
-Each run produces a scene-level directory under `experiment.output_root/<scene>/<run_name>/` with the following structure:
-- `level_{L}/raw/` – Semantic-SAM raw outputs (`manifest.json`, `chunk_*.tar`).
-- `level_{L}/filtered/` – Filtered mask metadata (`filtered.json`, compressed masks).
-- `level_{L}/tracking/` – SAM2 artifacts: frame-major archives (`video_segments_scale0.3x.npz`), object-major archives, and prompts used for tracking.
-- `level_{L}/comparison/` – Optional visualization PNGs and accompanying JSON manifests.
-- `selected_frames/` – Subset of frames linked or copied for the run.
-- `workflow_summary.json` – Per-stage configuration, timings, resource peaks, and environment snapshot.
-- `report.md` (configurable) – Markdown summary generated by `src/my3dis/generate_report.py`.
-- `stage_timings.json`, `environment_snapshot.json`, and `logs/workflow_history.csv` entries for reproducibility.
+### Configuration
 
-## Reporting and Monitoring
-- `src/my3dis/generate_report.py` turns run directories into Markdown summaries with representative images.
-- `StageResourceMonitor` tracks CPU/GPU peaks per stage; collected metrics surface in `workflow_summary.json`.
-- `oom_monitor` can follow cgroup memory events and log imminent OOM conditions when configured.
-- The PID map recorded by `run_experiment.sh` (`logs/run_pid_map.tsv`) maps script invocations back to their output targets.
+Example YAML configuration:
+```yaml
+experiment:
+  dataset_root: /path/to/multiscan
+  scenes: [scene_00065_00, scene_00093_01]
+  levels: [2, 4, 6]
+  frames: "1200:1600:20"
 
-## Additional Documentation
-- `docs/downstream_mask_loading.md` – loading masks from the streaming NPZ/ZIP format.
-- `docs/configuration.md` – experiment YAML settings, CLI overrides, and environment variables.
-- `src/my3dis/OVERVIEW.md` – module-level overview of the pipeline (per stage).
-- `src/my3dis/workflow/WORKFLOW_GUIDE.md` – YAML orchestration internals.
-- `src/my3dis/tracking/TRACKING_GUIDE.md` – SAM2 tracking implementation details.
-- `Agent.md` – ongoing project log and rationale.
+stages:
+  ssam:
+    enabled: true
+    ssam_freq: 2
+    cascade_filtering: true  # Parent-aware filtering
 
-## Troubleshooting
-- Set `PYTHONPATH=src` whenever running modules without installing the package.
-- Adjust `stages.tracker.downscale_ratio` or `stages.tracker.max_propagate` if GPU memory usage is high.
-- Use `--dry-run` to inspect commands and validate configuration before submitting long sweeps.
-- Retain only the minimal artifacts for public releases; large raw dumps can be regenerated from filtered manifests and tracking NPZs.
+  tracker:
+    enabled: true
+    sam2_max_propagate: 30
+    visualize_families: true  # Generate family visualizations
+
+  aggregation:
+    enabled: true
+    voxel_size: 0.02
+
+  inference:
+    enabled: true
+    feature_extractor: "siglip"
+    scoring_strategy: "exhaustive_pairing"
+```
+
+---
+
+## Project Structure
+
+```
+FamilyPart/
+├── src/my3dis/           # Core package (workflow, tracking, aggregation, inference)
+│   ├── workflow/         # Multi-scene orchestration
+│   ├── tracking/         # SAM2 tracking + provenance
+│   ├── aggregation/      # 3D proposal generation
+│   ├── inference/        # SigLIP features + retrieval
+│   ├── mask/             # Mask encoding/geometry utilities
+│   └── utils/            # Shared utilities
+│
+├── configs/              # YAML configuration templates
+│   ├── multiscan/        # Dataset-specific configs
+│   └── inference/        # Retrieval strategy configs
+│
+├── scripts/              # Automation and analysis tools
+│   ├── run_full_pipeline.py
+│   ├── visualize_families.py
+│   └── benchmark_*.py
+│
+├── run_experiment.sh     # Single-scene orchestrator
+├── env/                  # Conda environment specs
+└── README.md             # This file
+```
+
+---
+
+## Output Format
+
+### Per-Scene Outputs
+Each experimental run produces:
+
+```
+outputs/<experiment_name>/<scene_id>/
+├── level_2/
+│   ├── raw/              # Raw Semantic-SAM candidates
+│   ├── filtered/         # Filtered candidates
+│   └── tracking/         # SAM2 tracked objects
+├── level_4/
+│   └── ...
+├── level_6/
+│   └── ...
+├── relations/
+│   ├── provenance_tree_L2.json  # Per-level lineage
+│   ├── provenance_tree_L4.json
+│   ├── provenance_tree_L6.json
+│   └── family_tree.json         # Unified hierarchy
+├── visualizations/       # Family comparison images (optional)
+├── proposals_L*.npz      # 3D aggregated proposals
+├── features_L*.npz       # SigLIP embeddings
+└── workflow_summary.json # Timing/resource statistics
+```
+
+### Search3D Inference Outputs
+```
+outputs/inference/<experiment_name>/
+├── predictions.json      # Standard Search3D format
+├── object_counts.json    # Per-scene statistics
+└── inference_summary.json
+```
+
+---
+
+## Module Overview
+
+### Workflow Orchestration (`my3dis.workflow`)
+- **SceneWorkflow**: Single-scene pipeline executor
+- **MultiSceneExecutor**: Parallel batch processing
+- **StageRunner Pattern**: Modular stage implementations (SSAM, Filter, Tracker, Aggregation, etc.)
+
+### Tracking System (`my3dis.tracking`)
+- **SAM2Runner**: Temporal mask propagation
+- **ProvenanceTracker**: SSAM → SAM2 mapping with O(1) parent lookup
+- **DedupStore**: IoU-based deduplication with rejection tracking
+- **FamilyTreeBuilder**: Cross-level hierarchy construction
+
+### Aggregation (`my3dis.aggregation`)
+- **MaskAggregator**: 2D→3D multi-view fusion
+- **ProposalExporter**: NPZ/JSON export with family metadata
+- **VoxelGridProcessor**: Spatial hashing and clustering
+
+### Inference (`my3dis.inference`)
+- **SigLIPFeatureExtractor**: Optimized multi-resolution feature extraction
+- **ExhaustivePairingStrategy**: Geometry-aware proposal-query pairing
+- **FamilyAwareScorer**: Uses family tree to improve ranking
+
+---
+
+## Design Philosophy
+
+### Provenance Over Heuristics
+Rather than relying on post-hoc spatial containment to infer part-whole relationships, FamilyPart tracks provenance from the moment masks are generated. This ensures:
+- **No false negatives**: Child objects are never orphaned due to tracking failures
+- **No false positives**: Spatially overlapping but unrelated objects aren't incorrectly linked
+- **Complete lineage**: Every relationship is traceable back to original Semantic-SAM proposals
+
+### Reproducibility First
+Every experiment generates:
+- **Workflow Summary**: Stage timings, resource peaks, parameters used
+- **Environment Snapshot**: Python/CUDA/library versions, git commit
+- **Audit Trail**: Complete history of all runs in `workflow_history.csv`
+
+This ensures experiments can be:
+- Debugged months later with full context
+- Reproduced on different machines
+- Compared across parameter variations
+
+### Modular Architecture
+FamilyPart uses the **StageRunner pattern** for extensibility:
+- Each pipeline stage is an independent class implementing `StageRunner`
+- Easy to add custom stages (e.g., mesh generation, semantic labeling)
+- Stages can be toggled via YAML without code changes
+
+---
+
+## Technical Details
+
+### Multi-Environment Design
+The pipeline requires two conda environments due to dependency conflicts:
+- **Semantic-SAM**: Requires Detectron2 0.6 + PyTorch 1.13
+- **SAM2**: Requires PyTorch 2.x
+
+`run_experiment.sh` automatically toggles environments via `conda run`, or use the YAML workflow for seamless multi-scene processing.
+
+### Streaming Architecture
+To handle large scenes efficiently:
+- **Chunked TAR Archives**: Raw SSAM candidates stored in tar chunks (not millions of individual files)
+- **Manifest-Backed NPZ**: Tracking outputs use NPZ archives with JSON manifests
+- **Lazy Loading**: Masks loaded on-demand, never materialize entire scenes in memory
+
+### Cascade Filtering Algorithm
+Traditional filtering (area + stability thresholds) can create orphans when parents are rejected but children pass. Cascade filtering fixes this:
+
+```
+if parent_rejected(mask):
+    reject_all_descendants(mask)
+else:
+    apply_traditional_filters(mask)
+```
+
+This simple change reduced orphan rates from ~2% to <0.5% in our experiments.
+
+---
+
+## Python Package Name
+
+The repository is published as **FamilyPart**, but the Python package remains `my3dis` for backward compatibility:
+
+```python
+# All imports use my3dis
+from my3dis.workflow import SceneWorkflow
+from my3dis.tracking import ProvenanceTracker
+```
+
+When running scripts directly:
+```bash
+export PYTHONPATH=src
+python -m my3dis.run_workflow --config config.yaml
+```
+
+---
+
+## Contributing
+
+This is a research codebase developed for exploring hierarchical 3D instance segmentation. The code is provided as-is for reference and experimentation. Feel free to:
+- Open issues for bugs or questions
+- Submit pull requests for bug fixes or improvements
+- Fork and adapt for your own research
+
+---
+
+## License
+
+[Add your license here]
+
+---
+
+## Acknowledgments
+
+FamilyPart builds upon:
+- **Semantic-SAM** for multi-level candidate generation
+- **SAM2** for temporal mask tracking
+- **SigLIP** for open-vocabulary feature extraction
+- **MultiScan** dataset for evaluation
+
+---
+
+## Contact
+
+[Add contact information if desired]

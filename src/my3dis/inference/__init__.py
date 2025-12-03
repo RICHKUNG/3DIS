@@ -20,6 +20,10 @@ from .scoring import ScoreAggregator
 from .formatter import Search3DFormatter
 from .inference_pipeline import InferencePipeline
 from .feature_extraction import SigLIPFeatureExtractor
+from .feature_extraction_optimized import (
+    OptimizedSigLIPFeatureExtractor,
+    ImageCache
+)
 
 __all__ = [
     'MultiLevelRetriever',
@@ -29,4 +33,6 @@ __all__ = [
     'Search3DFormatter',
     'InferencePipeline',
     'SigLIPFeatureExtractor',
+    'OptimizedSigLIPFeatureExtractor',
+    'ImageCache',
 ]

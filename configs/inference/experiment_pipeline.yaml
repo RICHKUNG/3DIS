@@ -28,7 +28,8 @@ model:
     siglip:
       model_name: google/siglip-so400m-patch14-384
       model_id: siglip_so400m  # Short identifier for output directories
-      scale_semantic_score: 100.0  # Optimized for SigLIP
+      # 提高 scale 讓較弱相似度也保留，偏向召回/寬鬆 IoU
+      scale_semantic_score: 200.0
       apply_softmax: true
       text_template: in_room  # "a {class} in a room" template
 
@@ -54,8 +55,8 @@ experiment:
   multi_scene_mode: true
 
   # Experiment root directory containing scene subdirectories
-  exp_root: /media/Pluto/richkung/My3DIS/outputs/experiments/SUCCESS/v7_246_ssam4_filter100_fill100_prop30_max3k_m_1
-
+  # 指向已驗證可用的上游成果目錄，避免覆寫仍在試驗中的路徑
+  exp_root: /media/Pluto/richkung/My3DIS/outputs/experiments/SUCCESS/v7_135_ssam4_filter100_fill100_prop10_max3k_m_2
   # Dataset root for MultiScan scenes
   dataset_root: /media/public_dataset2/multiscan
 
@@ -72,7 +73,7 @@ experiment:
   inference_output_dir: null
 
   # Device configuration
-  device: &device cuda:0 
+  device: &device cuda:1
 
 # ============================================================================
 # Aggregation Stage Configuration
@@ -94,7 +95,7 @@ aggregation:
   # Do not set manually unless you want to override
 
   # Feature pooling mode controls SigLIP feature averaging
-  pooling_mode: average  # average | voting
+  pooling_mode: voting  # average | voting
 
   # 3D projection configuration
   projection:
@@ -135,7 +136,8 @@ inference:
   # NOTE: scale_semantic_score and apply_softmax are auto-populated from model preset
   retrieval:
     temperature: 0.2
-    min_similarity: 0.005
+    # 降低門檻、提高召回
+    min_similarity: 0.001
     top_k_per_level: 500
     object_levels: auto
     part_levels: auto
@@ -178,7 +180,7 @@ inference:
     object_levels: auto
     part_levels: auto
     top_k_per_level: 500
-    retrieval_threshold: 0.01
+    retrieval_threshold: 0.005
     min_retrieval_threshold: 0.001
     threshold_backoff_step: 0.005
     fallback_to_topk: true
@@ -187,11 +189,11 @@ inference:
 
   # Hierarchical strategy parameters
   hierarchical:
-    coarse_top_k: 500
+    coarse_top_k: 700
     object_top_k: 500
-    part_top_k: 300                # Increased from 200 for more part candidates
-    coarse_threshold: 0.005        # Lowered from 0.01 for more initial candidates
-    refinement_threshold: 0.005    # Lowered from 0.01 for more refined candidates
+    part_top_k: 400                # 提高 part 候選，偏向召回
+    coarse_threshold: 0.003        # 放寬門檻
+    refinement_threshold: 0.003    # 放寬門檻
     refinement_margin: 0.05        # Increased from 0.01 to prefer children more
     use_combined_query: true
     siglip_device: *device
@@ -199,7 +201,7 @@ inference:
   # Exhaustive pairing strategy parameters
   exhaustive_pairing:
     available_levels: auto
-    top_k_per_level: 500
+    top_k_per_level: 300
     retrieval_threshold: 0.01
     min_retrieval_threshold: 0.001
     threshold_backoff_step: 0.005

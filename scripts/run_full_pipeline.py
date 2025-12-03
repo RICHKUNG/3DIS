@@ -48,9 +48,13 @@ from my3dis.aggregation import AggregationPipeline
 from my3dis.inference import (
     InferencePipeline,
     SigLIPFeatureExtractor,
+    OptimizedSigLIPFeatureExtractor,  # 新增：优化版本
 )
 from my3dis.inference.config import InferenceConfig
 from my3dis.utils import load_scene_pointcloud, save_mask_as_ply
+
+# 全局开关：启用优化版本（设为 False 可回退到原始版本）
+USE_OPTIMIZED_EXTRACTION = True
 
 logging.basicConfig(
     level=logging.INFO,
@@ -580,10 +584,21 @@ def run_inference_stage(
         text_model = config['aggregation']['siglip_model']
         logger.info(f"Loading SigLIP model for text encoding (from aggregation config): {text_model}")
 
-    feature_extractor = SigLIPFeatureExtractor(
-        text_model,
-        exp_config['device']
-    )
+    # 使用优化版本的 feature extractor（可通过全局开关控制）
+    if USE_OPTIMIZED_EXTRACTION:
+        logger.info(f"Using OPTIMIZED SigLIP feature extractor (batch_size=32, cache_size=100)")
+        feature_extractor = OptimizedSigLIPFeatureExtractor(
+            model_name=text_model,
+            device=exp_config['device'],
+            batch_size=32,  # 批处理大小（可根据 GPU 显存调整）
+            cache_size=100   # 图片缓存大小
+        )
+    else:
+        logger.info(f"Using original SigLIP feature extractor")
+        feature_extractor = SigLIPFeatureExtractor(
+            text_model,
+            exp_config['device']
+        )
 
     # Initialize inference pipeline
     logger.info(f"Initializing inference pipeline (strategy: {strategy})")
