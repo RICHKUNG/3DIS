@@ -396,9 +396,7 @@ FamilyPart builds upon:
 - **MultiScan** [7] dataset and **Search3D** [1] benchmark
 
 **Mentors at Vision Science Lab, NTHU**:
-- Yen Hong-Xuan (PS3 author, Semantic-SAM API guidance)
-- Ou Yeh (3D aggregation and feature extraction implementation)
-- Chen Chia-Min and Wang Yan-Qing (brainstorming and guidance)
+- Yen Hong-Xuan, Ou Yeh, Chen Chia-Min and Wang Yan-Qing 
 
 ---
 
@@ -419,18 +417,3 @@ FamilyPart builds upon:
 [11] X. Zhai et al., "Sigmoid Loss for Language Image Pre-Training," ICCV, pp. 11975-11986, 2023.
 
 [12] LAION-AI, "LAION-CLIP: OpenCLIP Models Trained on the LAION-2B Dataset," Hugging Face / OpenCLIP, 2023-2024.
-
----
-
-## License
-
-[Add your license here]
-
----
-
-## Contact
-
-**Author**: Hsiang-Yu Kung (孔祥有)
-**Advisor**: Prof. Min Sun (孫民)
-**Institution**: Department of Electrical Engineering, National Tsing Hua University
-**Group**: B611
